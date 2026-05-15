@@ -5,6 +5,7 @@ import { Config } from './config.js';
 import { State } from './state.js';
 import { Dom } from './dom.js';
 import { Api } from './api.js';
+import { openPlayer } from './player.js';
 import { setConnectionStatus } from './connection.js';
 import { navigateTo } from './navigation.js';
 
@@ -146,6 +147,13 @@ export function renderGrid(container, items) {
 
         div.appendChild(thumb);
         div.appendChild(info);
+
+        if (!isSelectMode) {
+            div.addEventListener('click', () => {
+                openPlayer(item.id, item.title, item.streamUrl, items);
+            });
+        }
+
         container.appendChild(div);
     });
 }
