@@ -67,6 +67,14 @@ stop_backend() {
 
 # ── Start ──
 start_backend() {
+    # Check .env
+    if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
+        if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+            cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+            echo "[OK] Created .env from .env.example (edit if needed)"
+        fi
+    fi
+
     # Check PostgreSQL
     if ! pg_isready -q 2>/dev/null; then
         echo "Starting PostgreSQL..."
