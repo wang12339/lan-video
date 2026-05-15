@@ -1,0 +1,18 @@
+{
+  "name": "局域网视频",
+  "short_name": "LAN视频",
+  "description": "局域网视频播放平台",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121220",
+  "theme_color": "#1a1a2e",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

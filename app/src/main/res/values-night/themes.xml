@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.MyApplication" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <!-- Night theme: slightly muted neon for eye comfort -->
+        <item name="colorPrimary">#FF00B8D4</item>
+        <item name="colorPrimaryVariant">@color/neon_purple</item>
+        <item name="colorOnPrimary">@color/black</item>
+        <item name="colorSecondary">@color/neon_purple</item>
+        <item name="colorSecondaryVariant">#FF00B8D4</item>
+        <item name="colorOnSecondary">@color/white</item>
+
+        <!-- Surface colors (same as base — already dark) -->
+        <item name="android:colorBackground">@color/background_tech</item>
+        <item name="colorSurface">@color/surface_glass</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- Typography -->
+        <item name="textAppearanceHeadlineSmall">@style/TextAppearance.MyApplication.HeadlineSmall</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.MyApplication.TitleMedium</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.MyApplication.BodyMedium</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.MyApplication.LabelSmall</item>
+
+        <item name="android:seekBarStyle">@style/Widget.MyApplication.SeekBar</item>
+    </style>
+</resources>

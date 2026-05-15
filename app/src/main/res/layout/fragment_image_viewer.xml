@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_tech">
+
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewer_pager"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Top glass bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@drawable/bg_top_bar_gradient"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="12dp">
+
+        <ImageButton
+            android:id="@+id/btn_back"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_card_glass_input"
+            android:contentDescription="@string/feed_hamburger_desc"
+            android:padding="8dp"
+            android:rotation="90"
+            android:src="@drawable/ic_feed_menu_24"
+            android:tint="@color/text_primary" />
+
+        <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/text_counter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.1"
+            android:textColor="@color/neon_cyan"
+            android:textSize="12sp"
+            tools:text="03 / 15" />
+
+        <Space android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btn_share"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_card_glass_input"
+            android:padding="8dp"
+            android:src="@drawable/ic_feed_menu_24"
+            android:tint="@color/text_primary"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Filmstrip -->
+    <FrameLayout
+        android:id="@+id/filmstrip_container"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom"
+        android:background="#D00A0A0F"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/filmstrip_recycler"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal" />
+    </FrameLayout>
+
+    <!-- Info panel -->
+    <FrameLayout
+        android:id="@+id/info_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="48dp"
+        android:background="#D00A0A0F"
+        android:padding="16dp"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/info_filename"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                tools:text="> sunset.jpg" />
+
+            <TextView
+                android:id="@+id/info_resolution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_muted"
+                android:textSize="11sp"
+                tools:text="> RES: 3840x2160" />
+
+            <TextView
+                android:id="@+id/info_size"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_muted"
+                android:textSize="11sp"
+                tools:text="> SIZE: 2.4 MB" />
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>

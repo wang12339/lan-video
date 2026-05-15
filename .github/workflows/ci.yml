@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lan_video_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "backend"
+
+      - name: Check formatting
+        working-directory: ./backend
+        run: cargo fmt --check
+        continue-on-error: true
+
+      - name: Clippy
+        working-directory: ./backend
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+
+      - name: Build
+        working-directory: ./backend
+        run: cargo build --verbose
+
+      - name: Run tests
+        working-directory: ./backend
+        run: cargo test --verbose
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/lan_video_test

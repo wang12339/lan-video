@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="fab_margin">16dp</dimen>
+    <dimen name="card_radius">12dp</dimen>
+
+    <!-- Spacing system -->
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">8dp</dimen>
+    <dimen name="spacing_md">12dp</dimen>
+    <dimen name="spacing_lg">16dp</dimen>
+    <dimen name="spacing_xl">24dp</dimen>
+
+    <!-- Thumbnail -->
+    <dimen name="thumbnail_height">130dp</dimen>
+
+    <!-- Status bar -->
+    <dimen name="status_bar_height">32dp</dimen>
+
+    <!-- Avatar -->
+    <dimen name="avatar_size">80dp</dimen>
+
+    <!-- Stats card -->
+    <dimen name="stat_card_height">88dp</dimen>
+</resources>

@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+.idea/
+.claude/
+**/.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/backend/data
+/backend/media
+/backend/target
+/backend/.env
+*.log
+*.pid

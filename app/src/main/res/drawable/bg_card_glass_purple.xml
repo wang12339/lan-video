@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer glow layer (purple neon) -->
+    <item
+        android:bottom="1.5dp"
+        android:left="1.5dp"
+        android:right="1.5dp"
+        android:top="1.5dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neon_purple_dim" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <!-- Glass主体 -->
+    <item
+        android:bottom="0.5dp"
+        android:left="0.5dp"
+        android:right="0.5dp"
+        android:top="0.5dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/surface_glass" />
+            <stroke
+                android:width="0.5dp"
+                android:color="@color/glass_stroke_purple" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+</layer-list>

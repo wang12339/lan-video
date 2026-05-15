@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tech Backgrounds -->
+    <color name="background_tech">#FF0A0A0F</color>
+    <color name="surface_glass">#B3151525</color>
+    <color name="surface_glass_elevated">#D91A1A30</color>
+    <color name="surface_bar">#CC0D0D1A</color>
+
+    <!-- Neon Accents -->
+    <color name="neon_cyan">#FF00E5FF</color>
+    <color name="neon_purple">#FF7C4DFF</color>
+    <color name="neon_pink">#FFFF0080</color>
+    <color name="neon_green">#FF00E676</color>
+    <color name="neon_amber">#FFFFD740</color>
+    <color name="neon_red">#FFFF1744</color>
+
+    <!-- Neon Dim (for glow backgrounds) -->
+    <color name="neon_cyan_dim">#4000E5FF</color>
+    <color name="neon_purple_dim">#407C4DFF</color>
+    <color name="neon_pink_dim">#40FF0080</color>
+
+    <!-- Glass Strokes -->
+    <color name="glass_stroke_cyan">#402975FF</color>
+    <color name="glass_stroke_purple">#407C4DFF</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFF0F0FF</color>
+    <color name="text_secondary">#FFB0B0CC</color>
+    <color name="text_muted">#FF707090</color>
+
+    <!-- Legacy compat -->
+    <color name="purple_200">#FF9BB3FF</color>
+    <color name="purple_500">#FF2975FF</color>
+    <color name="purple_700">#FF1E40C9</color>
+    <color name="teal_200">#FF3BC9B1</color>
+    <color name="teal_700">#FF168A79</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="upload_card_bg">#FF1A1A1A</color>
+    <color name="upload_progress_tint">#FF4CAF50</color>
+    <color name="feed_stroke_muted">#402975FF</color>
+</resources>

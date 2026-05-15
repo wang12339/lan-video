@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="application-name" content="LAN视频">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icons/icon.svg">
+    <title>局域网视频</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Access Gate Dialog -->
+    <div id="accessGateOverlay" class="overlay hidden">
+        <div class="dialog">
+            <div class="dialog-icon" data-icon="lock"></div>
+            <h2 class="dialog-title">访问密码</h2>
+            <p class="dialog-desc">此服务需要访问密码</p>
+            <input type="password" id="accessPasswordInput" class="input" placeholder="请输入访问密码" autocomplete="off">
+            <p id="accessPasswordError" class="error-text hidden">密码错误，请重试</p>
+            <div class="dialog-actions">
+                <button id="btnAccessSubmit" class="btn btn-primary">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Progress Overlay -->
+    <div id="uploadOverlay" class="overlay hidden">
+        <div class="upload-panel">
+            <div class="upload-header"><span data-icon="upload"></span> 上传中</div>
+            <div class="upload-status" id="uploadStatus">准备中...</div>
+            <div class="upload-progress-text" id="uploadProgressText">0%</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="uploadProgressFill"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drawer Overlay -->
+    <div id="drawerOverlay" class="overlay hidden"></div>
+
+    <!-- Drawer -->
+    <nav id="drawer" class="drawer">
+        <div class="drawer-header">
+            <div data-icon="tv"></div>
+            <div class="drawer-title">局域网视频</div>
+            <div class="drawer-subtitle">LAN Video</div>
+        </div>
+        <div class="drawer-menu">
+            <div class="drawer-item active" data-page="home">
+                <span class="drawer-item-icon" data-icon="home"></span>
+                <span>首页</span>
+            </div>
+            <div class="drawer-item" data-page="search">
+                <span class="drawer-item-icon" data-icon="search"></span>
+                <span>搜索</span>
+            </div>
+            <div class="drawer-item" data-page="slideshow">
+                <span class="drawer-item-icon" data-icon="slideshow"></span>
+                <span>幻灯片</span>
+            </div>
+            <div class="drawer-divider"></div>
+            <div class="drawer-item" id="drawerUpload">
+                <span class="drawer-item-icon" data-icon="upload"></span>
+                <span>上传</span>
+            </div>
+            <div class="drawer-item" id="drawerFolderUpload">
+                <span class="drawer-item-icon" data-icon="folder_open"></span>
+                <span>从文件夹上传</span>
+            </div>
+            <div class="drawer-item" id="drawerBatchDelete">
+                <span class="drawer-item-icon" data-icon="delete"></span>
+                <span>批量删除</span>
+            </div>
+            <div class="drawer-divider"></div>
+            <div class="drawer-item" data-page="settings">
+                <span class="drawer-item-icon" data-icon="settings"></span>
+                <span>设置</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- App Shell -->
+    <div id="app" class="app-shell">
+        <!-- Top Bar -->
+        <header id="topBar" class="top-bar">
+            <button id="btnMenu" class="icon-btn" aria-label="菜单" data-icon="menu"></button>
+            <h1 id="pageTitle" class="top-bar-title">首页</h1>
+            <div id="topBarActions" class="top-bar-actions"></div>
+        </header>
+
+        <!-- Content -->
+        <main id="content" class="content">
+            <!-- Connection Status -->
+            <div id="connectionStatus" class="connection-status" role="status" aria-live="polite">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">连接中...</span>
+            </div>
+
+            <!-- ===== HOME PAGE ===== -->
+            <div id="pageHome" class="page active">
+                <div class="tabs" role="tablist" aria-label="内容类型">
+                    <div class="tab active" role="tab" aria-selected="true" data-tab="0">视频</div>
+                    <div class="tab" role="tab" aria-selected="false" data-tab="1">图片</div>
+                    <div class="tab-indicator" id="tabIndicator"></div>
+                </div>
+                <div id="selectionBar" class="selection-bar hidden">
+                    <span id="selectionCount">未选择</span>
+                    <div class="selection-actions">
+                        <button id="btnSelectAll" class="btn btn-small">全选</button>
+                        <button id="btnCancelSelect" class="btn btn-small">取消</button>
+                        <button id="btnDeleteSelected" class="btn btn-small btn-danger">删除</button>
+                    </div>
+                </div>
+                <div class="grid-container">
+                    <div id="skeletonGrid" class="skeleton-grid">
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                        <div class="skeleton-item"><div class="skeleton-thumb"></div><div class="skeleton-bar"></div></div>
+                    </div>
+                    <div id="loadingSpinner" class="loading-spinner hidden">
+                        <div class="spinner"></div>
+                        <span>加载中...</span>
+                    </div>
+                    <div id="emptyState" class="empty-state hidden">
+                        <div data-icon="folder_open"></div>
+                        <p id="emptyText">暂无内容</p>
+                    </div>
+                    <div id="grid" class="grid hidden"></div>
+                </div>
+            </div>
+
+            <!-- ===== SEARCH PAGE ===== -->
+            <div id="pageSearch" class="page">
+                <div class="search-bar">
+                    <div class="search-bar-inner">
+                        <span class="search-bar-icon" data-icon="search"></span>
+                        <input type="search" id="searchInput" class="input search-input" placeholder="搜索视频标题..." autocomplete="off">
+                    </div>
+                </div>
+                <div class="grid-container">
+                    <div id="searchEmpty" class="empty-state">
+                        <div data-icon="search"></div>
+                        <p id="searchEmptyText">搜索视频标题</p>
+                    </div>
+                    <div id="searchGrid" class="grid"></div>
+                    <div id="searchLoadMore" class="load-more hidden">加载更多...</div>
+                </div>
+            </div>
+
+            <!-- ===== SLIDESHOW PAGE ===== -->
+            <div id="pageSlideshow" class="page">
+                <div class="grid-container">
+                    <div id="slideshowEmpty" class="empty-state">
+                        <div data-icon="slideshow"></div>
+                        <p>暂无图片</p>
+                    </div>
+                    <div id="slideshowGrid" class="grid"></div>
+                </div>
+            </div>
+            <!-- ===== SETTINGS PAGE ===== -->
+            <div id="pageSettings" class="page">
+                <div class="settings-section">
+                    <h3 class="settings-label">服务器设置</h3>
+                    <div class="settings-card">
+                        <label class="settings-field-label">服务器地址</label>
+                        <input type="text" id="inputServerUrl" class="input" placeholder="http://192.168.1.100:8082">
+                        <p class="settings-hint">例如: http://192.168.1.100:8082</p>
+                        <button id="btnSaveServer" class="btn btn-primary btn-full">保存</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3 class="settings-label">管理员设置</h3>
+                    <div class="settings-card">
+                        <label class="settings-field-label">Admin Token</label>
+                        <input type="text" id="inputAdminToken" class="input" placeholder="输入 Admin Token">
+                        <p class="settings-hint">用于管理操作（上传、删除等）</p>
+                        <button id="btnSaveToken" class="btn btn-primary btn-full">保存</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3 class="settings-label">关于</h3>
+                    <div class="settings-card">
+                        <p>局域网视频播放器</p>
+                        <p class="settings-hint">后端版本: <span id="serverVersion">-</span></p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ===== SLIDESHOW FULLSCREEN ===== -->
+        <div id="pageSlideshowFull" class="page-full hidden">
+            <div class="slideshow-top">
+                <button id="btnSlideshowBack" class="icon-btn" aria-label="返回" data-icon="arrow_back"></button>
+                <span id="slideshowTitle" class="slideshow-title-text">幻灯片</span>
+                <span id="slideshowCounter" class="slideshow-counter">1/1</span>
+                <button id="btnSlideshowPlay" class="icon-btn" aria-label="播放/暂停">
+                    <svg width="24" height="24" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/></svg>
+                </button>
+            </div>
+            <div class="slideshow-content">
+                <button id="btnSlideshowPrev" class="slideshow-nav-btn" aria-label="上一张" data-icon="chevron_left"></button>
+                <div class="slideshow-stage">
+                    <img id="slideshowDisplay" class="slideshow-display" alt="" draggable="false">
+                    <div class="slideshow-fallback" style="display:none;align-items:center;justify-content:center;position:absolute;inset:0;color:rgba(255,255,255,0.3)" data-icon="image"></div>
+                </div>
+                <button id="btnSlideshowNext" class="slideshow-nav-btn" aria-label="下一张" data-icon="chevron_right"></button>
+            </div>
+            <div class="slideshow-progress-bar">
+                <div class="slideshow-progress-fill" id="slideshowProgressFill"></div>
+            </div>
+        </div>
+
+        <!-- ===== VIDEO PLAYER ===== -->
+        <div id="pagePlayer" class="page-full hidden">
+            <div class="player-top-bar">
+                <button id="btnPlayerBack" class="icon-btn" aria-label="返回" data-icon="arrow_back"></button>
+                <span id="playerTitle" class="player-title-text">播放</span>
+                <button id="btnPlayerFullscreen" class="icon-btn" aria-label="全屏" data-icon="fullscreen"></button>
+            </div>
+            <div class="player-container">
+                <video id="videoPlayer" class="video-player" controls playsinline webkit-playsinline></video>
+                <div id="speedIndicator" class="speed-indicator hidden">2x</div>
+            </div>
+        </div>
+
+        <!-- ===== IMAGE VIEWER ===== -->
+        <div id="pageImageViewer" class="page-full hidden">
+            <div class="image-viewer-top">
+                <button id="btnImageBack" class="icon-btn" aria-label="返回" data-icon="arrow_back"></button>
+                <span id="imageTitle" class="image-title-text">图片</span>
+                <span id="imageCounter" class="image-counter">1/1</span>
+            </div>
+            <div id="imageViewerContent" class="image-viewer-content">
+                <button id="btnImagePrev" class="image-nav-btn" aria-label="上一张" data-icon="chevron_left"></button>
+                <div class="image-viewer-stage">
+                    <img id="imageDisplay" class="image-display" alt="" draggable="false">
+                </div>
+                <button id="btnImageNext" class="image-nav-btn" aria-label="下一张" data-icon="chevron_right"></button>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <nav id="bottomNav" class="bottom-nav">
+            <button class="nav-item active" data-page="home" aria-label="首页">
+                <span class="nav-icon" data-icon="home"></span>
+                <span class="nav-label">首页</span>
+            </button>
+            <button class="nav-item" data-page="search" aria-label="搜索">
+                <span class="nav-icon" data-icon="search"></span>
+                <span class="nav-label">搜索</span>
+            </button>
+            <button class="nav-item" data-page="slideshow" aria-label="幻灯片">
+                <span class="nav-icon" data-icon="slideshow"></span>
+                <span class="nav-label">幻灯片</span>
+            </button>
+            <button class="nav-item" data-page="settings" aria-label="设置">
+                <span class="nav-icon" data-icon="settings"></span>
+                <span class="nav-label">设置</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- File picker (visually hidden but not display:none, for iOS Safari compat) -->
+    <input type="file" id="folderPicker" webkitdirectory class="visually-hidden">
+    <input type="file" id="filePicker" multiple accept="video/*,image/*" class="visually-hidden">
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

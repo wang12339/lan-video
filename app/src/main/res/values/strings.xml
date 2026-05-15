@@ -1,0 +1,82 @@
+<resources>
+    <string name="app_name">LAN 视频</string>
+    <string name="nav_header_title">LAN 视频</string>
+    <string name="nav_header_subtitle">局域网视频平台</string>
+    <string name="nav_header_desc">Navigation header</string>
+    <string name="action_settings">Settings</string>
+    <string name="menu_home">首页</string>
+    <string name="menu_player">播放</string>
+    <string name="video_cover_desc">视频封面</string>
+    <string name="empty_video_list">暂无视频，请检查局域网服务</string>
+    <string name="upload_list_title">上传列表</string>
+    <string name="upload_list_empty">暂无上传任务</string>
+    <string name="upload_select_all">全选</string>
+    <string name="upload_start">上传</string>
+    <string name="upload_select_none">取消全选</string>
+    <string name="upload_no_selection">请选择要上传的文件</string>
+    <string name="upload_add_more">添加</string>
+    <string name="search_hint">搜索视频标题或分类</string>
+    <string name="search_empty_hint">输入关键词搜索视频</string>
+    <string name="menu_search">搜索</string>
+    <string name="feed_hamburger_desc">打开菜单</string>
+    <string name="feed_loading">加载中…</string>
+    <string name="feed_load_failed">加载失败: %s</string>
+    <string name="connection_scanning">搜索服务中…</string>
+    <string name="connection_disconnected">未连接，点此重试</string>
+    <string name="search_no_results">未找到与\"%1$s\"相关的视频</string>
+    <string name="search_error">搜索失败: %s</string>
+    <string name="fab_content_description">Represents a view to invoke an action</string>
+
+    <!-- Phase 3: Hardcoded string extraction -->
+    <string name="home_select_all">全选</string>
+    <string name="home_delete_selected">删除</string>
+    <string name="home_cancel_select">取消</string>
+    <string name="home_filter_hint">筛选标题…</string>
+    <string name="nav_upload_from_folder">从文件夹上传</string>
+    <string name="nav_batch_delete">批量删除</string>
+    <string name="player_back_desc">返回</string>
+    <string name="settings_server_connection">服务器连接</string>
+    <string name="settings_server_address_hint">服务器地址</string>
+    <string name="settings_save_and_reconnect">保存并重新连接</string>
+    <string name="settings_admin_title">管理员设置</string>
+    <string name="settings_admin_token_hint">Admin Token</string>
+    <string name="settings_admin_token_desc">启动后端服务时，终端会打印 admin token，保存在 backend/data/.admin_token 文件中。将文件内容粘贴到此处即可启用删除视频等功能。</string>
+    <string name="settings_save_token">保存 Token</string>
+    <string name="settings_version">LAN 视频 v1.0</string>
+    <string name="access_gate_title">LAN 视频平台</string>
+    <string name="access_gate_subtitle">输入访问密码以继续</string>
+    <string name="access_gate_password_hint">访问密码</string>
+    <string name="access_gate_submit">验证并进入</string>
+    <string name="access_gate_server_config">设置服务器地址</string>
+
+    <!-- Login / Register -->
+    <string name="login_title">LAN 视频平台</string>
+    <string name="login_subtitle">登录账号以继续</string>
+    <string name="login_username_hint">用户名</string>
+    <string name="login_password_hint">密码</string>
+    <string name="login_confirm_hint">确认密码</string>
+    <string name="login_btn_login">登录</string>
+    <string name="login_btn_register">注册</string>
+    <string name="login_toggle_register">还没有账号？点击注册</string>
+    <string name="login_toggle_login">已有账号？点击登录</string>
+
+    <string name="player_skip_next">下一个</string>
+    <string name="nav_image_viewer">图片查看</string>
+
+    <!-- User page -->
+    <string name="nav_user">用户</string>
+    <string name="user_logout">退出登录</string>
+    <string name="user_not_logged_in">未登录</string>
+    <string name="user_account_info">账户信息</string>
+    <string name="user_badge_admin">管理员</string>
+    <string name="user_logged_out">已退出登录</string>
+    <string name="user_info_username">用户名: %s</string>
+    <string name="user_info_status_logged_in">状态: 已登录</string>
+    <string name="user_button_login">登录</string>
+    <string name="user_stats_watched_label">已观看</string>
+    <string name="user_stats_watch_time_label">累计观看</string>
+    <string name="user_stats_watch_time_hours">%.1f 小时</string>
+    <string name="user_recent_title">最近播放</string>
+    <string name="user_recent_empty">暂无播放记录</string>
+    <string name="user_registered_at">注册时间: %s</string>
+</resources>

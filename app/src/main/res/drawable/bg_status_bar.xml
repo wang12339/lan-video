@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 背景 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#CC0A0A0F" />
+        </shape>
+    </item>
+    <!-- 底部霓虹高光线 -->
+    <item android:bottom="0dp" android:height="1dp" android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/neon_cyan_dim" />
+        </shape>
+    </item>
+</layer-list>

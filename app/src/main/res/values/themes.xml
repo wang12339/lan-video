@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.MyApplication" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <!-- Primary brand color — neon cyan -->
+        <item name="colorPrimary">@color/neon_cyan</item>
+        <item name="colorPrimaryVariant">@color/neon_purple</item>
+        <item name="colorOnPrimary">@color/black</item>
+
+        <!-- Secondary brand color -->
+        <item name="colorSecondary">@color/neon_purple</item>
+        <item name="colorSecondaryVariant">@color/neon_cyan</item>
+        <item name="colorOnSecondary">@color/white</item>
+
+        <!-- Surface colors -->
+        <item name="android:colorBackground">@color/background_tech</item>
+        <item name="colorSurface">@color/surface_glass</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+
+        <!-- Status bar -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- Typography -->
+        <item name="textAppearanceHeadlineSmall">@style/TextAppearance.MyApplication.HeadlineSmall</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.MyApplication.TitleMedium</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.MyApplication.BodyMedium</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.MyApplication.LabelSmall</item>
+
+        <!-- SeekBar -->
+        <item name="android:seekBarStyle">@style/Widget.MyApplication.SeekBar</item>
+
+        <!-- Navigation styling -->
+        <item name="bottomNavigationStyle">@style/Widget.MyApplication.BottomNavigation</item>
+    </style>
+
+    <style name="Theme.MyApplication.NoActionBar" parent="Theme.MyApplication">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <style name="Theme.MyApplication.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+    <style name="Theme.MyApplication.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+
+    <!-- Typography -->
+    <style name="TextAppearance.MyApplication.HeadlineSmall" parent="TextAppearance.AppCompat.Large">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="TextAppearance.MyApplication.TitleMedium" parent="TextAppearance.AppCompat.Medium">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:letterSpacing">0.01</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <style name="TextAppearance.MyApplication.BodyMedium" parent="TextAppearance.AppCompat.Small">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <style name="TextAppearance.MyApplication.LabelSmall" parent="TextAppearance.AppCompat.Caption">
+        <item name="android:textColor">@color/text_muted</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <!-- ShapeAppearance -->
+    <style name="ShapeAppearance.Circle" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerSize">50%</item>
+    </style>
+
+    <!-- Custom Widget Styles -->
+    <style name="Widget.MyApplication.TextInput.Dark" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxStrokeColor">@color/feed_stroke_muted</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="hintTextColor">@color/text_muted</item>
+        <item name="android:textColorHint">@color/text_muted</item>
+    </style>
+
+    <style name="Widget.MyApplication.Button.OutlineOnDark" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="strokeColor">@color/text_secondary</item>
+        <item name="android:textColor">@color/text_primary</item>
+    </style>
+
+    <style name="Widget.MyApplication.SeekBar" parent="Widget.AppCompat.SeekBar">
+        <item name="android:progressTint">@color/neon_cyan</item>
+        <item name="android:thumbTint">@color/neon_cyan</item>
+        <item name="android:trackTint">#40707090</item>
+    </style>
+
+    <style name="Widget.MyApplication.BottomNavigation" parent="Widget.MaterialComponents.BottomNavigationView">
+        <item name="itemIconTint">@color/nav_color_selector</item>
+        <item name="itemTextColor">@color/nav_color_selector</item>
+        <item name="itemRippleColor">@color/neon_cyan_dim</item>
+        <item name="android:background">@drawable/bg_bottom_nav</item>
+    </style>
+
+    <style name="Widget.MyApplication.NavigationView" parent="Widget.MaterialComponents.NavigationView">
+        <item name="itemIconTint">@color/nav_color_selector</item>
+        <item name="itemTextColor">@color/nav_color_selector</item>
+    </style>
+</resources>

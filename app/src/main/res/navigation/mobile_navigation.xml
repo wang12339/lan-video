@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/mobile_navigation"
+    app:startDestination="@+id/nav_home">
+
+    <fragment
+        android:id="@+id/nav_home"
+        android:name="com.example.myapplication.feature.home.HomeFragment"
+        android:label="@string/menu_home"
+        tools:layout="@layout/fragment_home" />
+
+    <fragment
+        android:id="@+id/nav_search"
+        android:name="com.example.myapplication.feature.search.SearchFragment"
+        android:label="@string/menu_search"
+        tools:layout="@layout/fragment_search" />
+
+    <fragment
+        android:id="@+id/nav_settings"
+        android:name="com.example.myapplication.ui.settings.SettingsFragment"
+        android:label="@string/action_settings"
+        tools:layout="@layout/fragment_settings" />
+
+    <fragment
+        android:id="@+id/nav_player"
+        android:name="com.example.myapplication.feature.player.PlayerFragment"
+        android:label="@string/menu_player"
+        tools:layout="@layout/fragment_player" />
+
+    <fragment
+        android:id="@+id/nav_image_viewer"
+        android:name="com.example.myapplication.ui.viewer.ImageViewerFragment"
+        android:label="@string/nav_image_viewer"
+        tools:layout="@layout/fragment_image_viewer" />
+
+    <fragment
+        android:id="@+id/nav_upload_list"
+        android:name="com.example.myapplication.ui.upload.UploadListFragment"
+        android:label="@string/upload_list_title"
+        tools:layout="@layout/fragment_upload_list" />
+
+    <fragment
+        android:id="@+id/nav_user"
+        android:name="com.example.myapplication.feature.user.UserFragment"
+        android:label="@string/nav_user"
+        tools:layout="@layout/fragment_user" />
+</navigation>
