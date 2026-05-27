@@ -3,14 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background_tech">
+    android:background="@color/background">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Signal HUD bar -->
+        <!-- 连接状态条 -->
         <LinearLayout
             android:id="@+id/connection_status"
             android:layout_width="match_parent"
@@ -34,19 +34,75 @@
                 android:id="@+id/status_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-               
                 android:letterSpacing="0.1"
-                android:textColor="@color/neon_cyan"
+                android:textColor="@color/brand"
                 android:textSize="10sp" />
         </LinearLayout>
 
-        <!-- Channel selector -->
-        <HorizontalScrollView
-            android:id="@+id/channel_selector"
+        <!-- 顶部导航栏 -->
+        <RelativeLayout
             android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="12dp"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="12dp">
+
+            <ImageButton
+                android:id="@+id/btn_home_menu"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_centerVertical="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/feed_hamburger_desc"
+                android:padding="10dp"
+                android:src="@drawable/ic_feed_menu_24"
+                android:tint="@color/text_primary" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerInParent="true"
+                android:text="ATMOS"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+
+        </RelativeLayout>
+
+        <!-- Banner 轮播 -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:background="@color/surface">
+
+            <androidx.viewpager2.widget.ViewPager2
+                android:id="@+id/banner_pager"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Banner 渐变遮罩 -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:layout_gravity="bottom"
+                android:background="@drawable/bg_banner_gradient" />
+
+            <!-- Banner 指示点 -->
+            <LinearLayout
+                android:id="@+id/banner_dots"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="10dp"
+                android:gravity="center"
+                android:orientation="horizontal" />
+
+        </FrameLayout>
+
+        <!-- 频道选择器 -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
             android:scrollbars="none">
 
             <LinearLayout
@@ -54,21 +110,12 @@
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
                 android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:paddingStart="12dp" />
 
-                <ImageButton
-                    android:id="@+id/btn_home_menu"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:background="@android:color/transparent"
-                    android:contentDescription="@string/feed_hamburger_desc"
-                    android:padding="6dp"
-                    android:src="@drawable/ic_feed_menu_24"
-                    android:tint="@color/text_primary" />
-            </LinearLayout>
         </HorizontalScrollView>
 
-        <!-- Loading -->
+        <!-- 加载中（骨架屏） -->
         <FrameLayout
             android:id="@+id/loading_container"
             android:layout_width="match_parent"
@@ -78,17 +125,13 @@
             android:visibility="gone"
             tools:visibility="visible">
 
-            <TextView
-                android:id="@+id/feed_progress_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-               
-                android:text="> LOADING..."
-                android:textColor="@color/text_muted"
-                android:textSize="13sp" />
+            <ProgressBar
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:indeterminateTint="@color/brand" />
         </FrameLayout>
 
-        <!-- Empty state -->
+        <!-- 空状态 -->
         <LinearLayout
             android:id="@+id/empty_feed"
             android:layout_width="match_parent"
@@ -104,23 +147,23 @@
                 android:id="@+id/empty_feed_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-               
                 android:textColor="@color/text_muted"
                 android:textSize="14sp"
-                tools:text="> NO MEDIA FOUND" />
+                tools:text="暂无视频" />
         </LinearLayout>
 
-        <!-- Data stream -->
+        <!-- 视频网格 -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recycler_stream"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:clipToPadding="false"
-            android:paddingHorizontal="0dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp"
             android:visibility="gone" />
 
-        <!-- Loading more footer -->
+        <!-- 加载更多 -->
         <FrameLayout
             android:id="@+id/loading_more"
             android:layout_width="match_parent"
@@ -129,22 +172,19 @@
             android:visibility="gone"
             tools:visibility="visible">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-               
-                android:text="> LOADING MORE..."
-                android:textColor="@color/text_muted"
-                android:textSize="11sp" />
+            <ProgressBar
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:indeterminateTint="@color/brand" />
         </FrameLayout>
     </LinearLayout>
 
-    <!-- Selection bar (overlay at top of stream) -->
+    <!-- 选择栏 -->
     <FrameLayout
         android:id="@+id/selection_bar"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:background="#D90A0A0F"
+        android:background="@color/surface_overlay"
         android:visibility="gone"
         tools:visibility="visible">
 
@@ -159,7 +199,6 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-               
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
 
@@ -169,11 +208,10 @@
                 android:layout_height="wrap_content"
                 android:clickable="true"
                 android:focusable="true"
-               
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="8dp"
-                android:text="> 全选"
-                android:textColor="@color/neon_cyan"
+                android:text="全选"
+                android:textColor="@color/brand"
                 android:textSize="12sp" />
 
             <TextView
@@ -182,11 +220,10 @@
                 android:layout_height="wrap_content"
                 android:clickable="true"
                 android:focusable="true"
-               
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="8dp"
-                android:text="> 删除"
-                android:textColor="@color/neon_red"
+                android:text="删除"
+                android:textColor="@color/error"
                 android:textSize="12sp" />
 
             <TextView
@@ -195,10 +232,9 @@
                 android:layout_height="wrap_content"
                 android:clickable="true"
                 android:focusable="true"
-               
                 android:paddingHorizontal="12dp"
                 android:paddingVertical="8dp"
-                android:text="> 取消"
+                android:text="取消"
                 android:textColor="@color/text_muted"
                 android:textSize="12sp" />
         </LinearLayout>

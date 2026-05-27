@@ -3,8 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="4dp"
-    android:background="@drawable/bg_card_glass"
+    android:background="@color/surface"
     android:clickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground">
@@ -14,10 +13,12 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- 缩略图 -->
         <FrameLayout
             android:id="@+id/thumbnail_container"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:background="@color/surface">
 
             <ImageView
                 android:id="@+id/image_cover"
@@ -26,7 +27,7 @@
                 android:scaleType="centerCrop"
                 tools:ignore="ContentDescription" />
 
-            <!-- Watch progress bar -->
+            <!-- 观看进度条 -->
             <View
                 android:id="@+id/progress_watched"
                 android:layout_width="0dp"
@@ -35,7 +36,7 @@
                 android:background="@color/brand"
                 android:visibility="gone" />
 
-            <!-- Duration badge -->
+            <!-- 时长标签 -->
             <TextView
                 android:id="@+id/badge_duration"
                 android:layout_width="wrap_content"
@@ -52,7 +53,7 @@
                 tools:text="03:42"
                 tools:visibility="visible" />
 
-            <!-- Selection overlay -->
+            <!-- 选择遮罩 -->
             <View
                 android:id="@+id/selection_overlay"
                 android:layout_width="match_parent"
@@ -61,25 +62,28 @@
                 android:visibility="gone" />
         </FrameLayout>
 
+        <!-- 标题 -->
         <TextView
             android:id="@+id/text_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="8dp"
-            android:layout_marginTop="6dp"
+            android:layout_marginHorizontal="10dp"
+            android:layout_marginTop="8dp"
             android:ellipsize="end"
-            android:maxLines="1"
+            android:maxLines="2"
+            android:lineSpacingExtra="2dp"
             android:textColor="@color/text_primary"
             android:textSize="13sp"
-            tools:text="video_title.mp4" />
+            tools:text="视频标题" />
 
+        <!-- 元数据 -->
         <TextView
             android:id="@+id/text_metadata"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="8dp"
+            android:layout_marginHorizontal="10dp"
             android:layout_marginTop="2dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginBottom="10dp"
             android:textColor="@color/text_muted"
             android:textSize="11sp"
             tools:text="03:42" />

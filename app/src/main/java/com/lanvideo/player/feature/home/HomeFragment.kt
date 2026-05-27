@@ -13,7 +13,7 @@ import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
-import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.lanvideo.player.ConnectionState
 import com.lanvideo.player.MainActivity
@@ -85,8 +85,8 @@ class HomeFragment : Fragment() {
         channels.forEachIndexed { index, name ->
             val chip = TextView(requireContext()).apply {
                 text = name
-                setPadding(16, 0, 16, 0)
-                textSize = 12f
+                setPadding(20, 6, 20, 6)
+                textSize = 14f
                 setTextColor(resources.getColorStateList(R.color.nav_color_selector, null))
                 isClickable = true
                 isFocusable = true
@@ -107,7 +107,8 @@ class HomeFragment : Fragment() {
         for (i in 0 until binding.channelContainer.childCount) {
             val chip = binding.channelContainer.getChildAt(i) as? TextView ?: continue
             chip.isSelected = i == currentChannel
-            chip.alpha = if (i == currentChannel) 1f else 0.5f
+            chip.alpha = if (i == currentChannel) 1f else 0.6f
+            chip.typeface = if (i == currentChannel) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
         }
     }
 
@@ -144,14 +145,14 @@ class HomeFragment : Fragment() {
                     .show()
             }
         )
-        binding.recyclerStream.layoutManager = LinearLayoutManager(requireContext())
+        binding.recyclerStream.layoutManager = GridLayoutManager(requireContext(), 2)
         binding.recyclerStream.adapter = streamAdapter
 
         // 分页滚动监听
         binding.recyclerStream.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
-                val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                val layoutManager = recyclerView.layoutManager as? GridLayoutManager ?: return
                 val visibleItemCount = layoutManager.childCount
                 val totalItemCount = layoutManager.itemCount
                 val firstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
