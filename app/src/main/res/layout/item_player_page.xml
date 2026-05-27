@@ -37,7 +37,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:fontFamily="monospace"
+           
             android:text="50%"
             android:textColor="@color/text_primary"
             android:textSize="14sp" />
@@ -49,7 +49,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:fontFamily="monospace"
+       
         android:textColor="@color/neon_cyan"
         android:textSize="48sp"
         android:visibility="gone" />
@@ -63,7 +63,7 @@
         android:layout_marginTop="60dp"
         android:layout_marginEnd="12dp"
         android:background="@drawable/bg_card_glass_input"
-        android:fontFamily="monospace"
+       
         android:gravity="center"
         android:paddingHorizontal="10dp"
         android:shadowColor="@color/neon_cyan"
@@ -166,7 +166,7 @@
             android:id="@+id/text_playback_time"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
+           
             android:letterSpacing="0.05"
             android:shadowColor="@color/neon_cyan"
             android:shadowDx="0"
@@ -219,7 +219,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="48dp"
                 android:layout_marginTop="24dp"
-                android:fontFamily="monospace"
+               
                 android:text="@string/player_skip_next"
                 android:textColor="@color/neon_cyan" />
         </LinearLayout>

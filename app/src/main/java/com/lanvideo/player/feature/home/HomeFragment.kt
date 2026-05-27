@@ -230,7 +230,7 @@ class HomeFragment : Fragment() {
                 binding.recyclerStream.isVisible = false
                 binding.loadingContainer.isVisible = false
                 binding.emptyFeed.isVisible = true
-                binding.emptyFeedText.text = "> 请先登录"
+                binding.emptyFeedText.text = "请先登录"
                 return@launch
             }
 
@@ -322,7 +322,7 @@ class HomeFragment : Fragment() {
                 applyStream()
             }.onFailure { err ->
                 app.setConnectionState(ConnectionState.DISCONNECTED)
-                binding.emptyFeedText.text = "> 加载失败: ${err.message?.take(60) ?: "未知错误"}"
+                binding.emptyFeedText.text = "加载失败: ${err.message?.take(60) ?: "未知错误"}"
                 binding.emptyFeed.isVisible = true
             }
         }
@@ -374,7 +374,7 @@ class HomeFragment : Fragment() {
         val empty = allVideos.isEmpty()
         binding.emptyFeed.isVisible = empty
         val channelName = channels.getOrElse(currentChannel) { "ALL" }
-        binding.emptyFeedText.text = if (empty) "> 暂无${channelName}" else ""
+        binding.emptyFeedText.text = if (empty) "暂无${channelName}" else ""
         if (!empty) {
             streamAdapter?.submitList(allVideos.toList())
             binding.recyclerStream.isVisible = true
@@ -383,12 +383,12 @@ class HomeFragment : Fragment() {
 
     private fun updateSelectionBar(count: Int) {
         binding.selectionBar.isVisible = count > 0
-        binding.selectionCount.text = if (count > 0) "> 已选: $count" else ""
+        binding.selectionCount.text = if (count > 0) "已选: $count" else ""
         val adapter = streamAdapter
         if (adapter != null && adapter.isAllSelected()) {
-            binding.btnSelectAll.text = "> 取消全选"
+            binding.btnSelectAll.text = "取消全选"
         } else {
-            binding.btnSelectAll.text = "> 全选"
+            binding.btnSelectAll.text = "全选"
         }
     }
 

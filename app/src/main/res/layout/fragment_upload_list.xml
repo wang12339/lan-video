@@ -27,7 +27,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:fontFamily="monospace"
+           
             android:gravity="center"
             android:letterSpacing="0.05"
             android:text="@string/upload_list_title"
@@ -57,7 +57,7 @@
             style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
-            android:fontFamily="monospace"
+           
             android:text="@string/upload_start"
             android:textColor="@color/neon_cyan"
             android:textSize="12sp" />

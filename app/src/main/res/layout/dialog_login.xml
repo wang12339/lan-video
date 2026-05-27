@@ -22,7 +22,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
-        android:fontFamily="monospace"
+       
         android:gravity="center"
         android:letterSpacing="0.08"
         android:shadowColor="@color/neon_cyan"
@@ -63,7 +63,7 @@
             android:id="@+id/input_username"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
+           
             android:imeOptions="actionNext"
             android:inputType="text"
             android:maxLines="1"
@@ -94,7 +94,7 @@
             android:id="@+id/input_password"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
+           
             android:imeOptions="actionDone"
             android:inputType="textPassword"
             android:maxLines="1"
@@ -125,7 +125,7 @@
             android:id="@+id/input_confirm"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
+           
             android:imeOptions="actionDone"
             android:inputType="textPassword"
             android:maxLines="1"
@@ -140,7 +140,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:fontFamily="monospace"
+       
         android:gravity="center"
         android:textColor="@color/neon_red"
         android:textSize="12sp"
@@ -153,7 +153,7 @@
         android:layout_height="50dp"
         android:layout_marginTop="24dp"
         android:background="@drawable/bg_button_neon_gradient"
-        android:fontFamily="monospace"
+       
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:letterSpacing="0.08"

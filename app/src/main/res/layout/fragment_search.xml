@@ -35,7 +35,7 @@
                 android:id="@+id/search_status_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
+               
                 android:textColor="@color/neon_cyan"
                 android:textSize="11sp" />
         </LinearLayout>
@@ -64,7 +64,7 @@
                 android:id="@+id/input_search"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
+               
                 android:imeOptions="actionSearch"
                 android:inputType="text"
                 android:maxLines="1"
@@ -80,7 +80,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="48dp"
             android:layout_marginTop="4dp"
-            android:fontFamily="monospace"
+           
             android:textColor="@color/neon_cyan"
             android:textSize="11sp"
             android:visibility="gone"
@@ -123,7 +123,7 @@
                 android:layout_gravity="center_horizontal|bottom"
                 android:layout_marginBottom="8dp"
                 android:background="?attr/selectableItemBackground"
-                android:fontFamily="monospace"
+               
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="8dp"
                 android:text="@string/search_clear_history"

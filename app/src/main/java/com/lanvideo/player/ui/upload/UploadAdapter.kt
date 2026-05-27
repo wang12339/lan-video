@@ -30,7 +30,7 @@ class UploadAdapter(
         fun bind(item: UploadItem, position: Int) {
             val ctx = binding.root.context
             binding.fileName.text = item.fileName
-            binding.fileSize.text = if (item.fileSize > 0) formatSize(item.fileSize) else "> 大小: --"
+            binding.fileSize.text = if (item.fileSize > 0) formatSize(item.fileSize) else "大小: --"
 
             val progress = (item.progress * 1000).toInt().coerceIn(0, 1000)
             binding.progressBar.progress = progress
@@ -49,32 +49,32 @@ class UploadAdapter(
             val statusColor: Int
             when (item.status) {
                 UploadStatus.QUEUED -> {
-                    statusText = "> 排队中"
+                    statusText = "排队中"
                     statusColor = ContextCompat.getColor(ctx, R.color.text_muted)
                     binding.progressBar.progress = 0
                 }
                 UploadStatus.CHECKING -> {
-                    statusText = "> 检查中..."
+                    statusText = "检查中..."
                     statusColor = ContextCompat.getColor(ctx, R.color.neon_amber)
                     binding.progressBar.progress = 0
                 }
                 UploadStatus.UPLOADING -> {
                     val rate = if (item.progress > 0) "${(item.progress * 100).toInt()}%" else ""
-                    statusText = "> 上传中 $rate"
+                    statusText = "上传中 $rate"
                     statusColor = ContextCompat.getColor(ctx, R.color.neon_cyan)
                 }
                 UploadStatus.SUCCESS -> {
-                    statusText = "> 完成"
+                    statusText = "完成"
                     statusColor = ContextCompat.getColor(ctx, R.color.neon_green)
                     binding.progressBar.progress = 1000
                 }
                 UploadStatus.DUPLICATE -> {
-                    statusText = "> 跳过（重复）"
+                    statusText = "跳过（重复）"
                     statusColor = ContextCompat.getColor(ctx, R.color.neon_amber)
                     binding.progressBar.progress = 1000
                 }
                 UploadStatus.FAILED -> {
-                    statusText = "> 失败: ${item.errorMessage?.take(40) ?: "未知"}"
+                    statusText = "失败: ${item.errorMessage?.take(40) ?: "未知"}"
                     statusColor = ContextCompat.getColor(ctx, R.color.neon_red)
                 }
             }

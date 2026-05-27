@@ -45,7 +45,7 @@ class PlayerFragment : Fragment() {
 
         val videoId = requireArguments().getLong("videoId")
         val category = requireArguments().getString("category") ?: ""
-        binding.textTitle.text = "> ${requireArguments().getString("title").orEmpty()}"
+        binding.textTitle.text = "${requireArguments().getString("title").orEmpty()}"
         binding.btnBack.setOnClickListener { parentFragmentManager.popBackStack() }
 
         // 播放时锁定横屏（允许传感器翻转）
@@ -89,12 +89,12 @@ class PlayerFragment : Fragment() {
                 val others = resp.items.filter { it.category != category }
                 videos = sameCategory + others
                 if (videos.isEmpty()) {
-                    binding.textTitle.text = "> 暂无视频"
+                    binding.textTitle.text = "暂无视频"
                     return@onSuccess
                 }
                 val startIdx = videos.indexOfFirst { it.id == videoId }.coerceAtLeast(0)
                 currentPage = startIdx
-                binding.textTitle.text = "> ${videos[startIdx].title}"
+                binding.textTitle.text = "${videos[startIdx].title}"
 
                 binding.viewPagerPlayer.adapter = PlayerPagerAdapter(this@PlayerFragment, videos)
                 binding.viewPagerPlayer.setCurrentItem(startIdx, false)
@@ -104,7 +104,7 @@ class PlayerFragment : Fragment() {
                 binding.viewPagerPlayer.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                     override fun onPageSelected(position: Int) {
                         currentPage = position
-                        binding.textTitle.text = "> ${videos.getOrNull(position)?.title ?: ""}"
+                        binding.textTitle.text = "${videos.getOrNull(position)?.title ?: ""}"
                         updatePageDots(position)
                         updatePageCounter()
                     }

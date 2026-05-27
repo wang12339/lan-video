@@ -35,7 +35,7 @@
                 android:id="@+id/user_status_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
+               
                 android:textColor="@color/neon_cyan"
                 android:textSize="11sp" />
         </LinearLayout>
@@ -61,7 +61,7 @@
                     android:layout_width="@dimen/avatar_size"
                     android:layout_height="@dimen/avatar_size"
                     android:background="@drawable/bg_avatar_glow"
-                    android:fontFamily="monospace"
+                   
                     android:gravity="center"
                     android:textColor="#FFFFFFFF"
                     android:textSize="32sp"
@@ -73,7 +73,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:fontFamily="monospace"
+                   
                     android:letterSpacing="0.05"
                     android:shadowColor="@color/neon_cyan"
                     android:shadowDx="0"
@@ -105,7 +105,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:fontFamily="monospace"
+                   
                     android:textColor="@color/text_muted"
                     android:textSize="11sp"
                     tools:text="注册时间: 2026-05-04" />
@@ -132,7 +132,7 @@
                             android:id="@+id/user_stat_watched_count"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:fontFamily="monospace"
+                           
                             android:textColor="@color/neon_cyan"
                             android:textSize="28sp"
                             android:textStyle="bold"
@@ -161,7 +161,7 @@
                             android:id="@+id/user_stat_watch_time"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:fontFamily="monospace"
+                           
                             android:textColor="@color/neon_cyan"
                             android:textSize="28sp"
                             android:textStyle="bold"
@@ -189,7 +189,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
+                   
                     android:letterSpacing="0.05"
                     android:text="@string/user_recent_title"
                     android:textColor="@color/text_secondary"
@@ -222,7 +222,7 @@
                     android:layout_height="48dp"
                     android:layout_marginTop="24dp"
                     android:background="@drawable/bg_button_neon_gradient"
-                    android:fontFamily="monospace"
+                   
                     android:letterSpacing="0.05"
                     android:text="@string/user_button_login"
                     android:textColor="#FFFFFFFF"
@@ -237,7 +237,7 @@
                     android:layout_height="48dp"
                     android:layout_marginTop="24dp"
                     android:backgroundTint="#33FF1744"
-                    android:fontFamily="monospace"
+                   
                     android:letterSpacing="0.05"
                     android:text="@string/user_logout"
                     android:textColor="@color/neon_red"

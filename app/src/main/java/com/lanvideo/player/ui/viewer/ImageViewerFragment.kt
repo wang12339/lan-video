@@ -101,7 +101,7 @@ class ImageViewerFragment : Fragment() {
                 // Filmstrip setup
                 setupFilmstrip()
             }.onFailure {
-                binding.textCounter.text = "> 加载失败"
+                binding.textCounter.text = "加载失败"
             }
         }
     }
@@ -134,10 +134,10 @@ class ImageViewerFragment : Fragment() {
 
     private fun updateInfoPanel(position: Int) {
         if (position < titles.size) {
-            binding.infoFilename.text = "> ${titles[position]}"
+            binding.infoFilename.text = "${titles[position]}"
         }
-        binding.infoResolution.text = "> 分辨率: --"
-        binding.infoSize.text = "> 大小: --"
+        binding.infoResolution.text = "分辨率: --"
+        binding.infoSize.text = "大小: --"
     }
 
     private fun formatCounter(pos: Int, total: Int): String {

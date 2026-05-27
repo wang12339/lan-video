@@ -103,8 +103,8 @@ class DataStreamAdapter(
                 crossfade(true)
             }
 
-            binding.textTitle.text = "> ${item.title}"
-            binding.textMetadata.text = "> 分类: ${item.category}  |  ${formatDuration(item.duration)}"
+            binding.textTitle.text = "${item.title}"
+            binding.textMetadata.text = "分类: ${item.category}  |  ${formatDuration(item.duration)}"
 
             // Selection
             binding.selectionOverlay.isVisible = selectMode && item.id in selectedSet

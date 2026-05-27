@@ -94,7 +94,7 @@ class HistoryFragment : Fragment() {
                 historyAdapter?.submitList(emptyList())
                 binding.recyclerHistory.isVisible = false
                 binding.emptyHistory.isVisible = true
-                binding.emptyHistoryText.text = "> 请先登录"
+                binding.emptyHistoryText.text = "请先登录"
                 binding.historyLoadMore.isVisible = false
                 return@launch
             }
