@@ -22,16 +22,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
-       
         android:gravity="center"
         android:letterSpacing="0.08"
-        android:shadowColor="@color/neon_cyan"
-        android:shadowDx="0"
-        android:shadowDy="0"
-        android:shadowRadius="10"
         android:text="@string/login_title"
-        android:textColor="@color/neon_cyan"
-        android:textSize="24sp"
+        android:textColor="@color/text_primary"
+        android:textSize="22sp"
         android:textStyle="bold" />
 
     <TextView
@@ -56,7 +51,7 @@
         app:boxCornerRadiusBottomStart="10dp"
         app:boxCornerRadiusTopEnd="10dp"
         app:boxCornerRadiusTopStart="10dp"
-        app:boxStrokeColor="@color/glass_stroke_cyan"
+        app:boxStrokeColor="@color/brand_dim"
         app:hintTextColor="@color/text_muted">
 
         <com.google.android.material.textfield.TextInputEditText
@@ -85,7 +80,7 @@
         app:boxCornerRadiusBottomStart="10dp"
         app:boxCornerRadiusTopEnd="10dp"
         app:boxCornerRadiusTopStart="10dp"
-        app:boxStrokeColor="@color/glass_stroke_cyan"
+        app:boxStrokeColor="@color/brand_dim"
         app:endIconMode="password_toggle"
         app:endIconTint="@color/text_muted"
         app:hintTextColor="@color/text_muted">
@@ -116,7 +111,7 @@
         app:boxCornerRadiusBottomStart="10dp"
         app:boxCornerRadiusTopEnd="10dp"
         app:boxCornerRadiusTopStart="10dp"
-        app:boxStrokeColor="@color/glass_stroke_cyan"
+        app:boxStrokeColor="@color/brand_dim"
         app:endIconMode="password_toggle"
         app:endIconTint="@color/text_muted"
         app:hintTextColor="@color/text_muted">
@@ -142,7 +137,7 @@
         android:layout_marginTop="10dp"
        
         android:gravity="center"
-        android:textColor="@color/neon_red"
+        android:textColor="@color/error"
         android:textSize="12sp"
         android:visibility="gone" />
 
@@ -172,7 +167,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
         android:text="@string/login_toggle_register"
-        android:textColor="@color/neon_cyan"
+        android:textColor="@color/brand"
         android:textSize="12sp" />
 
     <!-- Server config -->

@@ -2,11 +2,11 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
     <gradient
-        android:startColor="@color/neon_cyan"
-        android:endColor="@color/neon_purple"
+        android:startColor="@color/brand"
+        android:endColor="@color/accent"
         android:angle="135" />
     <stroke
         android:width="1dp"
-        android:color="@color/neon_cyan" />
+        android:color="@color/brand" />
     <size android:width="80dp" android:height="80dp" />
 </shape>

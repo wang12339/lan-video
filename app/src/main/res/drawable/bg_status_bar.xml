@@ -9,7 +9,7 @@
     <!-- 底部霓虹高光线 -->
     <item android:bottom="0dp" android:height="1dp" android:gravity="bottom">
         <shape android:shape="rectangle">
-            <solid android:color="@color/neon_cyan_dim" />
+            <solid android:color="@color/brand_dim" />
         </shape>
     </item>
 </layer-list>
