@@ -1,6 +1,5 @@
 package com.lanvideo.player.feature.player
 
-import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -48,8 +47,7 @@ class PlayerFragment : Fragment() {
         binding.textTitle.text = "${requireArguments().getString("title").orEmpty()}"
         binding.btnBack.setOnClickListener { parentFragmentManager.popBackStack() }
 
-        // 播放时锁定横屏（允许传感器翻转）
-        requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // 播放时保持竖屏
 
         // Tap on video area to toggle HUD + left/right zones for prev/next
         binding.viewPagerPlayer.setOnTouchListener { _, event ->
@@ -176,8 +174,6 @@ class PlayerFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // 恢复自由方向
-        requireActivity().requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         hudHandler.removeCallbacks(hudHideRunnable)
         _binding = null
     }
