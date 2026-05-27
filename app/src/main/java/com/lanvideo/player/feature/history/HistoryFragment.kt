@@ -16,8 +16,10 @@ import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
 import com.lanvideo.player.data.model.RecentWatchItem
+import com.lanvideo.player.data.network.LanServerDiscovery
 import com.lanvideo.player.data.repository.VideoRepository
 import com.lanvideo.player.data.user.AuthSessionStore
+import com.lanvideo.player.data.util.ConnectionStatusHelper
 import com.lanvideo.player.databinding.FragmentHistoryBinding
 import com.lanvideo.player.feature.user.RecentWatchAdapter
 import kotlinx.coroutines.Dispatchers
@@ -73,34 +75,11 @@ class HistoryFragment : Fragment() {
 
     private fun observeConnection() {
         val app = requireActivity().application as MyApplication
-        app.connectionState.observe(viewLifecycleOwner) { state ->
-            val status = binding.historyConnectionStatus
-            val dot = binding.historyStatusDot
-            val text = binding.historyStatusText
-            when (state) {
-                ConnectionState.CONNECTED -> status.isVisible = false
-                ConnectionState.SCANNING -> {
-                    status.isVisible = true
-                    dot.setBackgroundResource(R.drawable.bg_status_pulse)
-                    (dot.background as? android.graphics.drawable.AnimationDrawable)?.start()
-                    text.setText(R.string.connection_scanning)
-                }
-                ConnectionState.DISCONNECTED -> {
-                    status.isVisible = true
-                    dot.setBackgroundResource(R.drawable.status_dot_red)
-                    text.setText(R.string.connection_disconnected)
-                }
-            }
-        }
-        binding.historyConnectionStatus.setOnClickListener {
-            app.setConnectionState(ConnectionState.SCANNING)
-            lifecycleScope.launch {
-                com.lanvideo.player.data.network.LanServerDiscovery.discoverActiveNetwork(
-                    requireContext().applicationContext, force = true
-                )
-                loadHistory()
-            }
-        }
+        ConnectionStatusHelper(
+            statusView = binding.historyConnectionStatus,
+            statusDot = binding.historyStatusDot,
+            statusText = binding.historyStatusText,
+        ).observe(viewLifecycleOwner, app, lifecycleScope)
     }
 
     private fun loadHistory() {

@@ -16,6 +16,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.lanvideo.player.ConnectionState
+import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
 import com.lanvideo.player.data.network.LanServerDiscovery
@@ -23,6 +24,7 @@ import com.lanvideo.player.data.model.VideoItem
 import com.lanvideo.player.data.model.PagedVideoResponse
 import com.lanvideo.player.data.repository.VideoRepository
 import com.lanvideo.player.data.user.AuthSessionStore
+import com.lanvideo.player.data.util.ConnectionStatusHelper
 import com.lanvideo.player.databinding.FragmentHomeBinding
 import com.lanvideo.player.feature.common.DataStreamAdapter
 import kotlinx.coroutines.Dispatchers
@@ -192,7 +194,11 @@ class HomeFragment : Fragment() {
     private fun observeEvents() {
         val app = requireActivity().application as MyApplication
         app.lanServerEvents.observe(viewLifecycleOwner) { loadFeed() }
-        app.connectionState.observe(viewLifecycleOwner) { state -> updateConnectionStatus(state) }
+        ConnectionStatusHelper(
+            statusView = binding.connectionStatus,
+            statusDot = binding.statusDot,
+            statusText = binding.statusText,
+        ).observe(viewLifecycleOwner, app, lifecycleScope)
         app.batchDeleteRequested.observe(viewLifecycleOwner) { requested ->
             if (requested) {
                 enterBatchDeleteMode()
@@ -367,23 +373,6 @@ class HomeFragment : Fragment() {
         if (!empty) {
             streamAdapter?.submitList(allVideos.toList())
             binding.recyclerStream.isVisible = true
-        }
-    }
-
-    private fun updateConnectionStatus(state: ConnectionState) {
-        when (state) {
-            ConnectionState.CONNECTED -> binding.connectionStatus.isVisible = false
-            ConnectionState.SCANNING -> {
-                binding.connectionStatus.isVisible = true
-                binding.statusDot.setBackgroundResource(R.drawable.bg_status_pulse)
-                (binding.statusDot.background as? android.graphics.drawable.AnimationDrawable)?.start()
-                binding.statusText.setText(R.string.connection_scanning)
-            }
-            ConnectionState.DISCONNECTED -> {
-                binding.connectionStatus.isVisible = true
-                binding.statusDot.setBackgroundResource(R.drawable.status_dot_red)
-                binding.statusText.setText(R.string.connection_disconnected)
-            }
         }
     }
 

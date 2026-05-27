@@ -19,6 +19,7 @@ import com.lanvideo.player.R
 import com.lanvideo.player.data.model.RecentWatchItem
 import com.lanvideo.player.data.network.NetworkModule
 import com.lanvideo.player.data.user.AuthSessionStore
+import com.lanvideo.player.data.util.ConnectionStatusHelper
 import com.lanvideo.player.databinding.FragmentUserBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,25 +59,11 @@ class UserFragment : Fragment() {
         // 登录成功或服务器切换时刷新
         app.lanServerEvents.observe(viewLifecycleOwner) { loadUserProfile() }
 
-        app.connectionState.observe(viewLifecycleOwner) { state ->
-            val status = binding.userConnectionStatus
-            val dot = binding.userStatusDot
-            val text = binding.userStatusText
-            when (state) {
-                ConnectionState.CONNECTED -> status.isVisible = false
-                ConnectionState.SCANNING -> {
-                    status.isVisible = true
-                    dot.setBackgroundResource(R.drawable.bg_status_pulse)
-                    (dot.background as? android.graphics.drawable.AnimationDrawable)?.start()
-                    text.setText(R.string.connection_scanning)
-                }
-                ConnectionState.DISCONNECTED -> {
-                    status.isVisible = true
-                    dot.setBackgroundResource(R.drawable.status_dot_red)
-                    text.setText(R.string.connection_disconnected)
-                }
-            }
-        }
+        ConnectionStatusHelper(
+            statusView = binding.userConnectionStatus,
+            statusDot = binding.userStatusDot,
+            statusText = binding.userStatusText,
+        ).observe(viewLifecycleOwner, app, lifecycleScope)
 
         binding.recyclerRecent.layoutManager = LinearLayoutManager(requireContext())
 

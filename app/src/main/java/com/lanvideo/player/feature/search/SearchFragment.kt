@@ -27,6 +27,7 @@ import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
 import com.lanvideo.player.data.repository.VideoRepository
 import com.lanvideo.player.feature.common.FeaturedVideoAdapter
+import com.lanvideo.player.data.util.ConnectionStatusHelper
 import com.lanvideo.player.databinding.FragmentSearchBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -141,17 +142,11 @@ class SearchFragment : Fragment() {
         })
 
         val app = requireActivity().application as MyApplication
-        app.connectionState.observe(viewLifecycleOwner) { state ->
-            updateConnectionStatus(state)
-        }
-        binding.searchConnectionStatus.setOnClickListener {
-            app.setConnectionState(ConnectionState.SCANNING)
-            lifecycleScope.launch {
-                com.lanvideo.player.data.network.LanServerDiscovery.discoverActiveNetwork(
-                    requireContext().applicationContext, force = true
-                )
-            }
-        }
+        ConnectionStatusHelper(
+            statusView = binding.searchConnectionStatus,
+            statusDot = binding.searchStatusDot,
+            statusText = binding.searchStatusText,
+        ).observe(viewLifecycleOwner, app, lifecycleScope)
 
         // --- Search input listeners ---
 
@@ -312,28 +307,6 @@ class SearchFragment : Fragment() {
         binding.btnClearSearchHistory.isVisible = false
         suggestionsAdapter?.clear()
         suggestionsAdapter?.notifyDataSetChanged()
-    }
-
-    private fun updateConnectionStatus(state: ConnectionState) {
-        val status = binding.searchConnectionStatus
-        val dot = binding.searchStatusDot
-        val text = binding.searchStatusText
-        when (state) {
-            ConnectionState.CONNECTED -> {
-                status.isVisible = false
-            }
-            ConnectionState.SCANNING -> {
-                status.isVisible = true
-                dot.setBackgroundResource(R.drawable.bg_status_pulse)
-                (dot.background as? android.graphics.drawable.AnimationDrawable)?.start()
-                text.setText(R.string.connection_scanning)
-            }
-            ConnectionState.DISCONNECTED -> {
-                status.isVisible = true
-                dot.setBackgroundResource(R.drawable.status_dot_red)
-                text.setText(R.string.connection_disconnected)
-            }
-        }
     }
 
     private fun applyInsets() {
