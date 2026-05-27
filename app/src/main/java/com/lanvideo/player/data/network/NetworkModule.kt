@@ -21,6 +21,9 @@ object NetworkModule {
         coerceInputValues = true
     }
 
+    @Volatile
+    private var cachedApi: VideoApiService? = null
+
     private val client by lazy {
         val app = MyApplication.instance
         OkHttpClient.Builder()
@@ -56,7 +59,6 @@ object NetworkModule {
         if (!saved.isNullOrBlank()) {
             currentBaseUrl = if (saved.endsWith("/")) saved else "$saved/"
         } else {
-            // 默认使用 DDNS 地址
             currentBaseUrl = DEFAULT_BASE_URL
             ServerConfigStore.saveBaseUrl(context, DEFAULT_BASE_URL)
         }
@@ -69,6 +71,7 @@ object NetworkModule {
         val ctx = context?.applicationContext ?: MyApplication.instance
         ServerConfigStore.saveBaseUrl(ctx, normalized)
         if (notify && (normalized != previous)) {
+            cachedApi = null // invalidate on URL change
             runCatching { MyApplication.instance.notifyLanServerEvent(normalized) }
         }
     }
@@ -78,12 +81,18 @@ object NetworkModule {
     fun httpClient(): OkHttpClient = client
 
     fun createApi(): VideoApiService {
-        return Retrofit.Builder()
-            .baseUrl(currentBaseUrl)
-            .client(client)
-            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
-            .build()
-            .create(VideoApiService::class.java)
+        val cached = cachedApi
+        if (cached != null) return cached
+        return synchronized(this) {
+            cachedApi?.let { return@synchronized it }
+            val api = Retrofit.Builder()
+                .baseUrl(currentBaseUrl)
+                .client(client)
+                .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+                .build()
+                .create(VideoApiService::class.java)
+            cachedApi = api
+            api
+        }
     }
-
 }

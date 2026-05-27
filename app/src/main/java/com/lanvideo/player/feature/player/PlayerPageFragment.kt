@@ -193,7 +193,8 @@ class PlayerPageFragment : Fragment() {
 
                 MotionEvent.ACTION_UP -> {
                     val dt = System.currentTimeMillis() - downTime
-                    val isTap = abs(event.x - downX) < seekThresholdPx &&
+                    val isTap = gestureMode == GESTURE_NONE &&
+                            abs(event.x - downX) < seekThresholdPx &&
                             abs(event.y - downY) < seekThresholdPx && dt < 400L
 
                     if (gestureMode == GESTURE_SEEK) {

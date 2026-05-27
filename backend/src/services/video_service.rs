@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::collections::HashSet;
+use std::io::Read;
 use md5::{Md5, Digest};
 use tokio::fs as tokio_fs;
 use axum::body::Bytes;
@@ -173,13 +174,15 @@ impl VideoService {
         let video_exts: HashSet<&str> = ["mp4", "m3u8", "mov", "avi", "mkv", "webm", "flv", "wmv"].into();
         let image_exts: HashSet<&str> = ["jpg", "jpeg", "png", "webp", "gif", "bmp"].into();
 
-        // Offload blocking FS discovery to the blocking thread pool
+        // Offload blocking FS discovery + MD5 hashing to the blocking thread pool.
+        // Uses streaming read to avoid loading entire files into memory.
         #[derive(Clone)]
         struct FileCandidate {
             file_name: String,
             stream_url: String,
             source_type: &'static str,
-            file_bytes: Vec<u8>,
+            file_hash: String,
+            file_size: i64,
         }
 
         let candidates: Vec<FileCandidate> = tokio::task::spawn_blocking(move || {
@@ -207,11 +210,27 @@ impl VideoService {
                 } else {
                     continue;
                 };
-                let file_bytes = match std::fs::read(&path) {
-                    Ok(b) => b,
+                // Stream-read file to compute MD5 without loading into memory
+                let file = match std::fs::File::open(&path) {
+                    Ok(f) => f,
                     Err(_) => continue,
                 };
-                out.push(FileCandidate { file_name, stream_url, source_type, file_bytes });
+                let file_size = match file.metadata() {
+                    Ok(m) => m.len() as i64,
+                    Err(_) => continue,
+                };
+                let mut hasher = Md5::new();
+                let mut buf = [0u8; 65536];
+                let mut reader = file;
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => hasher.update(&buf[..n]),
+                        Err(_) => break,
+                    }
+                }
+                let file_hash = format!("{:x}", hasher.finalize());
+                out.push(FileCandidate { file_name, stream_url, source_type, file_hash, file_size });
             }
             out
         }).await.map_err(|e| {
@@ -222,13 +241,11 @@ impl VideoService {
         let mut added = 0i64;
         for cand in candidates {
             if existing_urls.contains(&cand.stream_url) { continue; }
-            let hash = compute_md5(&cand.file_bytes);
-            let file_size = cand.file_bytes.len() as i64;
             self.repo.save_local_video(
                 &cand.file_name, "",
                 cand.source_type, None,
                 &cand.stream_url, category,
-                Some(&hash), Some(file_size), Some(&cand.file_name), None,
+                Some(&cand.file_hash), Some(cand.file_size), Some(&cand.file_name), None,
             ).await?;
             added += 1;
         }
@@ -478,6 +495,7 @@ fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn compute_md5(bytes: &[u8]) -> String {
     let mut hasher = Md5::new();
     hasher.update(bytes);

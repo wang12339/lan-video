@@ -71,13 +71,27 @@ class DataStreamAdapter(
         private val onLongClick: ((VideoItem) -> Unit)?
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: VideoItem, selectMode: Boolean, selectedSet: Set<Long>) {
-            // 16:9 aspect ratio via post (fires after layout pass)
             binding.thumbnailContainer.post {
                 val w = binding.thumbnailContainer.width
                 if (w > 0) {
                     val lp = binding.thumbnailContainer.layoutParams
                     lp.height = (w * 9f / 16f).toInt()
                     binding.thumbnailContainer.layoutParams = lp
+
+                    // Watch progress bar — calculated after layout for correct width
+                    if (item.duration > 0) {
+                        val progress = ((item.watchPosition?.toFloat() ?: 0f) / item.duration * 100).toInt().coerceIn(0, 100)
+                        if (progress in 1..94) {
+                            binding.progressWatched.isVisible = true
+                            val plp = binding.progressWatched.layoutParams
+                            plp.width = (w.toFloat() * progress / 100f).toInt().coerceAtLeast(0)
+                            binding.progressWatched.layoutParams = plp
+                        } else {
+                            binding.progressWatched.isVisible = false
+                        }
+                    } else {
+                        binding.progressWatched.isVisible = false
+                    }
                 }
             }
 
@@ -101,21 +115,6 @@ class DataStreamAdapter(
                 binding.badgeDuration.text = formatDuration(item.duration)
             } else {
                 binding.badgeDuration.isVisible = false
-            }
-
-            // Watch progress
-            if (item.duration > 0) {
-                val progress = ((item.watchPosition?.toFloat() ?: 0f) / item.duration * 100).toInt().coerceIn(0, 100)
-                if (progress in 1..94) {
-                    binding.progressWatched.isVisible = true
-                    val lp = binding.progressWatched.layoutParams
-                    lp.width = (binding.imageCover.width.toFloat() * progress / 100f).toInt().coerceAtLeast(0)
-                    binding.progressWatched.layoutParams = lp
-                } else {
-                    binding.progressWatched.isVisible = false
-                }
-            } else {
-                binding.progressWatched.isVisible = false
             }
 
             if (selectMode) {

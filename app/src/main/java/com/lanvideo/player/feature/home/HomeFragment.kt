@@ -75,6 +75,11 @@ class HomeFragment : Fragment() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        loadFeed()
+    }
+
     private fun setupChannelSelector() {
         binding.channelContainer.removeAllViews()
         channels.forEachIndexed { index, name ->
