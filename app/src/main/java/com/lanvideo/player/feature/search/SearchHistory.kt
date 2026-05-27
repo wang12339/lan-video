@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 
 /**
  * Manages search history using SharedPreferences.
- * Max 10 items, most recent first. Deduplicates on add.
+ * Max 20 items, most recent first. Deduplicates on add.
  */
 class SearchHistory private constructor(context: Context) {
     private val prefs: SharedPreferences =
@@ -46,7 +46,7 @@ class SearchHistory private constructor(context: Context) {
     companion object {
         private const val PREFS_NAME = "search_history"
         private const val KEY_HISTORY = "history"
-        private const val MAX_HISTORY = 10
+        private const val MAX_HISTORY = 20
         private const val DELIMITER = "\n"
 
         @Volatile

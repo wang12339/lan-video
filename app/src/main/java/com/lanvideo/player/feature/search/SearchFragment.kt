@@ -8,11 +8,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.ArrayAdapter
-import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.AdapterView
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
@@ -72,17 +70,22 @@ class SearchFragment : Fragment() {
         // Setup suggestions ListView
         suggestionsAdapter = object : ArrayAdapter<String>(
             requireContext(),
-            android.R.layout.simple_list_item_1,
+            R.layout.item_search_suggestion,
+            R.id.suggestion_text,
             mutableListOf()
         ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent)
-                if (view is TextView) {
-                    view.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
-                    view.setBackgroundResource(R.drawable.bg_suggestion_item)
-                    view.setPadding(32, 16, 32, 16)
-                    view.textSize = 14f
-                    view.typeface = android.graphics.Typeface.MONOSPACE
+                val textView = view.findViewById<android.widget.TextView>(R.id.suggestion_text)
+                textView.typeface = android.graphics.Typeface.MONOSPACE
+                val deleteBtn = view.findViewById<android.widget.TextView>(R.id.btn_suggestion_delete)
+                deleteBtn.isVisible = true
+                deleteBtn.setOnClickListener {
+                    val text = getItem(position) ?: return@setOnClickListener
+                    searchHistory.removeSearch(text)
+                    val q = binding.inputSearch.text?.toString()?.trim().orEmpty()
+                    if (q.isBlank()) showSearchHistory() else showSuggestions(q)
+                    Toast.makeText(context, "已删除「${text}」", Toast.LENGTH_SHORT).show()
                 }
                 return view
             }
