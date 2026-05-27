@@ -14,6 +14,10 @@ pub struct VideoItem {
     #[serde(rename = "thumbUrl")]
     pub thumb_url: Option<String>,
     pub category: String,
+    pub views: i64,
+    pub duration: i64,
+    #[serde(rename = "watchPosition")]
+    pub watch_position: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +33,7 @@ pub struct VideoQuery {
     pub query: Option<String>,
     #[serde(rename = "type")]
     pub source_type: Option<String>,
+    pub category: Option<String>,
     pub page: Option<i64>,
     pub size: Option<i64>,
 }

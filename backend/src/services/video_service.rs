@@ -20,6 +20,7 @@ impl VideoService {
         Self { repo, config }
     }
 
+    #[allow(dead_code)]
     pub async fn list_videos(&self, query: Option<&str>) -> Result<Vec<VideoItem>, sqlx::Error> {
         let rows = self.repo.find_all(query).await?;
         Ok(rows.into_iter().map(VideoItem::from).collect())
@@ -31,10 +32,11 @@ impl VideoService {
         size: i64,
         query: Option<&str>,
         source_type: Option<&str>,
+        category: Option<&str>,
         username: Option<&str>,
     ) -> Result<(Vec<VideoItem>, i64), sqlx::Error> {
-        let total = self.repo.count_all(query, source_type).await?;
-        let rows = self.repo.find_all_paged(page, size, query, source_type, username).await?;
+        let total = self.repo.count_all(query, source_type, category).await?;
+        let rows = self.repo.find_all_paged(page, size, query, source_type, category, username).await?;
         let items: Vec<VideoItem> = rows.into_iter().map(VideoItem::from).collect();
         Ok((items, total))
     }
@@ -72,27 +74,43 @@ impl VideoService {
         Ok(existing)
     }
 
-    pub async fn upload_video(
+    /// 流式上传：从临时文件读取，计算 MD5，移动到最终位置
+    pub async fn upload_video_file(
         &self,
         file_name: &str,
-        bytes: Bytes,
+        temp_path: &std::path::Path,
         category: &str,
         client_hash: Option<&str>,
     ) -> Result<i64, String> {
-        // Compute MD5 hash
-        let hash = compute_md5(&bytes);
+        // Compute MD5 hash by streaming the file
+        use tokio::io::AsyncReadExt;
+        let mut file = tokio::fs::File::open(temp_path).await
+            .map_err(|e| format!("打开临时文件失败: {}", e))?;
+        let mut hasher = Md5::new();
+        let mut buf = vec![0u8; 65536];
+        let mut file_size: i64 = 0;
+        loop {
+            let n = file.read(&mut buf).await
+                .map_err(|e| format!("读取临时文件失败: {}", e))?;
+            if n == 0 { break; }
+            hasher.update(&buf[..n]);
+            file_size += n as i64;
+        }
+        drop(file);
+        let hash = format!("{:x}", hasher.finalize());
 
         // Check for duplicates if client provided hash, or always check
         if let Some(ch) = client_hash {
             if ch == &hash {
-                if let Some(existing) = self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())? {
-                    return Err(format!("duplicate: video already exists with id={}", existing.id));
+                if self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())?.is_some() {
+                    let _ = std::fs::remove_file(temp_path);
+                    return Err("重复：视频已存在".into());
                 }
             }
         } else {
-            // Check if hash already exists
-            if let Some(existing) = self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())? {
-                return Err(format!("duplicate: video already exists with id={}", existing.id));
+            if self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())?.is_some() {
+                let _ = std::fs::remove_file(temp_path);
+                return Err("重复：视频已存在".into());
             }
         }
 
@@ -103,22 +121,24 @@ impl VideoService {
             .map(|e| e.to_lowercase())
             .unwrap_or_else(|| "mp4".to_string());
 
+        // 用 magic bytes 验证文件类型
+        validate_file_type(temp_path, &ext).map_err(|e| {
+            let _ = std::fs::remove_file(temp_path);
+            e
+        })?;
+
         let is_video = matches!(ext.as_str(), "mp4" | "m3u8" | "mov" | "avi" | "mkv" | "webm" | "flv" | "wmv");
         let is_image = matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp");
 
         let source_type = if is_video { "local_video" } else if is_image { "local_image" } else { "local" };
 
-        // Save file
+        // Move temp file to final destination
         let dest_file_name = format!("{}_{}", chrono::Utc::now().timestamp_millis(), file_name);
         let dest_path = self.config.media_root.join(&dest_file_name);
-
-        // Write file
-        tokio_fs::write(&dest_path, &bytes)
-            .await
-            .map_err(|e| format!("failed to write file: {}", e))?;
+        std::fs::rename(temp_path, &dest_path)
+            .map_err(|e| format!("移动文件失败: {}", e))?;
 
         let stream_url = format!("/media/{}", dest_file_name);
-        let file_size = bytes.len() as i64;
 
         let id = self.repo.save_local_video(
             file_name,
@@ -133,9 +153,9 @@ impl VideoService {
             None,
         ).await.map_err(|e| e.to_string())?;
 
-        info!("Uploaded video id={} as {}", id, stream_url);
+        info!("Uploaded video id={} as {} ({} bytes, streaming)", id, stream_url, file_size);
 
-        // Generate thumbnail in background (offloaded to blocking thread pool)
+        // Generate thumbnail in background
         let svc = self.clone();
         let vid = id;
         tokio::spawn(async move {
@@ -229,7 +249,7 @@ impl VideoService {
                 let deleted = tokio::task::spawn_blocking(move || {
                     if fp.exists() { std::fs::remove_file(&fp).map(|_| true) } else { Ok(false) }
                 }).await.map_err(|e| format!("delete thread panicked: {}", e))?
-                  .map_err(|e| format!("failed to delete file: {}", e))?;
+                  .map_err(|e| format!("删除文件失败: {}", e))?;
                 if deleted {
                     info!("Deleted media file: {:?}", file_path);
                 }
@@ -242,6 +262,17 @@ impl VideoService {
                     let cp = cover_path.clone();
                     let _ = tokio::task::spawn_blocking(move || {
                         if cp.exists() { let _ = std::fs::remove_file(&cp); }
+                    }).await;
+                }
+            }
+            // Delete thumbnail if it exists
+            if let Some(ref thumb_url) = v.thumb_url {
+                if thumb_url.starts_with("/media/") {
+                    let thumb_name = thumb_url.trim_start_matches("/media/");
+                    let thumb_path = self.config.media_root.join(thumb_name);
+                    let tp = thumb_path.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if tp.exists() { let _ = std::fs::remove_file(&tp); }
                     }).await;
                 }
             }
@@ -291,7 +322,7 @@ impl VideoService {
 
         tokio_fs::write(&cover_path, &bytes)
             .await
-            .map_err(|e| format!("failed to write cover: {}", e))?;
+            .map_err(|e| format!("写入封面失败: {}", e))?;
 
         let cover_url = format!("/media/{}", cover_file_name);
         self.repo.update_cover_url(id, &cover_url).await.map_err(|e| e.to_string())?;
@@ -398,7 +429,7 @@ impl VideoService {
         self.repo.get_playback_duration(username, video_id).await
     }
 
-    pub async fn get_playback_history(&self, username: &str) -> Result<Vec<crate::models::playback::PlaybackHistoryResponse>, sqlx::Error> {
+    pub async fn get_playback_history(&self, username: &str) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
         self.repo.find_playback_history_by_username(username).await
     }
 
@@ -414,8 +445,126 @@ impl VideoService {
     }
 }
 
+/// 用 magic bytes 验证文件类型，防止伪装扩展名的恶意上传
+fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
+    let kind = infer::get_from_path(path)
+        .map_err(|e| format!("无法读取文件类型: {}", e))?
+        .ok_or_else(|| format!("无法识别的文件类型: {}", ext))?;
+
+    let mime_type = kind.mime_type();
+    let is_valid = match ext {
+        "mp4" | "m4v" => mime_type.starts_with("video/mp4"),
+        "mov" => mime_type == "video/quicktime",
+        "avi" => mime_type == "video/x-msvideo",
+        "mkv" => mime_type == "video/x-matroska",
+        "webm" => mime_type == "video/webm",
+        "flv" => mime_type == "video/x-flv",
+        "wmv" => mime_type == "video/x-ms-wmv",
+        "m3u8" => true, // HLS 列表文件无固定 magic bytes，跳过
+        "jpg" | "jpeg" => mime_type.starts_with("image/jpeg"),
+        "png" => mime_type == "image/png",
+        "webp" => mime_type.starts_with("image/webp"),
+        "gif" => mime_type == "image/gif",
+        "bmp" => mime_type == "image/bmp",
+        _ => false,
+    };
+
+    if !is_valid {
+        return Err(format!(
+            "文件类型不匹配: 扩展名 .{} 但实际 MIME 类型为 {}",
+            ext, mime_type
+        ));
+    }
+    Ok(())
+}
+
 fn compute_md5(bytes: &[u8]) -> String {
     let mut hasher = Md5::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_md5_empty() {
+        assert_eq!(compute_md5(b""), "d41d8cd98f00b204e9800998ecf8427e");
+    }
+
+    #[test]
+    fn test_compute_md5_known() {
+        assert_eq!(compute_md5(b"hello"), "5d41402abc4b2a76b9719d911017c592");
+        assert_eq!(compute_md5(b"world"), "7d793037a0760186574b0282f2f435e7");
+    }
+
+    #[test]
+    fn test_compute_md5_unicode() {
+        let hash = compute_md5("你好".as_bytes());
+        assert_eq!(hash.len(), 32, "md5 hex should be 32 chars");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_file_extension_detection() {
+        let video_exts: HashSet<&str> = ["mp4", "m3u8", "mov", "avi", "mkv", "webm", "flv", "wmv"].into();
+        let image_exts: HashSet<&str> = ["jpg", "jpeg", "png", "webp", "gif", "bmp"].into();
+
+        assert!(video_exts.contains("mp4"));
+        assert!(video_exts.contains("mkv"));
+        assert!(!video_exts.contains("jpg"));
+        assert!(image_exts.contains("jpg"));
+        assert!(!image_exts.contains("mp4"));
+    }
+
+    #[test]
+    fn test_validate_file_type_png() {
+        // Minimal valid PNG: 8-byte signature + IHDR chunk
+        let png_bytes: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // chunk length
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 pixel
+            0x08, 0x02, 0x00, 0x00, 0x00, // bit depth + color type + compression etc
+            0x90, 0x77, 0x53, 0xDE, // CRC
+        ];
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_valid_png.png");
+        std::fs::write(&path, &png_bytes).unwrap();
+        assert!(validate_file_type(&path, "png").is_ok());
+        assert!(validate_file_type(&path, "jpg").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_validate_file_type_jpeg() {
+        // Minimal valid JPEG: SOI + EOI markers
+        let jpeg_bytes: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9];
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_valid_jpeg.jpg");
+        std::fs::write(&path, &jpeg_bytes).unwrap();
+        assert!(validate_file_type(&path, "jpg").is_ok());
+        assert!(validate_file_type(&path, "png").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_validate_file_type_rejects_text_as_mp4() {
+        // Plain text file pretending to be mp4
+        let dir = std::env::temp_dir();
+        let path = dir.join("fake.mp4");
+        std::fs::write(&path, b"this is not a video file").unwrap();
+        assert!(validate_file_type(&path, "mp4").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_validate_file_type_unknown_extension() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("file.xyz");
+        std::fs::write(&path, b"some content").unwrap();
+        assert!(validate_file_type(&path, "xyz").is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
 }

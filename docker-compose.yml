@@ -14,6 +14,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   backend:
     build:
@@ -21,15 +22,36 @@ services:
     ports:
       - "8082:8082"
     environment:
-      DATABASE_URL: postgres://lan_video:lan_video@db:5432/lan_video
+      DATABASE_URL: postgres://lan_video:***@db:5432/lan_video
       SERVER_PORT: "8082"
       MEDIA_ROOT: /data/media
       ENFORCE_ADMIN_TOKEN: "false"
+      RUST_LOG: info
     volumes:
       - media_data:/data/media
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+
+  # ── TLS reverse proxy (optional) ──
+  # Enable for HTTPS. Generate certs first:
+  #   cd nginx && mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
+  #       localhost your-domain.com
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/atmos.conf:/etc/nginx/conf.d/atmos.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - media_data:/var/cache/nginx/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+    profiles:
+      - tls   # Only start with: docker compose --profile tls up
 
 volumes:
   pgdata:

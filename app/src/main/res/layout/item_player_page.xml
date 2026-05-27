@@ -10,10 +10,51 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         app:show_buffering="when_playing"
-        app:surface_type="texture_view"
+        app:surface_type="surface_view"
         app:use_controller="false" />
 
-    <!-- Neon speed indicator -->
+    <!-- Gesture indicator: brightness/volume overlay -->
+    <LinearLayout
+        android:id="@+id/gesture_indicator"
+        android:layout_width="140dp"
+        android:layout_height="90dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_card_glass_input"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/gesture_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="☀"
+            android:textColor="@color/neon_cyan"
+            android:textSize="28sp" />
+
+        <TextView
+            android:id="@+id/gesture_value"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:text="50%"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- ⏪ / ⏩ skip indicator -->
+    <TextView
+        android:id="@+id/skip_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:fontFamily="monospace"
+        android:textColor="@color/neon_cyan"
+        android:textSize="48sp"
+        android:visibility="gone" />
+
+    <!-- Neon speed indicator (tap to open speed picker) -->
     <TextView
         android:id="@+id/speed_indicator"
         android:layout_width="wrap_content"
@@ -29,11 +70,80 @@
         android:shadowDx="0"
         android:shadowDy="0"
         android:shadowRadius="8"
-        android:text="2x"
+        android:text="1x"
         android:textColor="@color/neon_cyan"
         android:textSize="12sp"
         android:textStyle="bold"
         android:visibility="gone" />
+
+    <!-- Speed selector panel -->
+    <LinearLayout
+        android:id="@+id/speed_panel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="92dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_card_glass_input"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/speed_05x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="0.5x"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/speed_075x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="0.75x"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/speed_1x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="1x"
+            android:textColor="@color/neon_cyan"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/speed_125x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="1.25x"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/speed_15x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="1.5x"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/speed_2x"
+            android:layout_width="64dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="2x"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+    </LinearLayout>
 
     <!-- Glass playback controls -->
     <LinearLayout
@@ -49,9 +159,9 @@
         android:paddingEnd="16dp"
         android:paddingTop="16dp"
         android:paddingBottom="28dp"
-        android:visibility="gone">
+        android:visibility="visible">
 
-        <!-- Time display (monospace, glowing) -->
+        <!-- Time display -->
         <TextView
             android:id="@+id/text_playback_time"
             android:layout_width="match_parent"

@@ -20,10 +20,14 @@ kotlinxSerializationJson = "1.7.3"
 retrofitSerializationConverter = "1.0.0"
 coil = "2.7.0"
 media3 = "1.5.1"
+sentryAndroid = "7.9.0"
+sentryGradle = "4.10.0"
 fragmentKtx = "1.8.6"
 lifecycleRuntimeKtx = "2.8.7"
 swipeRefreshLayout = "1.1.0"
 viewPager2 = "1.1.0"
+documentfile = "1.0.1"
+securityCrypto = "1.1.0-alpha06"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,6 +53,9 @@ retrofit-kotlinx-serialization-converter = { group = "com.jakewharton.retrofit",
 coil = { group = "io.coil-kt", name = "coil", version.ref = "coil" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentryAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

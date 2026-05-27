@@ -13,6 +13,10 @@
             android:icon="@drawable/ic_feed_search_24"
             android:title="@string/menu_search" />
         <item
+            android:id="@+id/nav_history"
+            android:icon="@drawable/ic_slideshow_black_24dp"
+            android:title="@string/menu_history" />
+        <item
             android:id="@+id/nav_upload_list"
             android:icon="@drawable/ic_gallery_black_24dp"
             android:title="@string/upload_list_title" />

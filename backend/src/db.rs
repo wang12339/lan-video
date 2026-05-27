@@ -59,6 +59,8 @@ async fn run_migrations(pool: &PgPool) {
         ("005_add_indexes", include_str!("../migrations/005_add_indexes.sql")),
         ("006_add_foreign_keys", include_str!("../migrations/006_add_foreign_keys.sql")),
         ("007_add_thumb_url", include_str!("../migrations/007_add_thumb_url.sql")),
+        ("008_add_video_stats", include_str!("../migrations/008_add_video_stats.sql")),
+        ("009_add_token_expiry", include_str!("../migrations/009_add_token_expiry.sql")),
     ];
 
     for (name, sql) in migrations {
@@ -74,16 +76,23 @@ async fn run_migrations(pool: &PgPool) {
             continue;
         }
 
+        // Run each migration in a transaction for safe rollback on failure
+        let mut tx = pool.begin().await
+            .unwrap_or_else(|e| panic!("Failed to begin transaction for migration {}: {}", name, e));
+
         sqlx::raw_sql(sql)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap_or_else(|e| panic!("Failed to run migration {}: {}", name, e));
 
         sqlx::query("INSERT INTO _schema_migrations (version) VALUES ($1)")
             .bind(name)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap_or_else(|e| panic!("Failed to record migration {}: {}", name, e));
+
+        tx.commit().await
+            .unwrap_or_else(|e| panic!("Failed to commit migration {}: {}", name, e));
 
         info!("Migration '{}' applied successfully", name);
     }

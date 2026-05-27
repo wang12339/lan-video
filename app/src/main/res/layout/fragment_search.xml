@@ -99,6 +99,39 @@
                 android:clipToPadding="false"
                 android:padding="6dp" />
 
+            <!-- Search suggestions / history ListView -->
+            <ListView
+                android:id="@+id/recycler_search_suggestions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card_glass"
+                android:choiceMode="none"
+                android:divider="@android:color/transparent"
+                android:dividerHeight="0dp"
+                android:elevation="4dp"
+                android:maxHeight="240dp"
+                android:padding="4dp"
+                android:visibility="gone"
+                tools:listitem="@android:layout/simple_list_item_1"
+                tools:visibility="visible" />
+
+            <!-- Clear history button (shown only when history is visible) -->
+            <TextView
+                android:id="@+id/btn_clear_search_history"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal|bottom"
+                android:layout_marginBottom="8dp"
+                android:background="?attr/selectableItemBackground"
+                android:fontFamily="monospace"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="8dp"
+                android:text="@string/search_clear_history"
+                android:textColor="@color/neon_cyan"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
             <LinearLayout
                 android:id="@+id/empty_search"
                 android:layout_width="wrap_content"

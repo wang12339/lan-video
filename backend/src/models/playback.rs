@@ -9,8 +9,11 @@ pub struct PlaybackHistoryRequest {
 
 #[derive(Debug, Serialize)]
 pub struct PlaybackHistoryResponse {
+    #[serde(rename = "videoId")]
     pub video_id: i64,
+    #[serde(rename = "positionMs")]
     pub position_ms: i64,
+    #[serde(rename = "durationMs")]
     pub duration_ms: i64,
 }
 

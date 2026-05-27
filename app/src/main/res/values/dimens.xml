@@ -21,4 +21,8 @@
 
     <!-- Stats card -->
     <dimen name="stat_card_height">88dp</dimen>
+
+    <!-- Adaptive layout (defaults for qualifier-specific dimen files) -->
+    <dimen name="fragment_horizontal_margin">16dp</dimen>
+    <dimen name="item_transform_image_length">120dp</dimen>
 </resources>

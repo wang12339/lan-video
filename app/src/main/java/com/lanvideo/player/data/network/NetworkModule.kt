@@ -1,0 +1,89 @@
+package com.lanvideo.player.data.network
+
+import android.content.Context
+import com.lanvideo.player.MyApplication
+import com.lanvideo.player.data.user.AuthSessionStore
+import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Cache
+
+object NetworkModule {
+    @Volatile
+    private var currentBaseUrl: String = ""
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+
+    private val client by lazy {
+        val app = MyApplication.instance
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.HOURS)
+            .writeTimeout(4, TimeUnit.HOURS)
+            .addInterceptor { chain ->
+                val original = chain.request()
+                val builder = original.newBuilder()
+                val token = AuthSessionStore.getToken(app)
+                if (token != null) {
+                    builder.header("Authorization", "Bearer $token")
+                }
+                val response = chain.proceed(builder.build())
+                // Token expired/invalid — clear session
+                if (response.code == 401 && token != null) {
+                    AuthSessionStore.clear(app)
+                    MyApplication.instance.notifyUnauthorized()
+                }
+                response
+            }
+            .addInterceptor(HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.HEADERS
+            })
+            .cache(Cache(app.cacheDir.resolve("okhttp_cache"), 50L * 1024 * 1024))
+            .build()
+    }
+
+    private const val DEFAULT_BASE_URL = "https://hke26xi9.ddnsto.com"
+
+    fun init(context: Context) {
+        val saved = ServerConfigStore.loadBaseUrl(context)?.trim()
+        if (!saved.isNullOrBlank()) {
+            currentBaseUrl = if (saved.endsWith("/")) saved else "$saved/"
+        } else {
+            // 默认使用 DDNS 地址
+            currentBaseUrl = DEFAULT_BASE_URL
+            ServerConfigStore.saveBaseUrl(context, DEFAULT_BASE_URL)
+        }
+    }
+
+    fun updateBaseUrl(newBaseUrl: String, context: Context? = null, notify: Boolean = true) {
+        val normalized = if (newBaseUrl.endsWith("/")) newBaseUrl else "$newBaseUrl/"
+        val previous = currentBaseUrl
+        currentBaseUrl = normalized
+        val ctx = context?.applicationContext ?: MyApplication.instance
+        ServerConfigStore.saveBaseUrl(ctx, normalized)
+        if (notify && (normalized != previous)) {
+            runCatching { MyApplication.instance.notifyLanServerEvent(normalized) }
+        }
+    }
+
+    fun getBaseUrl(): String = currentBaseUrl
+
+    fun httpClient(): OkHttpClient = client
+
+    fun createApi(): VideoApiService {
+        return Retrofit.Builder()
+            .baseUrl(currentBaseUrl)
+            .client(client)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(VideoApiService::class.java)
+    }
+
+}

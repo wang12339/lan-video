@@ -15,3 +15,11 @@ local.properties
 /backend/.env
 *.log
 *.pid
+
+# Release signing (keep private!)
+app/release.keystore
+app/keystore.properties
+
+# TLS certificates (self-signed test certs, regenerate per-device)
+**/certs/
+*.pem

@@ -6,11 +6,6 @@ pub struct AuthRequest {
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AccessRequest {
-    pub password: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub ok: bool,

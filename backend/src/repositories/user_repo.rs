@@ -4,18 +4,25 @@ use uuid::Uuid;
 #[derive(Debug, sqlx::FromRow)]
 pub struct UserRecord {
     pub id: i64,
+    #[allow(dead_code)]
     pub username: String,
+    #[allow(dead_code)]
     pub password_hash: String,
+    #[allow(dead_code)]
     pub is_admin: bool,
+    #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct UserTokenRow {
+    #[allow(dead_code)]
     pub id: i64,
     pub username: String,
+    #[allow(dead_code)]
     pub password_hash: String,
     pub is_admin: bool,
+    #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -58,19 +65,9 @@ impl UserRepository {
         Ok(user)
     }
 
-    pub async fn find_by_id(&self, id: i64) -> Result<Option<UserRecord>, sqlx::Error> {
-        let user = sqlx::query_as::<_, UserRecord>(
-            "SELECT id, username, password_hash, is_admin, created_at FROM users WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(user)
-    }
-
     pub async fn create_token(&self, user_id: i64) -> Result<String, sqlx::Error> {
         let token = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO auth_tokens (user_id, token) VALUES ($1, $2)")
+        sqlx::query("INSERT INTO auth_tokens (user_id, token, expires_at) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '7 days')")
             .bind(user_id)
             .bind(&token)
             .execute(&self.pool)
@@ -83,7 +80,7 @@ impl UserRepository {
             r#"SELECT u.id, u.username, u.password_hash, u.is_admin, u.created_at
                FROM auth_tokens t
                JOIN users u ON t.user_id = u.id
-               WHERE t.token = $1"#
+               WHERE t.token = $1 AND t.expires_at > CURRENT_TIMESTAMP"#
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -97,5 +94,12 @@ impl UserRepository {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn cleanup_expired_tokens(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= CURRENT_TIMESTAMP")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }
