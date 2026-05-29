@@ -3,9 +3,9 @@ use std::time::Instant;
 
 use moka::sync::Cache as MokaCache;
 
-const RATE_LIMIT_MAX_ATTEMPTS: u32 = 10;
+const RATE_LIMIT_MAX_ATTEMPTS: u32 = 5;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
-const RATE_LIMIT_BLOCK_SECS: u64 = 300;
+const RATE_LIMIT_BLOCK_SECS: u64 = 600;
 const RATE_LIMIT_MAX_ENTRIES: usize = 10_000;
 
 #[derive(Clone, Copy)]

@@ -81,14 +81,13 @@ async fn main() {
 
     let app = build_router(config.clone()).await;
 
-    // Start HTTP server — TLS is handled by nginx reverse proxy in production
+    // Start HTTP server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server_port));
     let listener = tokio::net::TcpListener::bind(addr).await
         .unwrap_or_else(|e| panic!("failed to bind TCP listener on {}: {}", addr, e));
 
     tracing::info!("Atmos Video server starting on http://{}", addr);
     tracing::info!("Media root: {}", config.media_root.display());
-    tracing::info!("TLS: terminated by nginx reverse proxy (see nginx/ directory)");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

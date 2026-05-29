@@ -60,14 +60,6 @@ cargo run
 | Android | Kotlin, Retrofit, ExoPlayer, Coil |
 | Web | 原生 JS PWA, Service Worker |
 
-## Docker 部署
-
-```bash
-docker compose up -d
-```
-
-默认监听 `0.0.0.0:8082`，详见 `docker-compose.yml`。
-
 ## API 概览
 
 | 端点 | 说明 |

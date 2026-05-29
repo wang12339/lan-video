@@ -48,7 +48,6 @@ object NetworkModule {
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.HEADERS
             })
-            .cache(Cache(app.cacheDir.resolve("okhttp_cache"), 50L * 1024 * 1024))
             .build()
     }
 

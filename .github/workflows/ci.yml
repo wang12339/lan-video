@@ -1,5 +1,5 @@
 # atmos-android CI/CD Pipeline
-# Triggers: push to main + PRs, produces APK artifacts + Docker images
+# Triggers: push to main + PRs, produces APK artifacts
 
 name: CI
 

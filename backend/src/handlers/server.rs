@@ -17,7 +17,7 @@ pub async fn server_info() -> Json<ServerInfo> {
     })
 }
 
-/// GET /health — Docker/Kubernetes liveness probe
+/// GET /health — liveness probe
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),

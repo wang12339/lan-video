@@ -2,15 +2,7 @@
 
 ## 1. 启动后端（电脑）
 
-### 方式 A：Docker（推荐）
-
-```bash
-docker compose up -d
-```
-
-自动启动后端 + PostgreSQL，监听 `0.0.0.0:8082`。
-
-### 方式 B：Cargo 直连运行
+### 方式：Cargo 直连运行
 
 ```bash
 # 需要先启动 PostgreSQL 并创建数据库

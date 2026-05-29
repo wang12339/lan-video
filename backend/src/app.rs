@@ -152,8 +152,6 @@ pub async fn build_router(config: AppConfig) -> Router {
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
             axum::http::header::AUTHORIZATION,
-            "X-Username".parse().expect("static header name is valid"),
-            "X-Password".parse().expect("static header name is valid"),
         ]);
 
     // Inject state into request extensions for middleware access

@@ -12,17 +12,11 @@ use crate::services::auth_service::AuthService;
 use crate::middleware::auth::{self as auth_mw, AuthUser};
 use crate::util::response::{ErrorResponse, SafeJson};
 
-/// Extract IP from headers for rate limiting
-fn get_rate_limit_ip(headers: &HeaderMap) -> std::net::IpAddr {
-    if let Some(forwarded) = headers.get("X-Forwarded-For") {
-        if let Ok(ip_str) = forwarded.to_str() {
-            if let Some(ip) = ip_str.split(',').next() {
-                if let Ok(parsed) = ip.trim().parse::<std::net::IpAddr>() {
-                    return parsed;
-                }
-            }
-        }
-    }
+/// Extract IP from headers for rate limiting.
+/// When behind ddnsto tunnel, all requests appear to come from the proxy.
+/// We don't trust X-Forwarded-For since ddnsto passes it through without adding the real IP.
+/// Using a single global bucket is better than letting attackers spoof unlimited IPs.
+fn get_rate_limit_ip(_headers: &HeaderMap) -> std::net::IpAddr {
     std::net::IpAddr::from([0, 0, 0, 0])
 }
 
