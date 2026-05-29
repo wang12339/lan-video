@@ -16,7 +16,10 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -29,46 +32,46 @@ import com.lanvideo.player.data.network.AuthDataSourceFactory
 import com.lanvideo.player.data.network.StreamUrlResolver
 import com.lanvideo.player.data.repository.VideoRepository
 import com.lanvideo.player.databinding.ItemPlayerPageBinding
-import java.util.Locale
-import kotlin.math.abs
+import com.lanvideo.player.feature.player.viewmodel.PlayerViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.math.abs
 
 class PlayerPageFragment : Fragment() {
     private var _binding: ItemPlayerPageBinding? = null
     private val binding get() = _binding!!
+    private val viewModel: PlayerViewModel by viewModels()
     private var player: ExoPlayer? = null
-    private var userPaused = false
     private var seekJob: Job? = null
-    private var saveJob: Job? = null
-    private var lastSavedPositionMs: Long = 0L
     private var isSeekDragging = false
-    private var hudVisible = true
-    private var isInPip = false
-    private var currentSpeed = 1f
-    private val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-    private val speedIds = listOf(
-        R.id.speed_05x, R.id.speed_075x, R.id.speed_1x,
-        R.id.speed_125x, R.id.speed_15x, R.id.speed_2x
-    )
+    private var audioManager: AudioManager? = null
+    private var maxVolume = 0
 
-    // Gesture state
-    private var gestureMode = GESTURE_NONE
+    // Gesture state (UI-only, not in ViewModel)
+    private var gestureMode = GestureMode.NONE
     private var downX = 0f
     private var downY = 0f
     private var downTime = 0L
     private var lastGestureX = 0f
     private var lastGestureY = 0f
-    private var audioManager: AudioManager? = null
-    private var maxVolume = 0
     private var startBrightness = -1f
     private var startVolume = -1
     private var lastTapTime = 0L
     private var lastTapX = 0f
+
+    private enum class GestureMode { NONE, BRIGHTNESS, VOLUME, SEEK }
+
+    private val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+    private val speedIds = listOf(
+        R.id.speed_05x, R.id.speed_075x, R.id.speed_1x,
+        R.id.speed_125x, R.id.speed_15x, R.id.speed_2x
+    )
 
     private val item: VideoItem get() {
         val a = requireArguments()
@@ -98,6 +101,33 @@ class PlayerPageFragment : Fragment() {
         initializePlayer()
         setupSpeedSelector()
         startSeekUpdater()
+        observeViewModel()
+    }
+
+    private fun observeViewModel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collectLatest { state ->
+                    // Sync speed indicator
+                    if (state.currentSpeed != (player?.playbackParameters?.speed ?: 1f)) {
+                        player?.playbackParameters = PlaybackParameters(state.currentSpeed)
+                    }
+                    binding.speedIndicator.text = if (state.currentSpeed == 1f) "1x" else "${state.currentSpeed}x"
+                    speedIds.forEachIndexed { i, id ->
+                        val tv = binding.root.findViewById<TextView>(id)
+                        tv.setTextColor(
+                            if (speeds[i] == state.currentSpeed) resources.getColor(R.color.neon_cyan, null)
+                            else resources.getColor(R.color.text_secondary, null)
+                        )
+                        tv.isSelected = speeds[i] == state.currentSpeed
+                    }
+
+                    // Sync HUD visibility
+                    binding.playbackOverlay.isVisible = state.hudVisible
+                    binding.speedIndicator.isVisible = state.hudVisible
+                }
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -114,6 +144,7 @@ class PlayerPageFragment : Fragment() {
         p.setMediaItem(MediaItem.fromUri(abs))
         p.prepare()
         p.playWhenReady = true
+        p.playbackParameters = PlaybackParameters(viewModel.uiState.value.currentSpeed)
         player = p
 
         binding.playerView.player = p
@@ -123,7 +154,6 @@ class PlayerPageFragment : Fragment() {
             (parentFragment as? PlayerFragment)?.skipToNext()
         }
 
-        // Resume playback from saved position
         val resumeMs = v.watchPosition ?: 0L
         if (resumeMs > 2000L) p.seekTo(resumeMs)
 
@@ -135,10 +165,13 @@ class PlayerPageFragment : Fragment() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     savePlaybackPosition()
+                    viewModel.cancelPositionSaver()
                     (parentFragment as? PlayerFragment)?.skipToNext()
                 }
             }
         })
+
+        viewModel.startPositionSaver(v.id)
     }
 
     // ═══════════════════════════════════════════════
@@ -150,14 +183,14 @@ class PlayerPageFragment : Fragment() {
         val seekThresholdPx = SEEK_THRESHOLD_DP * density
 
         view.setOnTouchListener { v, event ->
-            if (isInPip) return@setOnTouchListener false
+            if (viewModel.uiState.value.isInPip) return@setOnTouchListener false
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.x; downY = event.y
                     lastGestureX = event.x; lastGestureY = event.y
                     downTime = System.currentTimeMillis()
-                    gestureMode = GESTURE_NONE
+                    gestureMode = GestureMode.NONE
                     startBrightness = -1f; startVolume = -1
                     true
                 }
@@ -168,36 +201,37 @@ class PlayerPageFragment : Fragment() {
                     val vw = v.width.toFloat()
                     val vh = v.height.toFloat()
 
-                    if (gestureMode == GESTURE_NONE) {
+                    if (gestureMode == GestureMode.NONE) {
                         gestureMode = when {
                             abs(dy) > seekThresholdPx && abs(dy) > abs(dx) * 1.5f ->
-                                if (event.x < vw / 2f) GESTURE_BRIGHTNESS else GESTURE_VOLUME
-                            abs(dx) > seekThresholdPx -> GESTURE_SEEK
-                            else -> GESTURE_NONE
+                                if (event.x < vw / 2f) GestureMode.BRIGHTNESS else GestureMode.VOLUME
+                            abs(dx) > seekThresholdPx -> GestureMode.SEEK
+                            else -> GestureMode.NONE
                         }
-                        if (gestureMode == GESTURE_BRIGHTNESS || gestureMode == GESTURE_VOLUME) {
+                        if (gestureMode == GestureMode.BRIGHTNESS || gestureMode == GestureMode.VOLUME) {
                             initBrightnessVolume(event)
                         }
-                        if (gestureMode == GESTURE_SEEK) {
+                        if (gestureMode == GestureMode.SEEK) {
                             binding.skipIndicator.isVisible = true
                         }
                     }
 
                     when (gestureMode) {
-                        GESTURE_BRIGHTNESS -> handleBrightnessGesture(event, vh)
-                        GESTURE_VOLUME -> handleVolumeGesture(event, vh)
-                        GESTURE_SEEK -> handleSeekGesture(p, event, vw)
+                        GestureMode.BRIGHTNESS -> handleBrightnessGesture(event, vh)
+                        GestureMode.VOLUME -> handleVolumeGesture(event, vh)
+                        GestureMode.SEEK -> handleSeekGesture(p, event, vw)
+                        GestureMode.NONE -> {}
                     }
                     true
                 }
 
                 MotionEvent.ACTION_UP -> {
                     val dt = System.currentTimeMillis() - downTime
-                    val isTap = gestureMode == GESTURE_NONE &&
+                    val isTap = gestureMode == GestureMode.NONE &&
                             abs(event.x - downX) < seekThresholdPx &&
                             abs(event.y - downY) < seekThresholdPx && dt < 400L
 
-                    if (gestureMode == GESTURE_SEEK) {
+                    if (gestureMode == GestureMode.SEEK) {
                         binding.skipIndicator.isVisible = false
                     }
 
@@ -214,21 +248,21 @@ class PlayerPageFragment : Fragment() {
                             lastTapTime = 0L
                         } else {
                             if (System.currentTimeMillis() - lastTapTime > DOUBLE_TAP_MS) {
-                                toggleHud()
+                                viewModel.toggleHud()
                             }
                             lastTapTime = System.currentTimeMillis()
                             lastTapX = event.x
                         }
                     }
 
-                    gestureMode = GESTURE_NONE
+                    gestureMode = GestureMode.NONE
                     hideAllIndicators()
                     binding.speedPanel.isVisible = false
                     true
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
-                    gestureMode = GESTURE_NONE
+                    gestureMode = GestureMode.NONE
                     hideAllIndicators()
                     true
                 }
@@ -239,7 +273,7 @@ class PlayerPageFragment : Fragment() {
     }
 
     private fun initBrightnessVolume(event: MotionEvent) {
-        if (gestureMode == GESTURE_BRIGHTNESS) {
+        if (gestureMode == GestureMode.BRIGHTNESS) {
             startBrightness = try {
                 Settings.System.getInt(requireContext().contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
             } catch (_: Exception) { 0.5f }
@@ -293,13 +327,6 @@ class PlayerPageFragment : Fragment() {
         binding.skipIndicator.isVisible = false
     }
 
-    private fun toggleHud() {
-        hudVisible = !hudVisible
-        binding.playbackOverlay.isVisible = hudVisible
-        binding.speedIndicator.isVisible = hudVisible
-        if (!hudVisible) binding.speedPanel.isVisible = false
-    }
-
     // ═══════════════════════════════════════════════
     // Speed Selector
     // ═══════════════════════════════════════════════
@@ -317,14 +344,8 @@ class PlayerPageFragment : Fragment() {
     }
 
     private fun setSpeed(speed: Float) {
-        currentSpeed = speed
+        viewModel.setSpeed(speed)
         player?.playbackParameters = PlaybackParameters(speed)
-        binding.speedIndicator.text = if (speed == 1f) "1x" else "${speed}x"
-        speedIds.forEachIndexed { i, id ->
-            val tv = binding.root.findViewById<TextView>(id)
-            tv.setTextColor(if (speeds[i] == speed) resources.getColor(R.color.neon_cyan, null) else resources.getColor(R.color.text_secondary, null))
-            tv.isSelected = speeds[i] == speed
-        }
     }
 
     // ═══════════════════════════════════════════════
@@ -361,23 +382,11 @@ class PlayerPageFragment : Fragment() {
                 isSeekDragging = false
             }
         })
-
-        saveJob = lifecycleScope.launch {
-            while (isActive) {
-                delay(30_000)
-                savePlaybackPosition()
-            }
-        }
     }
 
     private fun savePlaybackPosition() {
         val p = player ?: return
-        val cur = p.currentPosition; val dur = p.duration
-        if (dur <= 0 || cur == lastSavedPositionMs) return
-        lastSavedPositionMs = cur
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { VideoRepository.updatePlaybackHistory(item.id, cur, dur) }
-        }
+        viewModel.savePosition(item.id, p.currentPosition, p.duration)
     }
 
     // ═══════════════════════════════════════════════
@@ -393,16 +402,20 @@ class PlayerPageFragment : Fragment() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 requireActivity().enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(ar).build())
-                isInPip = true
+                viewModel.setInPip(true)
             } catch (_: Exception) { }
         }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode)
-        isInPip = isInPictureInPictureMode
-        if (!isInPictureInPictureMode) { hudVisible = true; binding.playbackOverlay.isVisible = true }
-        else { binding.playbackOverlay.isVisible = false }
+        viewModel.setInPip(isInPictureInPictureMode)
+        if (!isInPictureInPictureMode) {
+            viewModel.setHudVisible(true)
+            binding.playbackOverlay.isVisible = true
+        } else {
+            binding.playbackOverlay.isVisible = false
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -418,26 +431,27 @@ class PlayerPageFragment : Fragment() {
 
     override fun onPause() {
         savePlaybackPosition()
-        if (!isInPip) player?.pause()
+        if (!viewModel.uiState.value.isInPip) player?.pause()
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
-        if (isInPip) return
-        if (!userPaused) player?.playWhenReady = true
+        if (viewModel.uiState.value.isInPip) return
+        if (!viewModel.uiState.value.userPaused) player?.playWhenReady = true
     }
 
     override fun onDestroyView() {
         savePlaybackPosition()
-        saveJob?.cancel(); seekJob?.cancel()
+        viewModel.cancelPositionSaver()
+        seekJob?.cancel()
         player?.release(); player = null
         _binding = null
         super.onDestroyView()
     }
 
     fun getPlayer() = player
-    fun isPausedByUser() = userPaused
+    fun isPausedByUser() = viewModel.uiState.value.userPaused
 
     companion object {
         const val ARG_ID = "id"
@@ -448,10 +462,6 @@ class PlayerPageFragment : Fragment() {
         private const val ARG_STREAM = "stream"
         private const val ARG_CATEGORY = "category"
         private const val ARG_WATCH_POS = "watchPos"
-        private const val GESTURE_NONE = 0
-        private const val GESTURE_BRIGHTNESS = 1
-        private const val GESTURE_VOLUME = 2
-        private const val GESTURE_SEEK = 3
         private const val SKIP_SEC = 10
         private const val DOUBLE_TAP_MS = 350L
         private const val SEEK_THRESHOLD_DP = 20f

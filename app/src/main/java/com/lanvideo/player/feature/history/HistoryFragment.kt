@@ -8,32 +8,30 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.lanvideo.player.ConnectionState
+import androidx.recyclerview.widget.RecyclerView
 import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
-import com.lanvideo.player.data.model.RecentWatchItem
-import com.lanvideo.player.data.network.LanServerDiscovery
-import com.lanvideo.player.data.repository.VideoRepository
-import com.lanvideo.player.data.user.AuthSessionStore
 import com.lanvideo.player.data.util.ConnectionStatusHelper
+import com.lanvideo.player.data.util.toPlayerBundle
 import com.lanvideo.player.databinding.FragmentHistoryBinding
+import com.lanvideo.player.feature.history.viewmodel.HistoryViewModel
 import com.lanvideo.player.feature.user.RecentWatchAdapter
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class HistoryFragment : Fragment() {
 
     private var _binding: FragmentHistoryBinding? = null
     private val binding get() = _binding!!
-    private val repository get() = VideoRepository
+    private val viewModel: HistoryViewModel by viewModels()
     private var historyAdapter: RecentWatchAdapter? = null
-    private var allHistory: List<RecentWatchItem> = emptyList()
-    private val pageSize = 20
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -59,18 +57,55 @@ class HistoryFragment : Fragment() {
 
         setupRecyclerView()
         observeConnection()
-        loadHistory()
+        observeViewModel()
+
+        viewModel.loadHistory(requireContext())
     }
 
     override fun onResume() {
         super.onResume()
-        loadHistory()
+        if (viewModel.uiState.value.history.isEmpty()) {
+            viewModel.loadHistory(requireContext())
+        }
+    }
+
+    private fun observeViewModel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collectLatest { state ->
+                    historyAdapter?.submitList(state.history)
+                    binding.recyclerHistory.isVisible = state.history.isNotEmpty()
+                    binding.emptyHistory.isVisible = state.history.isEmpty()
+                    binding.historyLoadMore.isVisible = state.isLoadingMore
+
+                    if (state.history.isEmpty()) {
+                        binding.emptyHistoryText.text = state.error ?: getString(R.string.history_empty)
+                    }
+                }
+            }
+        }
     }
 
     private fun setupRecyclerView() {
         historyAdapter = RecentWatchAdapter { item -> openPlayer(item) }
         binding.recyclerHistory.layoutManager = LinearLayoutManager(requireContext())
         binding.recyclerHistory.adapter = historyAdapter
+
+        binding.recyclerHistory.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                val visibleItemCount = lm.childCount
+                val totalItemCount = lm.itemCount
+                val firstVisibleItemPosition = lm.findFirstVisibleItemPosition()
+                val state = viewModel.uiState.value
+                if (!state.isLoadingMore && state.hasMore
+                    && (visibleItemCount + firstVisibleItemPosition) >= totalItemCount
+                    && firstVisibleItemPosition >= 0) {
+                    viewModel.loadMore()
+                }
+            }
+        })
     }
 
     private fun observeConnection() {
@@ -82,46 +117,7 @@ class HistoryFragment : Fragment() {
         ).observe(viewLifecycleOwner, app, lifecycleScope)
     }
 
-    private fun loadHistory() {
-        lifecycleScope.launch {
-            if (!isAdded || _binding == null) return@launch
-
-            val ctx = requireContext()
-
-            // 未登录状态
-            if (!AuthSessionStore.isLoggedIn(ctx)) {
-                allHistory = emptyList()
-                historyAdapter?.submitList(emptyList())
-                binding.recyclerHistory.isVisible = false
-                binding.emptyHistory.isVisible = true
-                binding.emptyHistoryText.text = "请先登录"
-                binding.historyLoadMore.isVisible = false
-                return@launch
-            }
-
-            binding.historyLoadMore.isVisible = false
-            binding.emptyHistory.isVisible = false
-
-            val result = withContext(Dispatchers.IO) {
-                repository.getAllPlaybackHistory()
-            }
-
-            if (!isAdded || _binding == null) return@launch
-
-            allHistory = result
-            val empty = allHistory.isEmpty()
-            binding.recyclerHistory.isVisible = !empty
-            binding.emptyHistory.isVisible = empty
-            binding.emptyHistoryText.text = getString(R.string.history_empty)
-
-            if (!empty) {
-                // 前端分页显示
-                historyAdapter?.submitList(allHistory.take(pageSize))
-            }
-        }
-    }
-
-    private fun openPlayer(item: RecentWatchItem) {
+    private fun openPlayer(item: com.lanvideo.player.data.model.RecentWatchItem) {
         if (item.sourceType.contains("image", ignoreCase = true)) {
             findNavController().navigate(
                 R.id.nav_image_viewer, Bundle().apply {
@@ -129,14 +125,7 @@ class HistoryFragment : Fragment() {
                 }
             )
         } else {
-            findNavController().navigate(
-                R.id.nav_player, Bundle().apply {
-                    putLong("videoId", item.videoId)
-                    putString("title", item.title)
-                    putString("category", item.category)
-                    putString("streamUrl", item.streamUrl)
-                }
-            )
+            findNavController().navigate(R.id.nav_player, item.toPlayerBundle())
         }
     }
 

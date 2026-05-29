@@ -2,50 +2,70 @@ package com.lanvideo.player.feature.home
 
 import android.app.AlertDialog
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
+import coil.load
 import com.lanvideo.player.ConnectionState
 import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
 import com.lanvideo.player.data.network.LanServerDiscovery
 import com.lanvideo.player.data.model.VideoItem
-import com.lanvideo.player.data.model.PagedVideoResponse
 import com.lanvideo.player.data.repository.VideoRepository
-import com.lanvideo.player.data.user.AuthSessionStore
+import com.lanvideo.player.data.network.StreamUrlResolver
 import com.lanvideo.player.data.util.ConnectionStatusHelper
+import com.lanvideo.player.data.util.toImageViewerBundle
+import com.lanvideo.player.data.util.toPlayerBundle
 import com.lanvideo.player.databinding.FragmentHomeBinding
+import com.lanvideo.player.databinding.ItemDataSlabBinding
 import com.lanvideo.player.feature.common.DataStreamAdapter
+import com.lanvideo.player.feature.home.viewmodel.HomeViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 
 class HomeFragment : Fragment() {
 
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
-    private val repository get() = VideoRepository
+    private val viewModel: HomeViewModel by viewModels()
     private var streamAdapter: DataStreamAdapter? = null
-    private var allVideos = mutableListOf<VideoItem>()
-    private var currentPage = 0
-    private var totalItems = 0
-    private var isLoadingMore = false
-    private var hasMore = true
-    private var currentChannel = 0 // 0=all, 1=video, 2=image
     private val channels = listOf("全部", "视频", "图片")
     private var didInitialLanDiscover = false
+    private var bannerAdapter: BannerPagerAdapter? = null
+    private val bannerHandler = Handler(Looper.getMainLooper())
+    private var bannerRunning = false
+    private val bannerScrollRunnable = object : Runnable {
+        override fun run() {
+            val pager = binding.bannerPager
+            val next = pager.currentItem + 1
+            if (next < (bannerAdapter?.itemCount ?: 0)) {
+                pager.setCurrentItem(next, true)
+            } else {
+                pager.setCurrentItem(0, true)
+            }
+            if (bannerRunning) bannerHandler.postDelayed(this, 5000L)
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -67,8 +87,11 @@ class HomeFragment : Fragment() {
             }
             setupChannelSelector()
             setupStream()
+            setupSwipeRefresh()
+            setupBanner()
+            observeViewModel()
             observeEvents()
-            loadFeed()
+            viewModel.loadFeed(requireContext())
         } catch (e: Exception) {
             android.util.Log.e("HomeFragment", "onViewCreated error", e)
             Toast.makeText(requireContext(), "初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -77,7 +100,34 @@ class HomeFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        loadFeed()
+        val s = viewModel.uiState.value
+        if (s.videos.isNotEmpty()) {
+            viewModel.refreshFeed(requireContext())
+        } else {
+            viewModel.loadFeed(requireContext())
+        }
+    }
+
+    private fun observeViewModel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collectLatest { state ->
+                    streamAdapter?.submitList(state.videos)
+                    updateBanner(state.bannerItems)
+                    updateSelectionBar(state)
+                    binding.recyclerStream.isVisible = state.videos.isNotEmpty() && !state.isLoading
+                    binding.loadingContainer.isVisible = state.isLoading && state.videos.isEmpty()
+                    binding.loadingMore.isVisible = state.isLoadingMore
+                    binding.swipeRefresh.isRefreshing = state.isRefreshing
+                    if (state.videos.isEmpty() && !state.isLoading) {
+                        binding.emptyFeed.isVisible = true
+                        binding.emptyFeedText.text = state.error ?: state.emptyText
+                    } else {
+                        binding.emptyFeed.isVisible = false
+                    }
+                }
+            }
+        }
     }
 
     private fun setupChannelSelector() {
@@ -91,24 +141,21 @@ class HomeFragment : Fragment() {
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
-                    if (currentChannel != index) {
-                        currentChannel = index
-                        updateChannelSelection()
-                        loadFeed()
-                    }
+                    viewModel.switchChannel(requireContext(), index)
+                    updateChannelSelection(index)
                 }
             }
             binding.channelContainer.addView(chip)
         }
-        updateChannelSelection()
+        updateChannelSelection(0)
     }
 
-    private fun updateChannelSelection() {
+    private fun updateChannelSelection(selectedIndex: Int) {
         for (i in 0 until binding.channelContainer.childCount) {
             val chip = binding.channelContainer.getChildAt(i) as? TextView ?: continue
-            chip.isSelected = i == currentChannel
-            chip.alpha = if (i == currentChannel) 1f else 0.6f
-            chip.typeface = if (i == currentChannel) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+            chip.isSelected = i == selectedIndex
+            chip.alpha = if (i == selectedIndex) 1f else 0.6f
+            chip.typeface = if (i == selectedIndex) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
         }
     }
 
@@ -118,7 +165,9 @@ class HomeFragment : Fragment() {
                 val adapter = streamAdapter ?: return@DataStreamAdapter
                 if (adapter.isSelectMode) {
                     adapter.toggleSelection(item.id)
-                    updateSelectionBar(adapter.selectedCount)
+                    val allIds = adapter.selectedIds
+                    viewModel.toggleSelection(item.id, allIds)
+                    updateSelectionBar(viewModel.uiState.value)
                 } else if (item.sourceType.contains("image", ignoreCase = true)) {
                     openImageViewer(item)
                 } else {
@@ -130,16 +179,8 @@ class HomeFragment : Fragment() {
                     .setTitle("删除视频")
                     .setMessage("确定要删除「${item.title}」吗？")
                     .setPositiveButton("删除") { _, _ ->
-                        lifecycleScope.launch {
-                            val result = withContext(Dispatchers.IO) { repository.deleteVideo(item.id) }
-                            if (result.isSuccess) {
-                                repository.invalidateCache()
-                                Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
-                                loadFeed()
-                            } else {
-                                Toast.makeText(requireContext(), "删除失败: ${result.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                        viewModel.deleteVideo(requireContext(), item.id)
+                        Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
                     }
                     .setNegativeButton("取消", null)
                     .show()
@@ -148,7 +189,6 @@ class HomeFragment : Fragment() {
         binding.recyclerStream.layoutManager = GridLayoutManager(requireContext(), 2)
         binding.recyclerStream.adapter = streamAdapter
 
-        // 分页滚动监听
         binding.recyclerStream.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
@@ -156,10 +196,10 @@ class HomeFragment : Fragment() {
                 val visibleItemCount = layoutManager.childCount
                 val totalItemCount = layoutManager.itemCount
                 val firstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
-                if (!isLoadingMore && hasMore
+                if (!viewModel.uiState.value.isLoadingMore && viewModel.uiState.value.hasMore
                     && (visibleItemCount + firstVisibleItemPosition) >= totalItemCount
                     && firstVisibleItemPosition >= 0) {
-                    loadMore()
+                    viewModel.loadMore(requireContext())
                 }
             }
         })
@@ -171,35 +211,120 @@ class HomeFragment : Fragment() {
             } else {
                 adapter.selectAll()
             }
-            updateSelectionBar(adapter.selectedCount)
+            viewModel.toggleSelection(-1, adapter.selectedIds)
         }
         binding.btnDeleteSelected.setOnClickListener {
             val ids = streamAdapter?.selectedIds?.toList() ?: return@setOnClickListener
             if (ids.isEmpty()) return@setOnClickListener
-            lifecycleScope.launch {
-                val result = repository.deleteVideos(ids)
-                if (result.isSuccess) {
-                    repository.invalidateCache()
-                    streamAdapter?.clearSelection()
-                    updateSelectionBar(0)
-                    loadFeed()
-                    Toast.makeText(requireContext(), "已删除 ${ids.size} 个", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(requireContext(),
-                        "删除失败: ${result.exceptionOrNull()?.message?.take(60)}",
-                        Toast.LENGTH_LONG).show()
-                }
+            viewModel.deleteVideos(requireContext(), ids) { count ->
+                streamAdapter?.clearSelection()
+                Toast.makeText(requireContext(), "已删除 $count 个", Toast.LENGTH_SHORT).show()
             }
         }
         binding.btnCancelSelect.setOnClickListener {
             streamAdapter?.clearSelection()
-            updateSelectionBar(0)
+            viewModel.clearSelection()
+        }
+    }
+
+    private fun setupSwipeRefresh() {
+        binding.swipeRefresh.setOnRefreshListener {
+            viewModel.loadFeed(requireContext())
+        }
+        binding.swipeRefresh.setColorSchemeResources(R.color.brand, R.color.neon_cyan)
+    }
+
+    private fun setupBanner() {
+        bannerAdapter = BannerPagerAdapter(
+            onClick = { item ->
+                if (item.sourceType.contains("image", ignoreCase = true)) {
+                    findNavController().navigate(R.id.nav_image_viewer, item.toImageViewerBundle())
+                } else {
+                    findNavController().navigate(R.id.nav_player, item.toPlayerBundle())
+                }
+            }
+        )
+        binding.bannerPager.adapter = bannerAdapter
+        binding.bannerPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                updateBannerDots(position)
+            }
+        })
+    }
+
+    private fun updateBanner(items: List<VideoItem>) {
+        val bannerItems = items.take(5)
+        bannerAdapter?.submitList(bannerItems)
+        binding.bannerPager.isVisible = bannerItems.isNotEmpty()
+        setupBannerDots(bannerItems.size)
+        startBannerAutoScroll(bannerItems.size > 1)
+    }
+
+    private fun setupBannerDots(count: Int) {
+        binding.bannerDots.removeAllViews()
+        for (i in 0 until count) {
+            val dot = ImageView(requireContext()).apply {
+                setImageResource(if (i == 0) R.drawable.shape_dot_active else R.drawable.shape_dot_inactive)
+                val size = 8
+                val params = ViewGroup.MarginLayoutParams(size + 4, size + 4)
+                params.marginStart = 3; params.marginEnd = 3
+                layoutParams = params
+            }
+            binding.bannerDots.addView(dot)
+        }
+        binding.bannerDots.isVisible = count > 0
+    }
+
+    private fun updateBannerDots(position: Int) {
+        for (i in 0 until binding.bannerDots.childCount) {
+            val dot = binding.bannerDots.getChildAt(i) as? ImageView ?: continue
+            dot.setImageResource(if (i == position) R.drawable.shape_dot_active else R.drawable.shape_dot_inactive)
+        }
+    }
+
+    private fun startBannerAutoScroll(enable: Boolean) {
+        bannerRunning = enable
+        bannerHandler.removeCallbacks(bannerScrollRunnable)
+        if (enable) bannerHandler.postDelayed(bannerScrollRunnable, 5000L)
+    }
+
+    private class BannerPagerAdapter(
+        private val onClick: (VideoItem) -> Unit
+    ) : RecyclerView.Adapter<BannerPagerAdapter.BannerVH>() {
+        private var items: List<VideoItem> = emptyList()
+
+        fun submitList(list: List<VideoItem>) { items = list; notifyDataSetChanged() }
+
+        override fun getItemCount() = items.size
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BannerVH {
+            val binding = ItemDataSlabBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+            return BannerVH(binding)
+        }
+        override fun onBindViewHolder(holder: BannerVH, position: Int) {
+            holder.bind(items[position])
+        }
+
+        inner class BannerVH(private val binding: ItemDataSlabBinding) :
+            RecyclerView.ViewHolder(binding.root) {
+            fun bind(item: VideoItem) {
+                val ctx = binding.root.context
+                val imgUrl = item.coverUrl?.takeIf { it.isNotBlank() } ?: item.streamUrl
+                binding.imageCover.load(StreamUrlResolver.toAbsoluteStreamUrl(imgUrl)) {
+                    placeholder(R.drawable.ic_gallery_black_24dp)
+                    error(R.drawable.ic_slideshow_black_24dp)
+                    crossfade(true)
+                }
+                binding.textTitle.text = item.title
+                binding.textMetadata.isVisible = false
+                binding.badgeDuration.isVisible = false
+                binding.root.setOnClickListener { onClick(item) }
+            }
         }
     }
 
     private fun observeEvents() {
         val app = requireActivity().application as MyApplication
-        app.lanServerEvents.observe(viewLifecycleOwner) { loadFeed() }
+        app.lanServerEvents.observe(viewLifecycleOwner) { viewModel.loadFeed(requireContext()) }
         ConnectionStatusHelper(
             statusView = binding.connectionStatus,
             statusDot = binding.statusDot,
@@ -215,197 +340,23 @@ class HomeFragment : Fragment() {
             app.setConnectionState(ConnectionState.SCANNING)
             lifecycleScope.launch {
                 LanServerDiscovery.discoverActiveNetwork(requireContext().applicationContext, force = true)
-                loadFeed()
+                viewModel.loadFeed(requireContext())
             }
-        }
-    }
-
-    private fun loadFeed() {
-        lifecycleScope.launch {
-            if (!isAdded || _binding == null) return@launch
-
-            // 未登录时不请求，登录后由 LoginDialog 触发重载
-            if (!AuthSessionStore.isLoggedIn(requireContext())) {
-                allVideos.clear()
-                streamAdapter?.submitList(emptyList())
-                binding.recyclerStream.isVisible = false
-                binding.loadingContainer.isVisible = false
-                binding.emptyFeed.isVisible = true
-                binding.emptyFeedText.text = "请先登录"
-                return@launch
-            }
-
-            // 重置分页状态
-            allVideos.clear()
-            currentPage = 0
-            hasMore = true
-            totalItems = 0
-            streamAdapter?.submitList(emptyList())
-            binding.recyclerStream.isVisible = false
-            binding.loadingContainer.isVisible = true
-
-            val typeFilter = when (currentChannel) {
-                1 -> "!local_image"
-                2 -> "local_image"
-                else -> "" // all
-            }
-            val app = requireActivity().application as MyApplication
-
-            val pagedResponse = try {
-                withTimeout(5_000L) {
-                    when (currentChannel) {
-                        2 -> {
-                            // 图片频道：一次性加载
-                            repository.listVideos(type = "local_image", page = 0, size = 1000)
-                        }
-                        1 -> {
-                            // 视频频道：分页加载
-                            repository.listVideos(type = "!local_image", page = 0, size = 20)
-                        }
-                        else -> {
-                            // 全部频道：分页加载视频 + 一次性加载图片
-                            val vids = repository.listVideos(type = "!local_image", page = 0, size = 20)
-                            val imgs = repository.listVideos(type = "local_image", page = 0, size = 1000)
-                            if (vids.isFailure && imgs.isFailure) {
-                                throw java.io.IOException(
-                                    vids.exceptionOrNull()?.message
-                                        ?: imgs.exceptionOrNull()?.message
-                                        ?: "无法连接服务器"
-                                )
-                            }
-                            val vidsItems = vids.getOrNull()?.items ?: emptyList()
-                            val imgsItems = imgs.getOrNull()?.items ?: emptyList()
-                            val vidsTotal = vids.getOrNull()?.total ?: 0L
-                            Result.success(PagedVideoResponse(
-                                vidsItems + imgsItems,
-                                vidsTotal + imgsItems.size,
-                                0,
-                                vidsItems.size + imgsItems.size
-                            ))
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Result.failure<PagedVideoResponse>(e)
-            }
-
-            var finalResult = pagedResponse
-            if (finalResult.isFailure && !didInitialLanDiscover) {
-                didInitialLanDiscover = true
-                withContext(Dispatchers.IO) {
-                    LanServerDiscovery.discoverActiveNetwork(requireContext().applicationContext, force = true)
-                }
-                if (!isAdded || _binding == null) return@launch
-                finalResult = runCatching {
-                    withTimeout(5_000L) {
-                        when (currentChannel) {
-                            2 -> repository.listVideos(type = "local_image", page = 0, size = 1000)
-                            1 -> repository.listVideos(type = "!local_image", page = 0, size = 20)
-                            else -> {
-                                val vids = repository.listVideos(type = "!local_image", page = 0, size = 20)
-                                val imgs = repository.listVideos(type = "local_image", page = 0, size = 1000)
-                                val allItems = (vids.getOrNull()?.items ?: emptyList()) +
-                                    (imgs.getOrNull()?.items ?: emptyList())
-                                Result.success(PagedVideoResponse(allItems, allItems.size.toLong(), 0, allItems.size))
-                            }
-                        }
-                    }
-                }.getOrElse { Result.failure(java.io.IOException("连接超时")) }
-            }
-            if (!isAdded || _binding == null) return@launch
-
-            binding.loadingContainer.isVisible = false
-            finalResult.onSuccess { resp ->
-                allVideos.addAll(resp.items)
-                totalItems = resp.total.toInt()
-                hasMore = allVideos.size < totalItems
-                currentPage = 1 // 下一页页码
-                applyStream()
-            }.onFailure { err ->
-                app.setConnectionState(ConnectionState.DISCONNECTED)
-                binding.emptyFeedText.text = "加载失败: ${err.message?.take(60) ?: "未知错误"}"
-                binding.emptyFeed.isVisible = true
-            }
-        }
-    }
-
-    private fun loadMore() {
-        if (currentChannel == 2) return // 图片频道已一次性加载完
-        isLoadingMore = true
-        binding.loadingMore.isVisible = true
-        lifecycleScope.launch {
-            if (!isAdded || _binding == null) return@launch
-            val app = requireActivity().application as MyApplication
-
-            val result = try {
-                withTimeout(5_000L) {
-                    if (currentChannel == 0) {
-                        // 全部频道：只加载更多视频
-                        val vids = repository.listVideos(type = "!local_image", page = currentPage, size = 20)
-                        if (vids.isFailure) {
-                            throw vids.exceptionOrNull() ?: java.io.IOException("加载更多失败")
-                        }
-                        vids.getOrThrow()
-                    } else {
-                        repository.listVideos(type = "!local_image", page = currentPage, size = 20).getOrThrow()
-                    }
-                }
-            } catch (e: Exception) {
-                null
-            }
-
-            if (!isAdded || _binding == null) return@launch
-            binding.loadingMore.isVisible = false
-            isLoadingMore = false
-
-            if (result != null) {
-                allVideos.addAll(result.items)
-                totalItems = result.total.toInt()
-                hasMore = allVideos.size < totalItems
-                currentPage++
-                streamAdapter?.submitList(allVideos.toList())
-                binding.recyclerStream.isVisible = true
-            } else {
-                Toast.makeText(requireContext(), "加载更多失败", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun applyStream() {
-        val empty = allVideos.isEmpty()
-        binding.emptyFeed.isVisible = empty
-        val channelName = channels.getOrElse(currentChannel) { "ALL" }
-        binding.emptyFeedText.text = if (empty) "暂无${channelName}" else ""
-        if (!empty) {
-            streamAdapter?.submitList(allVideos.toList())
-            binding.recyclerStream.isVisible = true
-        }
-    }
-
-    private fun updateSelectionBar(count: Int) {
-        binding.selectionBar.isVisible = count > 0
-        binding.selectionCount.text = if (count > 0) "已选: $count" else ""
-        val adapter = streamAdapter
-        if (adapter != null && adapter.isAllSelected()) {
-            binding.btnSelectAll.text = "取消全选"
-        } else {
-            binding.btnSelectAll.text = "全选"
         }
     }
 
     private fun enterBatchDeleteMode() {
-        if (!isAdded) return
         lifecycleScope.launch {
             binding.loadingContainer.isVisible = true
-            val typeFilter = if (currentChannel == 2) "local_image" else "!local_image"
+            val typeFilter = if (viewModel.uiState.value.currentChannel == 2) "local_image" else "!local_image"
             val result = withContext(Dispatchers.IO) {
-                repository.listVideos(type = typeFilter, page = 0, size = 1000)
+                VideoRepository.listVideos(type = typeFilter, page = 0, size = 1000)
             }
             binding.loadingContainer.isVisible = false
             result.onSuccess { resp ->
                 streamAdapter?.submitList(resp.items)
                 streamAdapter?.enterSelectMode(-1)
-                updateSelectionBar(0)
+                viewModel.enterSelectMode(-1)
                 binding.recyclerStream.isVisible = true
             }.onFailure {
                 Toast.makeText(requireContext(), "加载失败: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -413,26 +364,25 @@ class HomeFragment : Fragment() {
         }
     }
 
+    private fun updateSelectionBar(state: com.lanvideo.player.feature.home.viewmodel.HomeUiState) {
+        binding.selectionBar.isVisible = state.isSelectMode
+        binding.selectionCount.text = if (state.selectedCount > 0) "已选: ${state.selectedCount}" else ""
+        binding.btnSelectAll.text = if (state.isAllSelected) "取消全选" else "全选"
+    }
+
     private fun openPlayer(item: VideoItem) {
-        findNavController().navigate(R.id.nav_player, Bundle().apply {
-            putLong("videoId", item.id)
-            putString("title", item.title)
-            putString("streamUrl", item.streamUrl)
-            putString("category", item.category)
-            putLong("watchPosition", item.watchPosition ?: 0L)
-        })
+        findNavController().navigate(R.id.nav_player, item.toPlayerBundle())
     }
 
     private fun openImageViewer(item: VideoItem) {
-        findNavController().navigate(R.id.nav_image_viewer, Bundle().apply {
-            putLong("videoId", item.id)
-        })
+        findNavController().navigate(R.id.nav_image_viewer, item.toImageViewerBundle())
     }
 
     fun onBackPressed(): Boolean {
-        if (streamAdapter?.isSelectMode == true) {
+        val s = viewModel.uiState.value
+        if (s.isSelectMode) {
             streamAdapter?.clearSelection()
-            updateSelectionBar(0)
+            viewModel.clearSelection()
             return true
         }
         return false
@@ -440,6 +390,8 @@ class HomeFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        bannerRunning = false
+        bannerHandler.removeCallbacks(bannerScrollRunnable)
         streamAdapter = null
         _binding = null
     }

@@ -9,27 +9,28 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.lanvideo.player.ConnectionState
 import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
 import com.lanvideo.player.data.model.RecentWatchItem
-import com.lanvideo.player.data.network.NetworkModule
-import com.lanvideo.player.data.user.AuthSessionStore
 import com.lanvideo.player.data.util.ConnectionStatusHelper
+import com.lanvideo.player.data.util.toPlayerBundle
 import com.lanvideo.player.databinding.FragmentUserBinding
-import kotlinx.coroutines.Dispatchers
+import com.lanvideo.player.feature.user.viewmodel.UserViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class UserFragment : Fragment() {
     private var _binding: FragmentUserBinding? = null
     private val binding get() = _binding!!
+    private val viewModel: UserViewModel by viewModels()
     private var recentWatchAdapter: RecentWatchAdapter? = null
-    private var dataLoaded = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -56,8 +57,7 @@ class UserFragment : Fragment() {
         val ctx = requireContext()
         val app = requireActivity().application as MyApplication
 
-        // 登录成功或服务器切换时刷新
-        app.lanServerEvents.observe(viewLifecycleOwner) { loadUserProfile() }
+        app.lanServerEvents.observe(viewLifecycleOwner) { viewModel.loadProfile(ctx) }
 
         ConnectionStatusHelper(
             statusView = binding.userConnectionStatus,
@@ -68,108 +68,81 @@ class UserFragment : Fragment() {
         binding.recyclerRecent.layoutManager = LinearLayoutManager(requireContext())
 
         binding.btnLogout.setOnClickListener {
-            lifecycleScope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        val api = NetworkModule.createApi()
-                        runCatching { api.logout() }
-                    }
-                } catch (_: Exception) { }
-                AuthSessionStore.clear(ctx)
-                Toast.makeText(ctx, R.string.user_logged_out, Toast.LENGTH_SHORT).show()
-                requireActivity().recreate()
-            }
+            viewModel.logout(ctx)
+            Toast.makeText(ctx, R.string.user_logged_out, Toast.LENGTH_SHORT).show()
+            requireActivity().recreate()
         }
 
-        loadUserProfile()
+        observeViewModel()
+        viewModel.loadProfile(ctx)
     }
 
     override fun onResume() {
         super.onResume()
-        loadUserProfile()
+        viewModel.loadProfile(requireContext())
     }
 
-    private fun loadUserProfile() {
-        lifecycleScope.launch {
-            val ctx = requireContext()
-            val username = AuthSessionStore.getUsername(ctx)
+    private fun observeViewModel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collectLatest { state ->
+                    if (!state.isLoggedIn) {
+                        binding.userName.text = getString(R.string.user_not_logged_in)
+                        binding.userAvatar.text = "?"
+                        binding.userRegisteredAt.isVisible = false
+                        binding.cardWatched.isVisible = false
+                        binding.cardWatchTime.isVisible = false
+                        binding.recyclerRecent.isVisible = false
+                        binding.userRecentEmpty.isVisible = false
+                        binding.btnLogin.isVisible = true
+                        binding.btnLogin.setOnClickListener {
+                            com.lanvideo.player.ui.auth.LoginDialog().show(
+                                parentFragmentManager, "login"
+                            )
+                        }
+                        binding.btnLogout.isVisible = false
+                        return@collectLatest
+                    }
 
-            if (username == null) {
-                // 未登录状态
-                binding.userName.text = getString(R.string.user_not_logged_in)
-                binding.userAvatar.text = "?"
-                binding.userRegisteredAt.isVisible = false
-                binding.cardWatched.isVisible = false
-                binding.cardWatchTime.isVisible = false
-                binding.recyclerRecent.isVisible = false
-                binding.userRecentEmpty.isVisible = false
-                binding.btnLogin.isVisible = true
-                binding.btnLogin.setOnClickListener {
-                    com.lanvideo.player.ui.auth.LoginDialog().show(
-                        parentFragmentManager, "login"
-                    )
-                }
-                binding.btnLogout.isVisible = false
-                return@launch
-            }
+                    binding.userName.text = state.username ?: ""
+                    binding.userAvatar.text = state.avatarLetter
+                    binding.btnLogin.isVisible = false
+                    binding.btnLogout.isVisible = true
 
-            // 已登录：先显示用户名
-            binding.userName.text = username
-            binding.userAvatar.text = username.firstOrNull()?.uppercase() ?: "U"
-            binding.btnLogin.isVisible = false
-            binding.btnLogout.isVisible = true
+                    binding.userBadge.isVisible = state.isAdmin
+                    if (state.isAdmin) {
+                        binding.userBadge.text = getString(R.string.user_badge_admin)
+                    }
 
-            // 从服务器加载完整信息
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val api = NetworkModule.createApi()
-                    api.getUserProfile()
-                }
-            }
+                    binding.userRegisteredAt.isVisible = state.registeredAt.isNotBlank()
+                    if (state.registeredAt.isNotBlank()) {
+                        binding.userRegisteredAt.text = getString(
+                            R.string.user_registered_at,
+                            state.registeredAt
+                        )
+                    }
 
-            dataLoaded = true
+                    binding.cardWatched.isVisible = true
+                    binding.cardWatchTime.isVisible = true
+                    binding.userStatWatchedCount.text = state.totalWatched.toString()
+                    binding.userStatWatchTime.text = state.watchTimeText
 
-            result.onSuccess { profile ->
-                binding.userBadge.isVisible = profile.isAdmin
-                if (profile.isAdmin) {
-                    binding.userBadge.text = getString(R.string.user_badge_admin)
-                }
+                    if (recentWatchAdapter == null) {
+                        recentWatchAdapter = RecentWatchAdapter { item -> openPlayer(item) }
+                        binding.recyclerRecent.adapter = recentWatchAdapter
+                    }
+                    val hasRecent = state.recentHistory.isNotEmpty()
+                    binding.recyclerRecent.isVisible = hasRecent
+                    binding.userRecentEmpty.isVisible = !hasRecent
+                    binding.userRecentEmpty.text = getString(R.string.user_recent_empty)
+                    if (hasRecent) {
+                        recentWatchAdapter?.submitList(state.recentHistory)
+                    }
 
-                binding.userRegisteredAt.isVisible = profile.createdAt.isNotBlank()
-                if (profile.createdAt.isNotBlank()) {
-                    binding.userRegisteredAt.text = getString(
-                        R.string.user_registered_at,
-                        profile.createdAt.take(10)
-                    )
-                }
-
-                // 统计卡片
-                binding.cardWatched.isVisible = true
-                binding.cardWatchTime.isVisible = true
-                binding.userStatWatchedCount.text = profile.totalVideosWatched.toString()
-
-                val hours = profile.totalWatchTimeMs / 3600000f
-                binding.userStatWatchTime.text = if (hours >= 1f) {
-                    String.format("%.1f 小时", hours)
-                } else {
-                    val minutes = profile.totalWatchTimeMs / 60000
-                    "${minutes}分钟"
-                }
-
-                // 最近播放
-                if (recentWatchAdapter == null) {
-                    recentWatchAdapter = RecentWatchAdapter { item -> openPlayer(item) }
-                    binding.recyclerRecent.adapter = recentWatchAdapter
-                }
-                binding.recyclerRecent.isVisible = profile.recentHistory.isNotEmpty()
-                binding.userRecentEmpty.isVisible = profile.recentHistory.isEmpty()
-                binding.userRecentEmpty.text = getString(R.string.user_recent_empty)
-                recentWatchAdapter?.submitList(profile.recentHistory)
-            }.onFailure { e ->
-                // API 失败时不清空已有的数据，只追加提示
-                if (recentWatchAdapter == null || recentWatchAdapter?.itemCount == 0) {
-                    binding.userRecentEmpty.isVisible = true
-                    binding.userRecentEmpty.text = "加载失败: ${e.message?.take(40) ?: "未知错误"}"
+                    if (state.error != null && recentWatchAdapter?.itemCount == 0) {
+                        binding.userRecentEmpty.isVisible = true
+                        binding.userRecentEmpty.text = "加载失败: ${state.error}"
+                    }
                 }
             }
         }
@@ -183,15 +156,7 @@ class UserFragment : Fragment() {
                 }
             )
         } else {
-            findNavController().navigate(
-                R.id.nav_player, Bundle().apply {
-                    putLong("videoId", item.videoId)
-                    putString("title", item.title)
-                    putString("category", item.category)
-                    putString("streamUrl", item.streamUrl)
-                    putLong("watchPosition", item.positionMs)
-                }
-            )
+            findNavController().navigate(R.id.nav_player, item.toPlayerBundle())
         }
     }
 

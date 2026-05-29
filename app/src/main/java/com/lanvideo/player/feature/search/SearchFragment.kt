@@ -1,5 +1,6 @@
 package com.lanvideo.player.feature.search
 
+import android.content.Context
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -7,44 +8,39 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
-import android.widget.TextView
 import android.widget.Toast
 import android.widget.AdapterView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.lanvideo.player.ConnectionState
 import com.lanvideo.player.MainActivity
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.R
-import com.lanvideo.player.data.repository.VideoRepository
-import com.lanvideo.player.feature.common.FeaturedVideoAdapter
 import com.lanvideo.player.data.util.ConnectionStatusHelper
+import com.lanvideo.player.data.util.toImageViewerBundle
+import com.lanvideo.player.data.util.toPlayerBundle
 import com.lanvideo.player.databinding.FragmentSearchBinding
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import com.lanvideo.player.feature.common.FeaturedVideoAdapter
+import com.lanvideo.player.feature.search.viewmodel.SearchViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class SearchFragment : Fragment() {
     private var _binding: FragmentSearchBinding? = null
     private val binding get() = _binding!!
-    private val repository get() = VideoRepository
+    private val viewModel: SearchViewModel by viewModels()
     private var searchAdapter: FeaturedVideoAdapter? = null
-    private var searchJob: Job? = null
-    private var currentQuery: String = ""
-    private var currentPage: Int = 0
-    private var totalItems: Long = 0
-    private var isLoadingMore: Boolean = false
-    private val allResults = mutableListOf<com.lanvideo.player.data.model.VideoItem>()
-
-    // Search history & suggestions
-    private lateinit var searchHistory: SearchHistory
+    private var searchHistory: SearchHistory? = null
     private var suggestionsAdapter: ArrayAdapter<String>? = null
     private var isShowingHistory: Boolean = false
 
@@ -67,7 +63,89 @@ class SearchFragment : Fragment() {
             (requireActivity() as? MainActivity)?.openDrawer()
         }
 
-        // Setup suggestions ListView
+        setupSuggestions()
+        setupSearchResults()
+        setupConnectionObserver()
+
+        // ── Search input listeners ──
+        binding.inputSearch.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                val query = binding.inputSearch.text?.toString()?.trim().orEmpty()
+                if (query.isNotBlank()) {
+                    searchHistory?.addSearch(query)
+                    hideSuggestions()
+                    viewModel.search(query)
+                }
+                true
+            } else false
+        }
+
+        binding.inputSearch.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                val q = s?.toString()?.trim().orEmpty()
+                if (q.isBlank()) {
+                    showSearchHistory()
+                } else {
+                    showSuggestions(q)
+                }
+                viewModel.search(q)
+            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+
+        binding.inputSearch.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                val q = binding.inputSearch.text?.toString()?.trim().orEmpty()
+                if (q.isBlank()) showSearchHistory()
+            } else {
+                hideSuggestions()
+            }
+        }
+
+        binding.btnClearSearchHistory.setOnClickListener {
+            searchHistory?.clearHistory()
+            hideSuggestions()
+            Toast.makeText(requireContext(), "搜索历史已清除", Toast.LENGTH_SHORT).show()
+        }
+
+        observeViewModel()
+
+        // 自动聚焦
+        binding.inputSearch.requestFocus()
+        binding.inputSearch.postDelayed({
+            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(binding.inputSearch, InputMethodManager.SHOW_IMPLICIT)
+        }, 200)
+    }
+
+    private fun observeViewModel() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collectLatest { state ->
+                    searchAdapter?.highlightQuery = state.query
+                    searchAdapter?.submitList(state.results)
+                    binding.emptySearch.isVisible = state.results.isEmpty() && !state.isLoading
+                    binding.searchLoadMore.isVisible = state.isLoadingMore
+
+                    if (state.query.isBlank()) {
+                        binding.emptySearchText.text = getString(R.string.search_empty_hint)
+                        binding.textResultCount.isVisible = false
+                    } else if (state.results.isEmpty() && !state.isLoading) {
+                        binding.emptySearchText.text = state.error ?: getString(R.string.search_no_results, state.query)
+                        binding.textResultCount.isVisible = false
+                    } else {
+                        binding.textResultCount.isVisible = state.totalFound > 0
+                        if (state.totalFound > 0) {
+                            binding.textResultCount.text = "找到 ${state.totalFound} 个结果"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setupSuggestions() {
         suggestionsAdapter = object : ArrayAdapter<String>(
             requireContext(),
             R.layout.item_search_suggestion,
@@ -77,12 +155,12 @@ class SearchFragment : Fragment() {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent)
                 val textView = view.findViewById<android.widget.TextView>(R.id.suggestion_text)
-                textView.typeface = android.graphics.Typeface.MONOSPACE
+                textView.typeface = android.graphics.Typeface.DEFAULT
                 val deleteBtn = view.findViewById<android.widget.TextView>(R.id.btn_suggestion_delete)
                 deleteBtn.isVisible = true
                 deleteBtn.setOnClickListener {
                     val text = getItem(position) ?: return@setOnClickListener
-                    searchHistory.removeSearch(text)
+                    searchHistory?.removeSearch(text)
                     val q = binding.inputSearch.text?.toString()?.trim().orEmpty()
                     if (q.isBlank()) showSearchHistory() else showSuggestions(q)
                     Toast.makeText(context, "已删除「${text}」", Toast.LENGTH_SHORT).show()
@@ -95,37 +173,27 @@ class SearchFragment : Fragment() {
             val text = suggestionsAdapter?.getItem(position) ?: return@OnItemClickListener
             binding.inputSearch.setText(text)
             binding.inputSearch.setSelection(text.length)
-            currentQuery = text
-            searchHistory.addSearch(text)
+            searchHistory?.addSearch(text)
             hideSuggestions()
-            performSearch()
+            viewModel.search(text)
         }
         binding.recyclerSearchSuggestions.onItemLongClickListener = AdapterView.OnItemLongClickListener { _, _, position, _ ->
             val text = suggestionsAdapter?.getItem(position) ?: return@OnItemLongClickListener false
-            searchHistory.removeSearch(text)
+            searchHistory?.removeSearch(text)
             val q = binding.inputSearch.text?.toString()?.trim().orEmpty()
-            if (q.isBlank()) {
-                showSearchHistory()
-            } else {
-                showSuggestions(q)
-            }
+            if (q.isBlank()) showSearchHistory() else showSuggestions(q)
             Toast.makeText(requireContext(), "已删除「${text}」", Toast.LENGTH_SHORT).show()
             true
         }
+    }
 
+    private fun setupSearchResults() {
         searchAdapter = FeaturedVideoAdapter(
             onClick = { item ->
                 if (item.sourceType.contains("image", ignoreCase = true)) {
-                    findNavController().navigate(R.id.nav_image_viewer, Bundle().apply {
-                        putLong("videoId", item.id)
-                    })
+                    findNavController().navigate(R.id.nav_image_viewer, item.toImageViewerBundle())
                 } else {
-                    findNavController().navigate(R.id.nav_player, Bundle().apply {
-                        putLong("videoId", item.id)
-                        putString("title", item.title)
-                        putString("streamUrl", item.streamUrl)
-                        putString("category", item.category)
-                    })
+                    findNavController().navigate(R.id.nav_player, item.toPlayerBundle())
                 }
             }
         )
@@ -135,149 +203,27 @@ class SearchFragment : Fragment() {
 
         binding.recyclerSearchResults.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0 || isLoadingMore) return
+                if (dy <= 0) return
                 val totalItemCount = layoutManager.itemCount
                 val lastVisibleItem = layoutManager.findLastVisibleItemPosition()
                 if (lastVisibleItem >= totalItemCount - 4) {
-                    loadNextPage()
+                    viewModel.loadNextPage()
                 }
             }
         })
+    }
 
+    private fun setupConnectionObserver() {
         val app = requireActivity().application as MyApplication
         ConnectionStatusHelper(
             statusView = binding.searchConnectionStatus,
             statusDot = binding.searchStatusDot,
             statusText = binding.searchStatusText,
         ).observe(viewLifecycleOwner, app, lifecycleScope)
-
-        // --- Search input listeners ---
-
-        binding.inputSearch.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                val query = binding.inputSearch.text?.toString()?.trim().orEmpty()
-                if (query.isNotBlank()) {
-                    currentQuery = query
-                    searchHistory.addSearch(query)
-                    hideSuggestions()
-                    performSearch()
-                }
-                true
-            } else false
-        }
-
-        binding.inputSearch.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-                val q = s?.toString()?.trim().orEmpty()
-                if (q != currentQuery) {
-                    currentQuery = q
-                    if (q.isBlank()) {
-                        // Show history when input is empty
-                        showSearchHistory()
-                    } else {
-                        // Show suggestions (fuzzy match from history)
-                        showSuggestions(q)
-                    }
-                    performSearch()
-                }
-            }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-
-        // Show search history when input field gains focus and is empty
-        binding.inputSearch.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                val q = binding.inputSearch.text?.toString()?.trim().orEmpty()
-                if (q.isBlank()) {
-                    showSearchHistory()
-                }
-            } else {
-                hideSuggestions()
-            }
-        }
-
-        // Clear history button
-        binding.btnClearSearchHistory.setOnClickListener {
-            searchHistory.clearHistory()
-            hideSuggestions()
-            Toast.makeText(requireContext(), "搜索历史已清除", Toast.LENGTH_SHORT).show()
-        }
-
-    }
-
-
-    private fun performSearch() {
-        searchJob?.cancel()
-        allResults.clear()
-        currentPage = 0
-        totalItems = 0
-        isLoadingMore = false
-        searchJob = lifecycleScope.launch {
-            if (currentQuery.isBlank()) {
-                searchAdapter?.submitList(emptyList())
-                searchAdapter?.highlightQuery = null
-                binding.emptySearch.isVisible = true
-                binding.emptySearchText.text = getString(R.string.search_empty_hint)
-                binding.searchLoadMore.isVisible = false
-                return@launch
-            }
-            delay(300)
-            binding.searchLoadMore.isVisible = false
-            val result = repository.listVideos(query = currentQuery, page = 0, size = 20)
-            result.onSuccess { resp ->
-                allResults.clear()
-                allResults.addAll(resp.items)
-                totalItems = resp.total
-                currentPage = 0
-                searchAdapter?.highlightQuery = currentQuery
-                searchAdapter?.submitList(allResults.toList())
-                binding.emptySearch.isVisible = allResults.isEmpty()
-                if (allResults.isEmpty()) {
-                    binding.emptySearchText.text = getString(R.string.search_no_results, currentQuery)
-                    binding.textResultCount.isVisible = false
-                } else {
-                    binding.textResultCount.isVisible = true
-                    binding.textResultCount.text = "找到 ${resp.total} 个结果"
-                }
-                binding.searchLoadMore.isVisible = false
-            }.onFailure { err ->
-                searchAdapter?.submitList(emptyList())
-                searchAdapter?.highlightQuery = currentQuery
-                binding.emptySearch.isVisible = true
-                binding.searchLoadMore.isVisible = false
-                binding.emptySearchText.text = getString(R.string.search_error, err.message ?: "未知错误")
-                binding.textResultCount.isVisible = false
-            }
-        }
-    }
-
-    private fun loadNextPage() {
-        if (isLoadingMore) return
-        val loaded = allResults.size.toLong()
-        if (loaded >= totalItems) return
-        isLoadingMore = true
-        binding.searchLoadMore.isVisible = true
-        lifecycleScope.launch {
-            val nextPage = currentPage + 1
-            repository.listVideos(query = currentQuery, page = nextPage, size = 20)
-                .onSuccess { resp ->
-                    allResults.addAll(resp.items)
-                    totalItems = resp.total
-                    currentPage = nextPage
-                    searchAdapter?.submitList(allResults.toList())
-                    binding.emptySearch.isVisible = false
-                }
-                .onFailure {
-                    // silently fail for load more
-                }
-            binding.searchLoadMore.isVisible = false
-            isLoadingMore = false
-        }
     }
 
     private fun showSearchHistory() {
-        val history = searchHistory.getHistory()
+        val history = searchHistory?.getHistory().orEmpty()
         if (history.isEmpty()) {
             hideSuggestions()
             return
@@ -291,7 +237,7 @@ class SearchFragment : Fragment() {
     }
 
     private fun showSuggestions(query: String) {
-        val history = searchHistory.getHistory()
+        val history = searchHistory?.getHistory().orEmpty()
         val matches = history.filter { it.contains(query, ignoreCase = true) }
         if (matches.isEmpty()) {
             hideSuggestions()
@@ -331,7 +277,6 @@ class SearchFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        searchJob?.cancel()
         searchAdapter = null
         _binding = null
         super.onDestroyView()
