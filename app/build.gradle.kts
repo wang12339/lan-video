@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.application)
     // Kotlin serialization for compile-time @Serializable KSerializer generation
     alias(libs.plugins.kotlin.serialization)
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Load keystore properties (release signing) — safe to fail for debug builds
@@ -20,9 +21,9 @@ android {
     defaultConfig {
         applicationId = "com.lanvideo.player"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 35
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -72,6 +73,7 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        compose = true
     }
 
     testOptions {
@@ -103,6 +105,35 @@ dependencies {
     implementation(libs.androidx.documentfile)
     implementation(libs.sentry.android)
     implementation(libs.androidx.security.crypto)
+    
+    // Compose BOM
+    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+    implementation(composeBom)
+    
+    // Material 3
+    implementation("androidx.compose.material3:material3")
+    
+    // Compose UI
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    
+    // Activity Compose
+    implementation("androidx.activity:activity-compose:1.8.2")
+    
+    // Lifecycle
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    
+    // Coil (图片加载)
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    
+    // Accompanist (系统栏)
+    implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
