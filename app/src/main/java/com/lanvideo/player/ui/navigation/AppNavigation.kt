@@ -16,6 +16,7 @@ import com.lanvideo.player.ui.home.HomeScreen
 import com.lanvideo.player.ui.player.PlayerScreen
 import com.lanvideo.player.ui.search.SearchScreen
 import com.lanvideo.player.ui.user.UserScreen
+import com.lanvideo.player.ui.viewer.ImageViewerScreen
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
@@ -96,6 +97,10 @@ fun AppNavigation() {
             }
             composable(Screen.ImageViewer.route) { backStackEntry ->
                 val imageUrl = backStackEntry.arguments?.getString("imageUrl") ?: ""
+                ImageViewerScreen(
+                    imageUrl = imageUrl,
+                    onBackClick = { navController.popBackStack() }
+                )
             }
         }
     }
