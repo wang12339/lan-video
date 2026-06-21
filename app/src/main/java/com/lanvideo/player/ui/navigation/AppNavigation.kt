@@ -13,6 +13,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.lanvideo.player.ui.components.BottomNavBar
 import com.lanvideo.player.ui.home.HomeScreen
+import com.lanvideo.player.ui.player.PlayerScreen
 import com.lanvideo.player.ui.search.SearchScreen
 import com.lanvideo.player.ui.user.UserScreen
 
@@ -84,6 +85,10 @@ fun AppNavigation() {
             }
             composable(Screen.Player.route) { backStackEntry ->
                 val videoId = backStackEntry.arguments?.getString("videoId") ?: ""
+                PlayerScreen(
+                    videoId = videoId,
+                    onBackClick = { navController.popBackStack() }
+                )
             }
             composable(Screen.History.route) {
             }
