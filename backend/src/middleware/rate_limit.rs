@@ -16,7 +16,13 @@ struct RateLimitEntry {
 
 #[derive(Clone)]
 pub struct RateLimiter {
-    cache: Arc<MokaCache<std::net::IpAddr, RateLimitEntry>>,
+    cache: Arc<MokaCache<String, RateLimitEntry>>,
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RateLimiter {
@@ -31,9 +37,9 @@ impl RateLimiter {
         }
     }
 
-    pub async fn check(&self, ip: std::net::IpAddr) -> Result<(), ()> {
+    pub async fn check(&self, key: &str) -> Result<(), ()> {
         let now = Instant::now();
-        let entry = self.cache.get(&ip).unwrap_or(RateLimitEntry {
+        let entry = self.cache.get(key).unwrap_or(RateLimitEntry {
             count: 0,
             blocked_until: None,
         });
@@ -52,7 +58,7 @@ impl RateLimiter {
         };
 
         self.cache.insert(
-            ip,
+            key.to_string(),
             RateLimitEntry {
                 count: new_count,
                 blocked_until: blocked,
@@ -66,7 +72,7 @@ impl RateLimiter {
         }
     }
 
-    pub async fn reset(&self, ip: std::net::IpAddr) {
-        self.cache.invalidate(&ip);
+    pub async fn reset(&self, key: &str) {
+        self.cache.invalidate(key);
     }
 }

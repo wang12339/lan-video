@@ -67,9 +67,9 @@ class MyApplication : Application() {
                 options.dsn = dsn
                 options.tracesSampleRate = if (BuildConfig.BUILD_VARIANT == "release") 0.2 else 1.0
                 options.environment = BuildConfig.BUILD_VARIANT
-                options.isSendDefaultPii = true
-                options.isAttachScreenshot = true
-                options.isAttachViewHierarchy = true
+                options.isSendDefaultPii = false
+                options.isAttachScreenshot = false
+                options.isAttachViewHierarchy = false
                 options.profilesSampleRate = 0.2
             }
             Sentry.setTag("app_version", BuildConfig.VERSION_NAME)

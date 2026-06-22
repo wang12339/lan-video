@@ -7,8 +7,6 @@ use crate::services::video_service::VideoService;
 use crate::util::password;
 use crate::middleware::rate_limit::RateLimiter;
 
-use std::net::IpAddr;
-
 /// Token cookie lifetime (7 days in seconds)
 pub const COOKIE_MAX_AGE: i64 = 604800;
 
@@ -38,7 +36,6 @@ impl AuthService {
     pub async fn register(
         &self,
         req: &AuthRequest,
-        ip: IpAddr,
     ) -> Result<AuthResponse, AuthError> {
         if !self.config.registration_enabled {
             return Ok(AuthResponse {
@@ -48,7 +45,8 @@ impl AuthService {
             });
         }
 
-        self.rate_limiter.check(ip).await.map_err(|_| AuthError::RateLimited)?;
+        let key = format!("auth:{}", req.username.trim().to_lowercase());
+        self.rate_limiter.check(&key).await.map_err(|_| AuthError::RateLimited)?;
 
         if req.username.trim().is_empty() || req.password.trim().is_empty() {
             return Ok(AuthResponse {
@@ -84,7 +82,7 @@ impl AuthService {
 
         let token = self.user_repo.create_token(user_id).await?;
 
-        self.rate_limiter.reset(ip).await;
+        self.rate_limiter.reset(&key).await;
 
         tracing::info!(
             username = %req.username.trim(),
@@ -102,9 +100,9 @@ impl AuthService {
     pub async fn login(
         &self,
         req: &AuthRequest,
-        ip: IpAddr,
     ) -> Result<AuthResponse, AuthError> {
-        self.rate_limiter.check(ip).await.map_err(|_| AuthError::RateLimited)?;
+        let key = format!("auth:{}", req.username.trim().to_lowercase());
+        self.rate_limiter.check(&key).await.map_err(|_| AuthError::RateLimited)?;
 
         let user = self
             .user_repo
@@ -132,7 +130,7 @@ impl AuthService {
 
         let token = self.user_repo.create_token(user.id).await?;
 
-        self.rate_limiter.reset(ip).await;
+        self.rate_limiter.reset(&key).await;
 
         tracing::info!(username = %req.username, "user logged in");
 

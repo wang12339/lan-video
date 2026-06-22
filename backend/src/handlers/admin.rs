@@ -5,6 +5,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 use crate::state::AppState;
 use crate::models::video::*;
@@ -51,8 +52,7 @@ pub async fn upload_video(
                 file_name = Some(fname);
 
                 // 流式写入临时文件
-                let tmp = state.config.media_root.join(format!(".upload_{}", std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+                let tmp = state.config.media_root.join(format!(".upload_{}", Uuid::new_v4()));
                 let mut f = tokio::fs::File::create(&tmp).await
                     .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "创建临时文件失败"))?;
                 let mut total: u64 = 0;

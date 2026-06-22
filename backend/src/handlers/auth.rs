@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
@@ -11,14 +11,6 @@ use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfi
 use crate::services::auth_service::AuthService;
 use crate::middleware::auth::{self as auth_mw, AuthUser};
 use crate::util::response::{ErrorResponse, SafeJson};
-
-/// Extract IP from headers for rate limiting.
-/// When behind ddnsto tunnel, all requests appear to come from the proxy.
-/// We don't trust X-Forwarded-For since ddnsto passes it through without adding the real IP.
-/// Using a single global bucket is better than letting attackers spoof unlimited IPs.
-fn get_rate_limit_ip(_headers: &HeaderMap) -> std::net::IpAddr {
-    std::net::IpAddr::from([0, 0, 0, 0])
-}
 
 /// Construct an AuthService from the AppState (avoids storing it redundantly)
 fn auth_service(state: &AppState) -> AuthService {
@@ -33,13 +25,11 @@ fn auth_service(state: &AppState) -> AuthService {
 /// POST /auth/register
 pub async fn register(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     SafeJson(req): SafeJson<AuthRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let ip = get_rate_limit_ip(&headers);
     let svc = auth_service(&state);
 
-    match svc.register(&req, ip).await {
+    match svc.register(&req).await {
         Ok(resp) => {
             if let Some(token) = resp.token.clone() {
                 let mut http_resp = Json(resp).into_response();
@@ -69,13 +59,11 @@ pub async fn register(
 /// POST /auth/login
 pub async fn login(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     SafeJson(req): SafeJson<AuthRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let ip = get_rate_limit_ip(&headers);
     let svc = auth_service(&state);
 
-    match svc.login(&req, ip).await {
+    match svc.login(&req).await {
         Ok(resp) => {
             if let Some(token) = resp.token.clone() {
                 let mut http_resp = Json(resp).into_response();
@@ -105,7 +93,7 @@ pub async fn login(
 /// POST /auth/logout
 pub async fn logout(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let token = headers
         .get("Authorization")

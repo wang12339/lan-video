@@ -136,7 +136,7 @@ impl VideoService {
         // Move temp file to final destination
         let dest_file_name = format!("{}_{}", chrono::Utc::now().timestamp_millis(), file_name);
         let dest_path = self.config.media_root.join(&dest_file_name);
-        std::fs::rename(temp_path, &dest_path)
+        tokio::fs::rename(temp_path, &dest_path).await
             .map_err(|e| format!("移动文件失败: {}", e))?;
 
         let stream_url = format!("/media/{}", dest_file_name);
@@ -293,8 +293,10 @@ impl VideoService {
                     }).await;
                 }
             }
-            // Delete playback history first, then the video record
+            // Delete playback history, likes, and favorites first, then the video record
             let _ = self.repo.delete_playback_history_by_video(id).await;
+            let _ = self.repo.delete_likes_by_video(id).await;
+            let _ = self.repo.delete_favorites_by_video(id).await;
             self.repo.delete_video(id).await.map_err(|e| e.to_string())?;
             Ok(true)
         } else {
@@ -460,6 +462,22 @@ impl VideoService {
         let recent_history = self.repo.find_recent_history_with_details(username, 20).await?;
         Ok((total_videos_watched, total_watch_time, recent_history))
     }
+
+    pub async fn toggle_like(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        self.repo.toggle_like(username, video_id).await
+    }
+
+    pub async fn is_liked(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        self.repo.is_liked(username, video_id).await
+    }
+
+    pub async fn toggle_favorite(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        self.repo.toggle_favorite(username, video_id).await
+    }
+
+    pub async fn is_favorited(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        self.repo.is_favorited(username, video_id).await
+    }
 }
 
 /// 用 magic bytes 验证文件类型，防止伪装扩展名的恶意上传
@@ -494,35 +512,9 @@ fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[allow(dead_code)]
-fn compute_md5(bytes: &[u8]) -> String {
-    let mut hasher = Md5::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_compute_md5_empty() {
-        assert_eq!(compute_md5(b""), "d41d8cd98f00b204e9800998ecf8427e");
-    }
-
-    #[test]
-    fn test_compute_md5_known() {
-        assert_eq!(compute_md5(b"hello"), "5d41402abc4b2a76b9719d911017c592");
-        assert_eq!(compute_md5(b"world"), "7d793037a0760186574b0282f2f435e7");
-    }
-
-    #[test]
-    fn test_compute_md5_unicode() {
-        let hash = compute_md5("你好".as_bytes());
-        assert_eq!(hash.len(), 32, "md5 hex should be 32 chars");
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-    }
 
     #[test]
     fn test_file_extension_detection() {

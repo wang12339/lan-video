@@ -262,16 +262,16 @@ impl VideoRepository {
         description: Option<&str>,
         category: Option<&str>,
     ) -> Result<(), sqlx::Error> {
+        if title.is_none() && description.is_none() && category.is_none() {
+            return Ok(());
+        }
+
         let mut builder = sqlx::QueryBuilder::new("UPDATE videos SET ");
         let mut sep = builder.separated(", ");
 
         if let Some(t) = title { sep.push("title = "); sep.push_bind(t); }
         if let Some(d) = description { sep.push("description = "); sep.push_bind(d); }
         if let Some(c) = category { sep.push("category = "); sep.push_bind(c); }
-
-        if builder.sql().is_empty() {
-            return Ok(());
-        }
 
         builder.push(" WHERE id = ");
         builder.push_bind(id);
@@ -487,5 +487,77 @@ impl VideoRepository {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|r| r.stream_url).collect())
+    }
+
+    // ── Likes ──
+
+    pub async fn is_liked(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_likes WHERE username = $1 AND video_id = $2)"
+        )
+        .bind(username)
+        .bind(video_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
+    pub async fn toggle_like(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        let exists = self.is_liked(username, video_id).await?;
+        if exists {
+            sqlx::query("DELETE FROM user_likes WHERE username = $1 AND video_id = $2")
+                .bind(username).bind(video_id)
+                .execute(&self.pool).await?;
+            Ok(false)
+        } else {
+            sqlx::query("INSERT INTO user_likes (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+                .bind(username).bind(video_id)
+                .execute(&self.pool).await?;
+            Ok(true)
+        }
+    }
+
+    // ── Favorites ──
+
+    pub async fn is_favorited(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_favorites WHERE username = $1 AND video_id = $2)"
+        )
+        .bind(username)
+        .bind(video_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
+    pub async fn toggle_favorite(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
+        let exists = self.is_favorited(username, video_id).await?;
+        if exists {
+            sqlx::query("DELETE FROM user_favorites WHERE username = $1 AND video_id = $2")
+                .bind(username).bind(video_id)
+                .execute(&self.pool).await?;
+            Ok(false)
+        } else {
+            sqlx::query("INSERT INTO user_favorites (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+                .bind(username).bind(video_id)
+                .execute(&self.pool).await?;
+            Ok(true)
+        }
+    }
+
+    pub async fn delete_likes_by_video(&self, video_id: i64) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM user_likes WHERE video_id = $1")
+            .bind(video_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn delete_favorites_by_video(&self, video_id: i64) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM user_favorites WHERE video_id = $1")
+            .bind(video_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }
