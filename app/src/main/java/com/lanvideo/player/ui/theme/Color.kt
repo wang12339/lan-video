@@ -1,5 +1,10 @@
 package com.lanvideo.player.ui.theme
 
+import androidx.compose.foundation.background
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 // 粉彩色板
@@ -27,3 +32,18 @@ val TagFunny = Color(0xFFE8D5F5)
 val TagFunnyText = Color(0xFF6B3FA0)
 val TagHealing = Color(0xFFFFB5C5)
 val TagHealingText = Color(0xFFC71585)
+
+// 通用色
+val ErrorRed = Color(0xFFE57373)
+val UploadPink = Color(0xFFFFB5C5)
+val UploadGray = Color(0xFFEEEEEE)
+val UploadGreen = Color(0xFF228B22)
+val UploadMagenta = Color(0xFFC71585)
+
+@Composable
+fun Modifier.gradientBackground(): Modifier {
+    val brush = remember {
+        Brush.verticalGradient(colors = listOf(BackgroundPink, BackgroundBlue))
+    }
+    return this.background(brush)
+}

@@ -3,6 +3,10 @@ use crate::models::video::VideoItem;
 use crate::models::playback::RecentWatchItem;
 use std::collections::HashSet;
 
+/// Explicit columns for VideoRow — avoids SELECT * fetching unnecessary data
+const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration";
+const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration";
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct VideoRow {
     pub id: i64,
@@ -75,7 +79,7 @@ impl VideoRepository {
             Some(q) => {
                 let pattern = format!("%{}%", q);
                 sqlx::query_as::<_, VideoRow>(
-                    "SELECT * FROM videos WHERE title ILIKE $1 OR category ILIKE $1 ORDER BY id DESC"
+                    &format!("SELECT {} FROM videos WHERE title ILIKE $1 OR category ILIKE $1 ORDER BY id DESC", VIDEO_COLUMNS)
                 )
                 .bind(&pattern)
                 .fetch_all(&self.pool)
@@ -83,7 +87,7 @@ impl VideoRepository {
             }
             None => {
                 sqlx::query_as::<_, VideoRow>(
-                    "SELECT * FROM videos ORDER BY id DESC"
+                    &format!("SELECT {} FROM videos ORDER BY id DESC", VIDEO_COLUMNS)
                 )
                 .fetch_all(&self.pool)
                 .await
@@ -103,9 +107,9 @@ impl VideoRepository {
             builder.push(")");
         }
         if let Some(t) = source_type {
-            if t.starts_with('!') {
+            if let Some(stripped) = t.strip_prefix('!') {
                 builder.push(" AND v.source_type != ");
-                builder.push_bind(t[1..].to_string());
+                builder.push_bind(stripped.to_string());
             } else {
                 builder.push(" AND v.source_type = ");
                 builder.push_bind(t.to_string());
@@ -116,7 +120,7 @@ impl VideoRepository {
             builder.push_bind(c);
         }
 
-        Ok(builder.build_query_scalar().fetch_one(&self.pool).await?)
+        builder.build_query_scalar().fetch_one(&self.pool).await
     }
 
     pub async fn find_all_paged(
@@ -131,7 +135,7 @@ impl VideoRepository {
         let offset = page * size;
         let mut builder = sqlx::QueryBuilder::default();
 
-        builder.push("SELECT v.*, h.position_ms AS watch_position FROM videos v");
+        builder.push(format!("SELECT {}, h.position_ms AS watch_position FROM videos v", VIDEO_COLUMNS_PREFIXED));
         if let Some(u) = username {
             builder.push(" LEFT JOIN playback_history h ON v.id = h.video_id AND h.username = ");
             builder.push_bind(u);
@@ -147,9 +151,9 @@ impl VideoRepository {
             builder.push(")");
         }
         if let Some(t) = source_type {
-            if t.starts_with('!') {
+            if let Some(stripped) = t.strip_prefix('!') {
                 builder.push(" AND v.source_type != ");
-                builder.push_bind(t[1..].to_string());
+                builder.push_bind(stripped.to_string());
             } else {
                 builder.push(" AND v.source_type = ");
                 builder.push_bind(t.to_string());
@@ -175,7 +179,7 @@ impl VideoRepository {
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Option<VideoRow>, sqlx::Error> {
-        sqlx::query_as::<_, VideoRow>("SELECT * FROM videos WHERE id = $1")
+        sqlx::query_as::<_, VideoRow>(&format!("SELECT {} FROM videos WHERE id = $1", VIDEO_COLUMNS))
             .bind(id)
             .fetch_optional(&self.pool)
             .await
@@ -204,7 +208,7 @@ impl VideoRepository {
     }
 
     pub async fn find_video_by_file_hash(&self, hash: &str) -> Result<Option<VideoRow>, sqlx::Error> {
-        sqlx::query_as::<_, VideoRow>("SELECT * FROM videos WHERE file_hash = $1")
+        sqlx::query_as::<_, VideoRow>(&format!("SELECT {} FROM videos WHERE file_hash = $1", VIDEO_COLUMNS))
             .bind(hash)
             .fetch_optional(&self.pool)
             .await
@@ -223,6 +227,64 @@ impl VideoRepository {
         Ok(rows.into_iter().filter_map(|r| r.file_hash).collect())
     }
 
+    /// Find videos without a cover, paginated by id for cursor-based iteration
+    pub async fn find_videos_without_cover(&self, after_id: i64, limit: i64) -> Result<Vec<VideoRow>, sqlx::Error> {
+        sqlx::query_as::<_, VideoRow>(&format!(
+            "SELECT {} FROM videos WHERE cover_url IS NULL AND source_type LIKE 'local%' AND id > $1 ORDER BY id LIMIT $2",
+            VIDEO_COLUMNS
+        ))
+        .bind(after_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Batch check which (name, size) pairs already exist — single query instead of N+1
+    pub async fn find_existing_by_name_and_size_batch(&self, files: &[(String, i64)]) -> Result<HashSet<(String, i64)>, sqlx::Error> {
+        if files.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT original_name, file_size FROM videos WHERE (original_name, file_size) IN ("
+        );
+        let mut separated = builder.separated(", ");
+        for (name, size) in files {
+            separated.push("(");
+            separated.push_bind_unseparated(name);
+            separated.push_unseparated(", ");
+            separated.push_bind_unseparated(size);
+            separated.push_unseparated(")");
+        }
+        separated.push_unseparated(")");
+
+        #[derive(sqlx::FromRow)]
+        struct NameSize {
+            original_name: Option<String>,
+            file_size: Option<i64>,
+        }
+        let rows: Vec<NameSize> = builder.build_query_as().fetch_all(&self.pool).await?;
+        Ok(rows.into_iter()
+            .filter_map(|r| Some((r.original_name?, r.file_size?)))
+            .collect())
+    }
+
+    /// Batch delete videos and their related data in a single transaction
+    pub async fn batch_delete_videos(&self, ids: &[i64]) -> Result<u64, sqlx::Error> {
+        if ids.is_empty() { return Ok(0); }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM playback_history WHERE video_id = ANY($1)")
+            .bind(ids).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM user_likes WHERE video_id = ANY($1)")
+            .bind(ids).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM user_favorites WHERE video_id = ANY($1)")
+            .bind(ids).execute(&mut *tx).await?;
+        let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
+            .bind(ids).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(result.rows_affected())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_local_video(
         &self,
         title: &str,
@@ -287,6 +349,23 @@ impl VideoRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn increment_views(&self, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE videos SET views = views + 1 WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_duration(&self, id: i64, duration_ms: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE videos SET duration = $1 WHERE id = $2")
+            .bind(duration_ms / 1000)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_playback_history_by_video(
         &self, id: i64
     ) -> Result<u64, sqlx::Error> {
@@ -313,21 +392,6 @@ impl VideoRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    pub async fn find_existing_by_name_and_size(
-        &self,
-        name: &str,
-        size: i64,
-    ) -> Result<bool, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) as count FROM videos WHERE original_name = $1 AND file_size = $2 AND source_type LIKE 'local%'"
-        )
-        .bind(name)
-        .bind(size)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(count > 0)
     }
 
     // ── Playback History ──
@@ -373,7 +437,8 @@ impl VideoRepository {
                FROM playback_history h
                JOIN videos v ON h.video_id = v.id
                WHERE h.username = $1
-               ORDER BY h.updated_at DESC"#
+               ORDER BY h.updated_at DESC
+               LIMIT 500"#
         )
         .bind(username)
         .fetch_all(&self.pool)
@@ -503,18 +568,20 @@ impl VideoRepository {
     }
 
     pub async fn toggle_like(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        let exists = self.is_liked(username, video_id).await?;
-        if exists {
-            sqlx::query("DELETE FROM user_likes WHERE username = $1 AND video_id = $2")
-                .bind(username).bind(video_id)
-                .execute(&self.pool).await?;
-            Ok(false)
-        } else {
-            sqlx::query("INSERT INTO user_likes (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(username).bind(video_id)
-                .execute(&self.pool).await?;
-            Ok(true)
-        }
+        // Atomic toggle: DELETE if exists, INSERT if not — single statement, no race condition
+        let (liked,): (bool,) = sqlx::query_as(
+            "WITH del AS (
+                DELETE FROM user_likes WHERE username = $1 AND video_id = $2 RETURNING 1
+            ), ins AS (
+                INSERT INTO user_likes (username, video_id)
+                SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM del)
+                ON CONFLICT DO NOTHING RETURNING 1
+            )
+            SELECT EXISTS (SELECT 1 FROM ins)"
+        )
+        .bind(username).bind(video_id)
+        .fetch_one(&self.pool).await?;
+        Ok(liked)
     }
 
     // ── Favorites ──
@@ -531,18 +598,20 @@ impl VideoRepository {
     }
 
     pub async fn toggle_favorite(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        let exists = self.is_favorited(username, video_id).await?;
-        if exists {
-            sqlx::query("DELETE FROM user_favorites WHERE username = $1 AND video_id = $2")
-                .bind(username).bind(video_id)
-                .execute(&self.pool).await?;
-            Ok(false)
-        } else {
-            sqlx::query("INSERT INTO user_favorites (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-                .bind(username).bind(video_id)
-                .execute(&self.pool).await?;
-            Ok(true)
-        }
+        // Atomic toggle: DELETE if exists, INSERT if not — single statement, no race condition
+        let (favorited,): (bool,) = sqlx::query_as(
+            "WITH del AS (
+                DELETE FROM user_favorites WHERE username = $1 AND video_id = $2 RETURNING 1
+            ), ins AS (
+                INSERT INTO user_favorites (username, video_id)
+                SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM del)
+                ON CONFLICT DO NOTHING RETURNING 1
+            )
+            SELECT EXISTS (SELECT 1 FROM ins)"
+        )
+        .bind(username).bind(video_id)
+        .fetch_one(&self.pool).await?;
+        Ok(favorited)
     }
 
     pub async fn delete_likes_by_video(&self, video_id: i64) -> Result<u64, sqlx::Error> {

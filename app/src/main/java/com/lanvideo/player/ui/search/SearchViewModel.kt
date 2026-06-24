@@ -2,7 +2,9 @@ package com.lanvideo.player.ui.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lanvideo.player.data.repository.VideoRepository
 import com.lanvideo.player.ui.home.VideoItem
+import com.lanvideo.player.util.VideoFormatters
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,7 +19,9 @@ data class SearchUiState(
     val error: String? = null
 )
 
-class SearchViewModel : ViewModel() {
+class SearchViewModel(
+    private val videoRepository: VideoRepository
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
@@ -35,24 +39,37 @@ class SearchViewModel : ViewModel() {
         _uiState.update { it.copy(searchHistory = trimmed, isSearching = true, error = null) }
 
         viewModelScope.launch {
-            val mockResults = listOf(
-                VideoItem("s1", "可爱动画合集", "", "动画", 1200, "2分钟前", "\uD83D\uDC30"),
-                VideoItem("s2", "萌宠日常", "", "萌宠", 856, "5分钟前", "\uD83D\uDC36"),
-                VideoItem("s3", "搞笑片段", "", "搞笑", 2100, "10分钟前", "\uD83D\uDC31"),
-                VideoItem("s4", "治愈系视频", "", "治愈", 678, "15分钟前", "\uD83E\uDD8A"),
-                VideoItem("s5", "可爱合集", "", "动画", 999, "20分钟前", "\uD83D\uDC3B"),
-                VideoItem("s6", "宠物趣事", "", "萌宠", 1500, "25分钟前", "\uD83D\uDC25"),
+            val result = videoRepository.listVideos(query = query, forceRefresh = true)
+            result.fold(
+                onSuccess = { response ->
+                    val videos = response.items.map { apiVideo ->
+                        VideoItem(
+                            id = apiVideo.id.toString(),
+                            title = apiVideo.title,
+                            thumbnailUrl = apiVideo.coverUrl ?: "",
+                            sourceType = apiVideo.sourceType,
+                            category = apiVideo.category,
+                            timestamp = VideoFormatters.formatDuration(apiVideo.duration),
+                            icon = VideoFormatters.getCategoryIcon(apiVideo.category)
+                        )
+                    }
+                    _uiState.update {
+                        it.copy(
+                            results = videos,
+                            isSearching = false,
+                            error = if (videos.isEmpty()) "未找到「$query」相关结果" else null
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(
+                            isSearching = false,
+                            error = "搜索失败: ${e.message}"
+                        )
+                    }
+                }
             )
-            val filtered = mockResults.filter {
-                it.title.contains(query, ignoreCase = true) || it.category.contains(query, ignoreCase = true)
-            }
-            _uiState.update {
-                it.copy(
-                    results = filtered.ifEmpty { mockResults },
-                    isSearching = false,
-                    error = if (filtered.isEmpty() && query.isNotBlank()) "未找到「$query」相关结果" else null
-                )
-            }
         }
     }
 

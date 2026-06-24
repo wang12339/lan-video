@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -16,6 +16,9 @@ pub async fn add_external_video(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<ExternalVideoRequest>,
 ) -> Result<(StatusCode, Json<IdResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if req.title.trim().is_empty() || req.title.len() > 500 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "标题长度需在 1-500 个字符之间"));
+    }
     if !req.stream_url.starts_with("http://") && !req.stream_url.starts_with("https://") {
         return Err(error_response(StatusCode::BAD_REQUEST, "stream_url must start with http:// or https://"));
     }
@@ -48,7 +51,12 @@ pub async fn upload_video(
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
-                let fname = field.file_name().unwrap_or("video.mp4").to_string();
+                let raw_name = field.file_name().unwrap_or("video.mp4").to_string();
+                // Sanitize: strip path separators and control characters, keep only the filename
+                let fname = std::path::Path::new(&raw_name)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "video.mp4".to_string());
                 file_name = Some(fname);
 
                 // 流式写入临时文件
@@ -94,6 +102,7 @@ pub async fn upload_video(
         .upload_video_file(&file_name, &tmp_path, &category, client_hash.as_deref())
         .await
         .map_err(|e| {
+            // Error path — sync removal is acceptable here
             let _ = std::fs::remove_file(&tmp_path);
             if e.starts_with("duplicate:") || e.starts_with("重复") {
                 error_response(StatusCode::CONFLICT, &e)
@@ -106,11 +115,114 @@ pub async fn upload_video(
     Ok((StatusCode::CREATED, Json(IdResponse { id })))
 }
 
+#[derive(serde::Deserialize)]
+pub struct UploadStatusQuery {
+    pub hash: String,
+}
+
+fn is_valid_upload_hash(s: &str) -> bool {
+    s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// GET /admin/videos/upload-status?hash=xxx
+pub async fn upload_status(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<UploadStatusQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    if !is_valid_upload_hash(&q.hash) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "invalid hash"));
+    }
+    let tmp = state.config.media_root.join(format!(".upload_{}", q.hash));
+    let received = match tokio::fs::metadata(&tmp).await {
+        Ok(m) => m.len() as i64,
+        Err(_) => 0,
+    };
+    Ok(Json(serde_json::json!({ "received": received })))
+}
+
+/// POST /admin/videos/upload-resume
+pub async fn upload_resume(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorResponse>)> {
+    let hash = headers.get("x-upload-hash")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "缺少 x-upload-hash"))?
+        .to_string();
+    if !is_valid_upload_hash(&hash) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "invalid hash"));
+    }
+    let raw_name = headers.get("x-upload-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("video.mp4")
+        .to_string();
+    let file_name = std::path::Path::new(&raw_name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "video.mp4".to_string());
+    let total_size = headers.get("x-upload-size")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    if total_size <= 0 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "x-upload-size 必须大于 0"));
+    }
+    let category = headers.get("x-upload-category")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("local")
+        .to_string();
+
+    let tmp = state.config.media_root.join(format!(".upload_{}", hash));
+
+    if body.is_empty() {
+        let received = match tokio::fs::metadata(&tmp).await {
+            Ok(m) => m.len() as i64,
+            Err(_) => 0,
+        };
+        return Ok((StatusCode::OK, Json(serde_json::json!({ "received": received }))));
+    }
+
+    let mut f = tokio::fs::OpenOptions::new()
+        .create(true).append(true).open(&tmp).await
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "打开临时文件失败"))?;
+    f.write_all(&body).await
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "写入失败"))?;
+    f.flush().await.map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "flush失败"))?;
+    drop(f);
+
+    let received = tokio::fs::metadata(&tmp).await
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+
+    if total_size > 0 && received >= total_size {
+        let tmp_clone = tmp.clone();
+        let id = state.video_service
+            .upload_video_file(&file_name, &tmp_clone, &category, Some(&hash))
+            .await
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                if e.starts_with("重复") {
+                    error_response(StatusCode::CONFLICT, &e)
+                } else {
+                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败")
+                }
+            })?;
+        state.video_cache.invalidate_all();
+        return Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id, "received": received }))));
+    }
+
+    Ok((StatusCode::PARTIAL_CONTENT, Json(serde_json::json!({ "received": received }))))
+}
+
 /// POST /admin/videos/check-hashes
 pub async fn check_hashes(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<CheckHashesRequest>,
 ) -> Result<Json<CheckHashesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if req.hashes.len() > 1000 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "最多检查 1000 个文件"));
+    }
     let existing = state.video_service
         .check_existing_hashes(req.hashes)
         .await
@@ -123,6 +235,9 @@ pub async fn check_files(
     State(state): State<Arc<AppState>>,
     SafeJson(files): SafeJson<Vec<FileCheckItem>>,
 ) -> Result<Json<CheckFilesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if files.len() > 1000 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "最多检查 1000 个文件"));
+    }
     let existing_indices = state.video_service
         .check_existing_files(&files)
         .await
@@ -184,7 +299,10 @@ pub async fn delete_video(
     match state.video_service.delete_video(id).await {
         Ok(true) => Json(OkResponse { ok: true, error: None, deleted: None }),
         Ok(false) => Json(OkResponse { ok: false, error: Some("视频不存在".into()), deleted: None }),
-        Err(e) => Json(OkResponse { ok: false, error: Some(e), deleted: None }),
+        Err(e) => {
+            tracing::error!("delete_video failed for id={}: {}", id, e);
+            Json(OkResponse { ok: false, error: Some("删除失败".into()), deleted: None })
+        },
     }
 }
 
@@ -192,14 +310,17 @@ pub async fn delete_video(
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
     SafeJson(ids): SafeJson<Vec<i64>>,
-) -> Json<OkResponse> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if ids.len() > 500 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "最多批量删除 500 个"));
+    }
     state.video_cache.invalidate_all();
     let deleted = state.video_service
         .delete_videos(ids)
         .await
         .unwrap_or(0);
 
-    Json(OkResponse { ok: true, error: None, deleted: Some(deleted as i64) })
+    Ok(Json(OkResponse { ok: true, error: None, deleted: Some(deleted as i64) }))
 }
 
 /// POST /admin/videos/{id}/cover

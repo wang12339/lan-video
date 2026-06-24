@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lanvideo.player.BuildConfig
+import com.lanvideo.player.data.network.NetworkModule
 import com.lanvideo.player.ui.theme.BackgroundBlue
 import com.lanvideo.player.ui.theme.BackgroundPink
 import com.lanvideo.player.ui.theme.SakuraPink
@@ -44,7 +46,7 @@ import com.lanvideo.player.ui.theme.TextSecondary
 fun SettingsScreen(
     onBackClick: () -> Unit = {}
 ) {
-    var serverUrl by remember { mutableStateOf("http://192.168.1.100:8082") }
+    var serverUrl by remember { mutableStateOf(NetworkModule.getBaseUrl()) }
     var autoDiscover by remember { mutableStateOf(true) }
     var pushNotifications by remember { mutableStateOf(true) }
     var darkMode by remember { mutableStateOf(false) }
@@ -127,7 +129,7 @@ fun SettingsScreen(
             SettingsItem(
                 icon = "\u2139\uFE0F",
                 title = "版本信息",
-                subtitle = "v1.0.0",
+                subtitle = "v${BuildConfig.VERSION_NAME}",
                 onClick = {}
             )
             SettingsItem(

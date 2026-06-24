@@ -13,6 +13,8 @@ local.properties
 /backend/media
 /backend/target
 /backend/.env
+/backend/.cargo/
+/backend/logs/
 *.log
 *.pid
 

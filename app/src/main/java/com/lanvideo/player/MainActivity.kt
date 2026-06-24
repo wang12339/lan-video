@@ -9,8 +9,6 @@ import com.lanvideo.player.ui.theme.KawaiiTheme
 
 class MainActivity : ComponentActivity() {
 
-    fun openDrawer() {}
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

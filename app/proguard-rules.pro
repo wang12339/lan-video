@@ -45,6 +45,31 @@
     volatile <fields>;
 }
 
+# ---- Sentry ----
+-keepattributes LineNumberTable,SourceFile
+-keep class io.sentry.** { *; }
+-dontwarn io.sentry.**
+
+# ---- Koin DI ----
+-keep class org.koin.** { *; }
+-keepclassmembers class * {
+    public <init>(...);
+}
+-keep class com.lanvideo.player.di.** { *; }
+
+# ---- Jetpack Compose ----
+-keepclasseswithmembers class * {
+    @androidx.compose.runtime.Composable <methods>;
+}
+-keep class androidx.compose.** { *; }
+-dontwarn androidx.compose.**
+
+# ---- Room (offline caching) ----
+-keep class * extends androidx.room.RoomDatabase
+-keepclassmembers class * { *; }
+-dontwarn androidx.room.**
+
 # ---- 自定义数据模型（所有 data class API 响应） ----
 -keep class com.lanvideo.player.data.model.** { *; }
 -keep class com.lanvideo.player.data.network.** { *; }
+-keep class com.lanvideo.player.data.local.** { *; }

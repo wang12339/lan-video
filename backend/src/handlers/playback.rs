@@ -48,6 +48,16 @@ pub async fn update_playback_history(
     Extension(auth_user): Extension<AuthUser>,
     SafeJson(payload): SafeJson<PlaybackHistoryRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    // Validate playback values
+    if payload.position_ms < 0 || payload.duration_ms < 0 {
+        return Err(error_response(StatusCode::BAD_REQUEST, "播放进度不能为负数"));
+    }
+    if payload.duration_ms > 86_400_000 * 7 { // 7 days max
+        return Err(error_response(StatusCode::BAD_REQUEST, "视频时长超出合理范围"));
+    }
+    if payload.position_ms > payload.duration_ms + 1000 { // allow 1s tolerance
+        return Err(error_response(StatusCode::BAD_REQUEST, "播放位置不能超过视频时长"));
+    }
     state.video_service
         .update_playback(&auth_user.username, payload.video_id, payload.position_ms, payload.duration_ms)
         .await

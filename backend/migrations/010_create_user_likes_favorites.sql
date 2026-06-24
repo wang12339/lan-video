@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS user_likes (
+    username VARCHAR(255) NOT NULL,
+    video_id BIGINT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (username, video_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_favorites (
+    username VARCHAR(255) NOT NULL,
+    video_id BIGINT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (username, video_id)
+);

@@ -1,4 +1,5 @@
 use moka::sync::Cache as MokaCache;
+use sqlx::PgPool;
 
 use crate::config::AppConfig;
 use crate::middleware::rate_limit::RateLimiter;
@@ -14,4 +15,5 @@ pub struct AppState {
     pub config: AppConfig,
     pub rate_limiter: RateLimiter,
     pub video_cache: VideoListCache,
+    pub db_pool: PgPool,
 }

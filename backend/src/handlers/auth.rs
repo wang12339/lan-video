@@ -22,38 +22,44 @@ fn auth_service(state: &AppState) -> AuthService {
     )
 }
 
+/// Build an auth response, setting the token cookie if present
+fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
+    if let Some(token) = resp.token.clone() {
+        let mut http_resp = Json(resp).into_response();
+        http_resp.headers_mut().insert(
+            axum::http::header::SET_COOKIE,
+            HeaderValue::from_str(&auth_mw::set_token_cookie(
+                &token,
+                crate::services::auth_service::COOKIE_MAX_AGE,
+                state.config.cookie_secure,
+            ))
+            .expect("valid cookie header"),
+        );
+        http_resp
+    } else {
+        Json(resp).into_response()
+    }
+}
+
+/// Handle an auth result (register or login), mapping errors to rate-limit response
+fn handle_auth_result(result: Result<AuthResponse, crate::services::auth_service::AuthError>, state: &AppState) -> axum::response::Response {
+    match result {
+        Ok(resp) => auth_response(resp, state).into_response(),
+        Err(_) => Json(AuthResponse {
+            ok: false,
+            token: None,
+            error: Some("尝试次数过多，请稍后再试".into()),
+        }).into_response(),
+    }
+}
+
 /// POST /auth/register
 pub async fn register(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<AuthRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let svc = auth_service(&state);
-
-    match svc.register(&req).await {
-        Ok(resp) => {
-            if let Some(token) = resp.token.clone() {
-                let mut http_resp = Json(resp).into_response();
-                http_resp.headers_mut().insert(
-                    axum::http::header::SET_COOKIE,
-                    HeaderValue::from_str(&auth_mw::set_token_cookie(
-                        &token,
-                        crate::services::auth_service::COOKIE_MAX_AGE,
-                        state.config.cookie_secure,
-                    ))
-                    .expect("valid cookie header"),
-                );
-                Ok(http_resp)
-            } else {
-                Ok(Json(resp).into_response())
-            }
-        }
-        Err(_) => Ok(Json(AuthResponse {
-            ok: false,
-            token: None,
-            error: Some("尝试次数过多，请稍后再试".into()),
-        })
-        .into_response()),
-    }
+    Ok(handle_auth_result(svc.register(&req).await, &state))
 }
 
 /// POST /auth/login
@@ -62,32 +68,7 @@ pub async fn login(
     SafeJson(req): SafeJson<AuthRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let svc = auth_service(&state);
-
-    match svc.login(&req).await {
-        Ok(resp) => {
-            if let Some(token) = resp.token.clone() {
-                let mut http_resp = Json(resp).into_response();
-                http_resp.headers_mut().insert(
-                    axum::http::header::SET_COOKIE,
-                    HeaderValue::from_str(&auth_mw::set_token_cookie(
-                        &token,
-                        crate::services::auth_service::COOKIE_MAX_AGE,
-                        state.config.cookie_secure,
-                    ))
-                    .expect("valid cookie header"),
-                );
-                Ok(http_resp)
-            } else {
-                Ok(Json(resp).into_response())
-            }
-        }
-        Err(_) => Ok(Json(AuthResponse {
-            ok: false,
-            token: None,
-            error: Some("尝试次数过多，请稍后再试".into()),
-        })
-        .into_response()),
-    }
+    Ok(handle_auth_result(svc.login(&req).await, &state))
 }
 
 /// POST /auth/logout

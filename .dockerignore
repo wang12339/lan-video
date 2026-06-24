@@ -1,0 +1,7 @@
+.git/
+backend/media/*
+backend/target/*
+*.log
+*.pid
+.DS_Store
+._*

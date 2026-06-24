@@ -33,7 +33,7 @@ data class UserProfileResponse(
     val username: String,
     val isAdmin: Boolean,
     val createdAt: String,
-    val totalVideosWatched: Int,
+    val totalVideosWatched: Long,
     val totalWatchTimeMs: Long,
     val recentHistory: List<RecentWatchItem>
 )

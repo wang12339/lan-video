@@ -170,14 +170,4 @@
         android:textColor="@color/brand"
         android:textSize="12sp" />
 
-    <!-- Server config -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btn_server_config"
-        style="@style/Widget.Material3.Button.TextButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="@string/access_gate_server_config"
-        android:textColor="@color/text_muted"
-        android:textSize="12sp" />
 </LinearLayout>

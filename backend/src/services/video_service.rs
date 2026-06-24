@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 use std::io::Read;
 use md5::{Md5, Digest};
@@ -19,6 +19,12 @@ pub struct VideoService {
 impl VideoService {
     pub fn new(repo: VideoRepository, config: AppConfig) -> Self {
         Self { repo, config }
+    }
+
+    /// Resolve a `/media/...` URL to a safe filesystem path inside media_root.
+    /// Returns None if the path would escape media_root (path traversal blocked).
+    fn safe_media_path(&self, url: &str) -> Option<PathBuf> {
+        safe_media_path(url, &self.config.media_root)
     }
 
     #[allow(dead_code)]
@@ -66,9 +72,13 @@ impl VideoService {
     }
 
     pub async fn check_existing_files(&self, files: &[FileCheckItem]) -> Result<HashSet<usize>, sqlx::Error> {
+        // Single batch query instead of N+1
+        let pairs: Vec<(String, i64)> = files.iter().map(|f| (f.name.clone(), f.size)).collect();
+        let existing_pairs = self.repo.find_existing_by_name_and_size_batch(&pairs).await?;
+
         let mut existing = HashSet::new();
         for (i, file) in files.iter().enumerate() {
-            if self.repo.find_existing_by_name_and_size(&file.name, file.size).await? {
+            if existing_pairs.contains(&(file.name.clone(), file.size)) {
                 existing.insert(i);
             }
         }
@@ -102,15 +112,15 @@ impl VideoService {
 
         // Check for duplicates if client provided hash, or always check
         if let Some(ch) = client_hash {
-            if ch == &hash {
-                if self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())?.is_some() {
-                    let _ = std::fs::remove_file(temp_path);
-                    return Err("重复：视频已存在".into());
-                }
+            if ch == hash
+                && self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())?.is_some()
+            {
+                let _ = tokio::fs::remove_file(temp_path).await;
+                return Err("重复：视频已存在".into());
             }
         } else {
             if self.repo.find_video_by_file_hash(&hash).await.map_err(|e| e.to_string())?.is_some() {
-                let _ = std::fs::remove_file(temp_path);
+                let _ = tokio::fs::remove_file(temp_path).await;
                 return Err("重复：视频已存在".into());
             }
         }
@@ -123,10 +133,10 @@ impl VideoService {
             .unwrap_or_else(|| "mp4".to_string());
 
         // 用 magic bytes 验证文件类型
-        validate_file_type(temp_path, &ext).map_err(|e| {
-            let _ = std::fs::remove_file(temp_path);
-            e
-        })?;
+        if let Err(e) = validate_file_type(temp_path, &ext) {
+            let _ = tokio::fs::remove_file(temp_path).await;
+            return Err(e);
+        }
 
         let is_video = matches!(ext.as_str(), "mp4" | "m3u8" | "mov" | "avi" | "mkv" | "webm" | "flv" | "wmv");
         let is_image = matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp");
@@ -156,6 +166,18 @@ impl VideoService {
 
         info!("Uploaded video id={} as {} ({} bytes, streaming)", id, stream_url, file_size);
 
+        // Extract duration in background and update
+        if is_video {
+            let svc = self.clone();
+            let vid = id;
+            let path = dest_path.clone();
+            tokio::spawn(async move {
+                if let Ok(Some(dur)) = extract_duration(&path).await {
+                    let _ = svc.repo.update_duration(vid, dur).await;
+                }
+            });
+        }
+
         // Generate thumbnail in background
         let svc = self.clone();
         let vid = id;
@@ -169,6 +191,7 @@ impl VideoService {
     }
 
     pub async fn scan_media_directory(&self, category: &str) -> Result<i64, sqlx::Error> {
+        const MAX_SCAN_FILES: usize = 5000;
         let existing_urls = self.repo.find_all_local_file_names().await?;
         let media_root = self.config.media_root.clone();
         let video_exts: HashSet<&str> = ["mp4", "m3u8", "mov", "avi", "mkv", "webm", "flv", "wmv"].into();
@@ -240,6 +263,10 @@ impl VideoService {
 
         let mut added = 0i64;
         for cand in candidates {
+            if added as usize >= MAX_SCAN_FILES {
+                info!("Scan limit reached ({} files)", MAX_SCAN_FILES);
+                break;
+            }
             if existing_urls.contains(&cand.stream_url) { continue; }
             self.repo.save_local_video(
                 &cand.file_name, "",
@@ -259,9 +286,7 @@ impl VideoService {
         let video = self.repo.find_by_id(id).await.map_err(|e| e.to_string())?;
         if let Some(v) = video {
             // Delete physical file if it's a local file
-            if v.stream_url.starts_with("/media/") {
-                let file_name = v.stream_url.trim_start_matches("/media/");
-                let file_path = self.config.media_root.join(file_name);
+            if let Some(file_path) = self.safe_media_path(&v.stream_url) {
                 let fp = file_path.clone();
                 let deleted = tokio::task::spawn_blocking(move || {
                     if fp.exists() { std::fs::remove_file(&fp).map(|_| true) } else { Ok(false) }
@@ -273,9 +298,7 @@ impl VideoService {
             }
             // Delete cover image if it exists
             if let Some(ref cover_url) = v.cover_url {
-                if cover_url.starts_with("/media/") {
-                    let cover_name = cover_url.trim_start_matches("/media/");
-                    let cover_path = self.config.media_root.join(cover_name);
+                if let Some(cover_path) = self.safe_media_path(cover_url) {
                     let cp = cover_path.clone();
                     let _ = tokio::task::spawn_blocking(move || {
                         if cp.exists() { let _ = std::fs::remove_file(&cp); }
@@ -284,9 +307,7 @@ impl VideoService {
             }
             // Delete thumbnail if it exists
             if let Some(ref thumb_url) = v.thumb_url {
-                if thumb_url.starts_with("/media/") {
-                    let thumb_name = thumb_url.trim_start_matches("/media/");
-                    let thumb_path = self.config.media_root.join(thumb_name);
+                if let Some(thumb_path) = self.safe_media_path(thumb_url) {
                     let tp = thumb_path.clone();
                     let _ = tokio::task::spawn_blocking(move || {
                         if tp.exists() { let _ = std::fs::remove_file(&tp); }
@@ -305,13 +326,21 @@ impl VideoService {
     }
 
     pub async fn delete_videos(&self, ids: Vec<i64>) -> Result<u64, String> {
-        let mut deleted = 0u64;
+        // Load video info to delete physical files
         for id in &ids {
-            if self.delete_video(*id).await? {
-                deleted += 1;
+            if let Ok(Some(v)) = self.repo.find_by_id(*id).await {
+                // Delete physical files (best-effort, in background)
+                for url in [&v.stream_url, v.cover_url.as_deref().unwrap_or(""), v.thumb_url.as_deref().unwrap_or("")] {
+                    if let Some(path) = self.safe_media_path(url) {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            if path.exists() { let _ = std::fs::remove_file(path); }
+                        }).await;
+                    }
+                }
             }
         }
-        Ok(deleted)
+        // Batch delete from DB in a single transaction
+        self.repo.batch_delete_videos(&ids).await.map_err(|e| e.to_string())
     }
 
     pub async fn update_video(
@@ -358,8 +387,10 @@ impl VideoService {
             return Ok(false);
         }
 
-        let file_name = video.stream_url.trim_start_matches("/media/");
-        let video_path = self.config.media_root.join(file_name);
+        let video_path = match self.safe_media_path(&video.stream_url) {
+            Some(p) => p,
+            None => return Err(format!("video file not found or invalid path: {}", video.stream_url)),
+        };
         let video_path_exists = tokio::task::spawn_blocking({
             let vp = video_path.clone();
             move || vp.exists()
@@ -368,16 +399,18 @@ impl VideoService {
             return Err(format!("video file not found: {}", video_path.display()));
         }
 
-        // Extract frame at 5 seconds using ffmpeg (offloaded to blocking thread pool)
+        // Extract frame at 1 second using ffmpeg (offloaded to blocking thread pool)
         let cover_file_name = format!("cover_{}.jpg", video_id);
         let cover_path = self.config.media_root.join(&cover_file_name);
-        let video_path_str = video_path.to_string_lossy().to_string();
         let cover_path_str = cover_path.to_string_lossy().to_string();
+        let video_path_clone = video_path.clone();
 
         let output = tokio::task::spawn_blocking(move || {
             std::process::Command::new("ffmpeg")
-                .args(["-y", "-ss", "5", "-i", &video_path_str,
-                       "-vframes", "1", "-q:v", "3", &cover_path_str])
+                .arg("-y").arg("-ss").arg("1")
+                .arg("-i").arg(&video_path_clone)
+                .arg("-vframes").arg("1").arg("-q:v").arg("3")
+                .arg(&cover_path_str)
                 .output()
         }).await
             .map_err(|e| format!("ffmpeg task panicked: {}", e))?
@@ -402,10 +435,12 @@ impl VideoService {
         let thumb_file_name = format!("thumb_{}.jpg", video_id);
         let thumb_path = self.config.media_root.join(&thumb_file_name);
         let thumb_path_str = thumb_path.to_string_lossy().to_string();
-        let cover_path_str2 = cover_path.to_string_lossy().to_string();
+        let cover_clone = cover_path.clone();
         let thumb_result = tokio::task::spawn_blocking(move || {
             std::process::Command::new("ffmpeg")
-                .args(["-y", "-i", &cover_path_str2, "-vf", "scale=320:180", "-q:v", "5", &thumb_path_str])
+                .arg("-y").arg("-i").arg(&cover_clone)
+                .arg("-vf").arg("scale=320:180").arg("-q:v").arg("5")
+                .arg(&thumb_path_str)
                 .output()
         }).await;
         if let Ok(Ok(output)) = thumb_result {
@@ -419,20 +454,24 @@ impl VideoService {
         Ok(true)
     }
 
-    /// Backfill thumbnails for all local videos without a cover
+    /// Backfill thumbnails for local videos without a cover (paginated to avoid memory spike)
     pub async fn backfill_thumbnails(&self) -> Result<(i64, Vec<String>), String> {
-        let rows = self.repo.find_all(None).await.map_err(|e| e.to_string())?;
         let mut generated = 0i64;
         let mut errors = Vec::new();
+        let mut last_id: i64 = 0;
 
-        for row in &rows {
-            if row.cover_url.is_some() {
-                continue; // skip videos with existing covers
-            }
-            match self.generate_thumbnail(row.id).await {
-                Ok(true) => generated += 1,
-                Ok(false) => {}
-                Err(e) => errors.push(format!("id={}: {}", row.id, e)),
+        loop {
+            let rows = self.repo.find_videos_without_cover(last_id, 100).await
+                .map_err(|e| e.to_string())?;
+            if rows.is_empty() { break; }
+
+            for row in &rows {
+                last_id = row.id;
+                match self.generate_thumbnail(row.id).await {
+                    Ok(true) => generated += 1,
+                    Ok(false) => {}
+                    Err(e) => errors.push(format!("id={}: {}", row.id, e)),
+                }
             }
         }
         Ok((generated, errors))
@@ -478,10 +517,56 @@ impl VideoService {
     pub async fn is_favorited(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
         self.repo.is_favorited(username, video_id).await
     }
+
+    pub async fn increment_views(&self, id: i64) -> Result<(), sqlx::Error> {
+        self.repo.increment_views(id).await
+    }
+}
+
+/// Resolve a `/media/...` URL to a safe filesystem path inside media_root.
+/// Returns None if the path would escape media_root (path traversal blocked).
+/// Extracted as a standalone function for testability.
+pub fn safe_media_path(url: &str, media_root: &Path) -> Option<PathBuf> {
+    let relative = url.strip_prefix("/media/")?;
+    let path = media_root.join(relative);
+    // Canonicalize to resolve any ".." components, then verify prefix
+    let canonical = path.canonicalize().ok()?;
+    if canonical.starts_with(media_root) {
+        Some(canonical)
+    } else {
+        tracing::warn!("Path traversal blocked: {:?}", path);
+        None
+    }
+}
+
+async fn extract_duration(path: &std::path::Path) -> Result<Option<i64>, String> {
+    let path_str = path.to_string_lossy().to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("ffprobe")
+            .arg("-v").arg("error")
+            .arg("-show_entries").arg("format=duration")
+            .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+            .arg(&path_str)
+            .output()
+    }).await
+        .map_err(|e| format!("ffprobe task panicked: {}", e))?
+        .map_err(|e| format!("ffprobe not found: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let dur_secs = stdout.trim().parse::<f64>().map_err(|e| format!("parse duration: {}", e))?;
+    Ok(Some((dur_secs * 1000.0) as i64))
 }
 
 /// 用 magic bytes 验证文件类型，防止伪装扩展名的恶意上传
-fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
+pub fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
+    // m3u8 (HLS playlist) is plain text with no fixed magic bytes — always allow
+    if ext == "m3u8" {
+        return Ok(());
+    }
+
     let kind = infer::get_from_path(path)
         .map_err(|e| format!("无法读取文件类型: {}", e))?
         .ok_or_else(|| format!("无法识别的文件类型: {}", ext))?;
@@ -495,7 +580,6 @@ fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), String> {
         "webm" => mime_type == "video/webm",
         "flv" => mime_type == "video/x-flv",
         "wmv" => mime_type == "video/x-ms-wmv",
-        "m3u8" => true, // HLS 列表文件无固定 magic bytes，跳过
         "jpg" | "jpeg" => mime_type.starts_with("image/jpeg"),
         "png" => mime_type == "image/png",
         "webp" => mime_type.starts_with("image/webp"),

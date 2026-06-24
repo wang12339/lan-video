@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -25,70 +23,49 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.lanvideo.player.ui.theme.BackgroundBlue
-import com.lanvideo.player.ui.theme.BackgroundPink
-import com.lanvideo.player.ui.theme.CreamYellow
-import com.lanvideo.player.ui.theme.Lavender
+import org.koin.androidx.compose.koinViewModel
+import com.lanvideo.player.ui.components.VideoCard
 import com.lanvideo.player.ui.theme.SakuraPink
-import com.lanvideo.player.ui.theme.SkyBlue
 import com.lanvideo.player.ui.theme.TextPrimary
-import com.lanvideo.player.ui.theme.TextSecondary
+import com.lanvideo.player.ui.theme.gradientBackground
 
 @Composable
 fun HomeScreen(
     onVideoClick: (String) -> Unit = {},
-    viewModel: HomeViewModel = viewModel()
+    onImageClick: (imageUrls: List<String>, startIndex: Int) -> Unit = { _, _ -> },
+    viewModel: HomeViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(BackgroundPink, BackgroundBlue)
-                )
-            )
+            .gradientBackground()
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(56.dp)
                 .padding(horizontal = 16.dp)
                 .shadow(4.dp, RoundedCornerShape(16.dp))
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color.White.copy(alpha = 0.7f))
-                .padding(horizontal = 20.dp),
-            contentAlignment = Alignment.CenterStart
+                .background(Color.White.copy(alpha = 0.7f)),
+            contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "爱的天堂",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                text = "❦ 爱的天堂 ❦",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 4.sp,
                 color = SakuraPink
             )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            NavigationCard("🐰", "首页", SakuraPink, Modifier.weight(1f))
-            NavigationCard("🐻", "关注", SkyBlue, Modifier.weight(1f))
-            NavigationCard("🐥", "发现", CreamYellow, Modifier.weight(1f))
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
 
         Row(
             modifier = Modifier
@@ -111,39 +88,26 @@ fun HomeScreen(
             columns = GridCells.Fixed(2),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(uiState.videos) { video ->
+            items(uiState.videos, key = { it.id }) { video ->
                 VideoCard(
                     video = video,
-                    onClick = { onVideoClick(video.id) }
+                    onClick = {
+                        if (video.sourceType.contains("image")) {
+                            val imageUrls = uiState.videos
+                                .filter { it.sourceType.contains("image") }
+                                .map { it.thumbnailUrl }
+                            val idx = imageUrls.indexOf(video.thumbnailUrl).coerceAtLeast(0)
+                            onImageClick(imageUrls, idx)
+                        } else {
+                            onVideoClick(video.id)
+                        }
+                    }
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun NavigationCard(
-    icon: String,
-    title: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .height(100.dp)
-            .shadow(8.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp))
-            .background(color),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(icon, fontSize = 40.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
         }
     }
 }
@@ -166,60 +130,5 @@ private fun CategoryChip(
             fontSize = 12.sp,
             color = if (isSelected) Color.White else TextPrimary
         )
-    }
-}
-
-@Composable
-private fun VideoCard(
-    video: VideoItem,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(6.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.85f))
-            .clickable(onClick = onClick)
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(SakuraPink, Lavender)
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(video.icon, fontSize = 56.sp)
-            }
-
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = video.title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "${video.timestamp} · ${video.views} 观看",
-                    fontSize = 11.sp,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CreamYellow)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(video.category, fontSize = 10.sp, color = Color(0xFF8B6914))
-                }
-            }
-        }
     }
 }

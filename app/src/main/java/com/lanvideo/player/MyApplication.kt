@@ -10,6 +10,9 @@ import kotlinx.coroutines.SupervisorJob
 import io.sentry.Sentry
 import io.sentry.android.core.SentryAndroid
 import com.lanvideo.player.BuildConfig
+import com.lanvideo.player.di.appModule
+import org.koin.android.ext.koin.androidContext
+import org.koin.core.context.startKoin
 
 data class LanServerRefresh(
     val baseUrl: String,
@@ -38,6 +41,12 @@ class MyApplication : Application() {
         super.onCreate()
         instance = this
         NetworkModule.init(this)
+
+        // Start Koin DI
+        startKoin {
+            androidContext(this@MyApplication)
+            modules(appModule)
+        }
 
         // ── Sentry crash reporting ──
         initSentry()

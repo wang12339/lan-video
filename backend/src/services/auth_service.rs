@@ -48,11 +48,30 @@ impl AuthService {
         let key = format!("auth:{}", req.username.trim().to_lowercase());
         self.rate_limiter.check(&key).await.map_err(|_| AuthError::RateLimited)?;
 
-        if req.username.trim().is_empty() || req.password.trim().is_empty() {
+        let username = req.username.trim();
+        let password = req.password.trim();
+
+        if username.is_empty() || password.is_empty() {
             return Ok(AuthResponse {
                 ok: false,
                 token: None,
                 error: Some("用户名和密码不能为空".into()),
+            });
+        }
+
+        if username.len() < 2 || username.len() > 64 {
+            return Ok(AuthResponse {
+                ok: false,
+                token: None,
+                error: Some("用户名长度需在 2-64 个字符之间".into()),
+            });
+        }
+
+        if password.len() < 6 || password.len() > 128 {
+            return Ok(AuthResponse {
+                ok: false,
+                token: None,
+                error: Some("密码长度需在 6-128 个字符之间".into()),
             });
         }
 
@@ -61,11 +80,13 @@ impl AuthService {
 
         let user_exists = self
             .user_repo
-            .find_by_username(&req.username)
+            .find_by_username(username)
             .await
             .map(|u| u.is_some())
             .unwrap_or(false);
         if user_exists {
+            // Always hash the password to prevent timing side-channel (username enumeration)
+            let _ = password::hash(password);
             return Ok(AuthResponse {
                 ok: false,
                 token: None,
@@ -73,11 +94,11 @@ impl AuthService {
             });
         }
 
-        let hash = password::hash(&req.password)?;
+        let hash = password::hash(password)?;
 
         let user_id = self
             .user_repo
-            .create_user(&req.username.trim(), &hash, is_admin)
+            .create_user(username, &hash, is_admin)
             .await?;
 
         let token = self.user_repo.create_token(user_id).await?;
@@ -85,7 +106,7 @@ impl AuthService {
         self.rate_limiter.reset(&key).await;
 
         tracing::info!(
-            username = %req.username.trim(),
+            username = %username,
             is_admin = %is_admin,
             "user registered"
         );

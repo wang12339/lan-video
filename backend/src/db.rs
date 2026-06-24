@@ -3,12 +3,19 @@ use sqlx::PgPool;
 use tracing::info;
 
 pub async fn init_pool(database_url: &str) -> PgPool {
+    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
     let max_retries = 5;
     let mut attempt = 0u32;
 
     let pool = loop {
         match PgPoolOptions::new()
-            .max_connections(10)
+            .max_connections(max_connections)
+            .min_connections(2)
+            .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(database_url)
             .await
         {

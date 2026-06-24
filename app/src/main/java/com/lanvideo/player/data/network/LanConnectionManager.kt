@@ -1,10 +1,10 @@
 package com.lanvideo.player.data.network
 
+import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import androidx.appcompat.app.AppCompatActivity
 import com.lanvideo.player.MyApplication
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -16,11 +16,17 @@ object LanConnectionManager {
     @Volatile
     private var started = false
     private var reconnectJob: Job? = null
+    private var appContext: Context? = null
+    private var connectivityManager: ConnectivityManager? = null
 
-    fun start(activity: AppCompatActivity) {
+    fun start(context: Context) {
         if (started) return
-        val cm = activity.getSystemService(ConnectivityManager::class.java) ?: return
-        val app = activity.application as MyApplication
+        val ctx = context.applicationContext
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return
+        val app = ctx.applicationContext as MyApplication
+        appContext = ctx
+        connectivityManager = cm
+
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
@@ -29,7 +35,7 @@ object LanConnectionManager {
             override fun onAvailable(network: Network) {
                 app.applicationScope.launch {
                     LanServerDiscovery.discover(
-                        activity.applicationContext,
+                        ctx,
                         cm,
                         network,
                         force = true
@@ -46,32 +52,35 @@ object LanConnectionManager {
         started = true
 
         app.applicationScope.launch {
-            LanServerDiscovery.discoverActiveNetwork(activity.applicationContext, force = true)
+            LanServerDiscovery.discoverActiveNetwork(ctx, force = true)
         }
 
-        startReconnectPoll(activity)
+        startReconnectPoll()
     }
 
-    fun stop(activity: AppCompatActivity) {
+    fun stop() {
         if (!started) return
-        val cm = activity.getSystemService(ConnectivityManager::class.java) ?: return
+        val cm = connectivityManager ?: return
         networkCallback?.let { cm.unregisterNetworkCallback(it) }
         networkCallback = null
         reconnectJob?.cancel()
         reconnectJob = null
         started = false
+        appContext = null
+        connectivityManager = null
     }
 
-    private fun startReconnectPoll(activity: AppCompatActivity) {
+    private fun startReconnectPoll() {
         reconnectJob?.cancel()
-        val app = activity.application as MyApplication
+        val ctx = appContext ?: return
+        val app = ctx.applicationContext as MyApplication
         reconnectJob = app.applicationScope.launch {
             while (isActive) {
                 delay(5_000L)
                 if (app.connectionState.value == com.lanvideo.player.ConnectionState.DISCONNECTED) {
                     app.setConnectionState(com.lanvideo.player.ConnectionState.SCANNING)
                     LanServerDiscovery.discoverActiveNetwork(
-                        activity.applicationContext,
+                        ctx,
                         force = true
                     )
                 }

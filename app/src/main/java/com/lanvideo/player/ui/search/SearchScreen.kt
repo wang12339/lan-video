@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -42,8 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import org.koin.androidx.compose.koinViewModel
+import coil.compose.AsyncImage
 import com.lanvideo.player.R
+import com.lanvideo.player.data.network.NetworkModule
 import com.lanvideo.player.ui.home.VideoItem
 import com.lanvideo.player.ui.theme.BackgroundBlue
 import com.lanvideo.player.ui.theme.BackgroundPink
@@ -51,14 +54,17 @@ import com.lanvideo.player.ui.theme.CreamYellow
 import com.lanvideo.player.ui.theme.Lavender
 import com.lanvideo.player.ui.theme.SakuraPink
 import com.lanvideo.player.ui.theme.SkyBlue
+import com.lanvideo.player.ui.theme.TagHotText
 import com.lanvideo.player.ui.theme.TextPrimary
 import com.lanvideo.player.ui.theme.TextSecondary
+import com.lanvideo.player.ui.theme.gradientBackground
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     onVideoClick: (String) -> Unit = {},
-    viewModel: SearchViewModel = viewModel()
+    onImageClick: (imageUrls: List<String>, startIndex: Int) -> Unit = { _, _ -> },
+    viewModel: SearchViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val focusManager = LocalFocusManager.current
@@ -67,11 +73,7 @@ fun SearchScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(BackgroundPink, BackgroundBlue)
-                )
-            )
+            .gradientBackground()
     ) {
         Box(
             modifier = Modifier
@@ -175,11 +177,21 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(uiState.results) { video ->
+                    items(uiState.results, key = { it.id }) { video ->
                         SearchResultCard(
                             video = video,
                             query = uiState.query,
-                            onClick = { onVideoClick(video.id) }
+                            onClick = {
+                                if (video.sourceType.contains("image")) {
+                                    val imageUrls = uiState.results
+                                        .filter { it.sourceType.contains("image") }
+                                        .map { it.thumbnailUrl }
+                                    val idx = imageUrls.indexOf(video.thumbnailUrl).coerceAtLeast(0)
+                                    onImageClick(imageUrls, idx)
+                                } else {
+                                    onVideoClick(video.id)
+                                }
+                            }
                         )
                     }
                 }
@@ -274,7 +286,23 @@ private fun SearchResultCard(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(video.icon, fontSize = 56.sp)
+                if (video.thumbnailUrl.isNotBlank()) {
+                    val fullUrl = remember(video.thumbnailUrl) {
+                        if (video.thumbnailUrl.startsWith("http")) {
+                            video.thumbnailUrl
+                        } else {
+                            "${NetworkModule.getBaseUrl().trimEnd('/')}${video.thumbnailUrl}"
+                        }
+                    }
+                    AsyncImage(
+                        model = fullUrl,
+                        contentDescription = video.title,
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(video.icon, fontSize = 56.sp)
+                }
             }
 
             Column(modifier = Modifier.padding(12.dp)) {
@@ -297,7 +325,7 @@ private fun SearchResultCard(
                         .background(CreamYellow)
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Text(video.category, fontSize = 10.sp, color = Color(0xFF8B6914))
+                    Text(video.category, fontSize = 10.sp, color = TagHotText)
                 }
             }
         }

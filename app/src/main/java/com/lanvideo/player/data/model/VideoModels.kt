@@ -10,6 +10,7 @@ data class VideoItem(
     val description: String = "",
     val sourceType: String = "external",
     val coverUrl: String? = null,
+    val thumbUrl: String? = null,
     val streamUrl: String,
     val category: String = "general",
     val duration: Long = 0L,
@@ -63,3 +64,11 @@ data class PagedVideoResponse(
 
 @Serializable
 data class FileCheckItem(val name: String, val size: Long)
+
+@Serializable
+data class PagedHistoryResponse(
+    val items: List<RecentWatchItem>,
+    val total: Long,
+    val page: Int,
+    val size: Int
+)

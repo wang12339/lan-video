@@ -1,28 +1,20 @@
 use sqlx::PgPool;
-use uuid::Uuid;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct UserRecord {
     pub id: i64,
-    #[allow(dead_code)]
     pub username: String,
-    #[allow(dead_code)]
     pub password_hash: String,
-    #[allow(dead_code)]
     pub is_admin: bool,
-    #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct UserTokenRow {
-    #[allow(dead_code)]
     pub id: i64,
     pub username: String,
-    #[allow(dead_code)]
     pub password_hash: String,
     pub is_admin: bool,
-    #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -65,8 +57,14 @@ impl UserRepository {
         Ok(user)
     }
 
+    /// Generate a cryptographically secure 256-bit token (64 hex chars)
     pub async fn create_token(&self, user_id: i64) -> Result<String, sqlx::Error> {
-        let token = Uuid::new_v4().to_string();
+        use rand::Rng;
+        let token: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(64)
+            .map(char::from)
+            .collect();
         sqlx::query("INSERT INTO auth_tokens (user_id, token, expires_at) VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '7 days')")
             .bind(user_id)
             .bind(&token)

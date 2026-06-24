@@ -16,8 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,12 +30,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.koin.androidx.compose.koinViewModel
 import com.lanvideo.player.ui.theme.BackgroundBlue
 import com.lanvideo.player.ui.theme.BackgroundPink
 import com.lanvideo.player.ui.theme.Lavender
 import com.lanvideo.player.ui.theme.SakuraPink
 import com.lanvideo.player.ui.theme.TextPrimary
 import com.lanvideo.player.ui.theme.TextSecondary
+import com.lanvideo.player.ui.theme.gradientBackground
 
 data class HistoryItem(
     val id: String,
@@ -42,29 +47,17 @@ data class HistoryItem(
     val progress: Int
 )
 
-private val mockHistoryItems = listOf(
-    HistoryItem("1", "猫咪的日常", "🐱", "2分钟前", 85),
-    HistoryItem("2", "可爱小狗", "🐶", "1小时前", 42),
-    HistoryItem("3", "樱花盛开", "🌸", "昨天", 100),
-    HistoryItem("4", "小熊探险", "🧸", "2天前", 67),
-    HistoryItem("5", "星星夜空", "⭐", "3天前", 23),
-    HistoryItem("6", "彩虹糖果", "🌈", "上周", 55),
-    HistoryItem("7", "甜蜜蛋糕", "🍰", "上周", 90),
-    HistoryItem("8", "魔法森林", "🌲", "2周前", 38)
-)
-
 @Composable
 fun HistoryScreen(
-    onBackClick: () -> Unit = {}
+    onBackClick: () -> Unit = {},
+    viewModel: HistoryViewModel = koinViewModel()
 ) {
+    val uiState by viewModel.uiState.collectAsState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(BackgroundPink, BackgroundBlue)
-                )
-            )
+            .gradientBackground()
     ) {
         Box(
             modifier = Modifier
@@ -87,14 +80,34 @@ fun HistoryScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(mockHistoryItems) { item ->
-                HistoryCard(item = item)
+        when {
+            uiState.isLoading -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = SakuraPink)
+                }
+            }
+            uiState.error != null -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(uiState.error ?: "", color = TextSecondary)
+                }
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(uiState.historyItems, key = { it.id }) { item ->
+                        HistoryCard(item = item)
+                    }
+                }
             }
         }
     }

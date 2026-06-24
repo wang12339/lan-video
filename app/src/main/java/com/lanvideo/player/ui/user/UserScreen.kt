@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -28,31 +30,31 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import org.koin.androidx.compose.koinViewModel
 import com.lanvideo.player.ui.theme.BackgroundBlue
 import com.lanvideo.player.ui.theme.BackgroundPink
+import com.lanvideo.player.ui.theme.ErrorRed
 import com.lanvideo.player.ui.theme.SakuraPink
 import com.lanvideo.player.ui.theme.SkyBlue
 import com.lanvideo.player.ui.theme.TextPrimary
 import com.lanvideo.player.ui.theme.TextSecondary
+import com.lanvideo.player.ui.theme.gradientBackground
 
 @Composable
 fun UserScreen(
     onHistoryClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     onAboutClick: () -> Unit = {},
-    viewModel: UserViewModel = viewModel()
+    onLoginClick: () -> Unit = {},
+    onUploadClick: () -> Unit = {},
+    viewModel: UserViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(BackgroundPink, BackgroundBlue)
-                )
-            )
+            .gradientBackground()
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -83,7 +85,10 @@ fun UserScreen(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text("\uD83D\uDC38", fontSize = 48.sp)
+                Text(
+                    text = if (uiState.isLoggedIn) "\uD83D\uDC38" else "\uD83D\uDC36",
+                    fontSize = 48.sp
+                )
             }
         }
 
@@ -106,26 +111,51 @@ fun UserScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(6.dp, RoundedCornerShape(20.dp))
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.White.copy(alpha = 0.85f))
-                .padding(vertical = 20.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            StatItem(count = uiState.watchCount, label = "观看")
-            Box(
+        // Login button (when not logged in)
+        if (!uiState.isLoggedIn) {
+            Button(
+                onClick = onLoginClick,
                 modifier = Modifier
-                    .width(1.dp)
-                    .height(40.dp)
-                    .background(TextSecondary.copy(alpha = 0.3f))
-            )
-            StatItem(count = uiState.favoriteCount, label = "收藏")
-        }
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .shadow(4.dp, RoundedCornerShape(25.dp))
+                    .clip(RoundedCornerShape(25.dp)),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SakuraPink
+                )
+            ) {
+                Text(
+                    text = "登录 / 注册",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+            }
 
-        Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+        } else {
+            // Stats row (when logged in)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(6.dp, RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.85f))
+                    .padding(vertical = 20.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatItem(count = uiState.watchCount, label = "观看")
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(40.dp)
+                        .background(TextSecondary.copy(alpha = 0.3f))
+                )
+                StatItem(count = uiState.favoriteCount, label = "收藏")
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
 
         Column(
             modifier = Modifier
@@ -134,9 +164,25 @@ fun UserScreen(
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color.White.copy(alpha = 0.85f))
         ) {
+            if (uiState.isLoggedIn) {
+                MenuItem(icon = "\uD83D\uDCE4", label = "上传视频", onClick = onUploadClick)
+            }
             MenuItem(icon = "\uD83D\uDC40", label = "观看历史", onClick = onHistoryClick)
             MenuItem(icon = "\u2699\uFE0F", label = "设置", onClick = onSettingsClick)
             MenuItem(icon = "\u2139\uFE0F", label = "关于", onClick = onAboutClick, showDivider = false)
+        }
+
+        // Logout button (when logged in)
+        if (uiState.isLoggedIn) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "退出登录",
+                fontSize = 14.sp,
+                color = ErrorRed,
+                modifier = Modifier.clickable {
+                    viewModel.logout()
+                }
+            )
         }
     }
 }

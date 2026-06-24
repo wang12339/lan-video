@@ -22,6 +22,7 @@ use lan_video_backend::db::init_pool;
 use lan_video_backend::handlers;
 use lan_video_backend::middleware::auth::{bearer_auth, admin_auth, media_auth};
 use lan_video_backend::middleware::rate_limit::RateLimiter;
+use lan_video_backend::middleware::request_id::request_id;
 use lan_video_backend::openapi;
 use lan_video_backend::repositories::user_repo::UserRepository;
 use lan_video_backend::repositories::video_repo::VideoRepository;
@@ -58,7 +59,7 @@ async fn security_headers(
     headers.insert(
         axum::http::header::HeaderName::from_static("content-security-policy"),
         HeaderValue::from_static(
-            "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'",
+            "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' https://static.cloudflareinsights.com",
         ),
     );
     res
@@ -79,7 +80,7 @@ pub async fn build_router(config: AppConfig) -> Router {
     let pool = init_pool(&config.database_url).await;
 
     let user_repo = UserRepository::new(pool.clone());
-    let video_repo = VideoRepository::new(pool);
+    let video_repo = VideoRepository::new(pool.clone());
     let video_service = VideoService::new(video_repo, config.clone());
 
     let video_cache = VideoListCache::builder()
@@ -93,6 +94,7 @@ pub async fn build_router(config: AppConfig) -> Router {
         config: config.clone(),
         rate_limiter: RateLimiter::new(),
         video_cache,
+        db_pool: pool.clone(),
     });
 
     // Periodic expired token cleanup every 5 minutes
@@ -108,6 +110,20 @@ pub async fn build_router(config: AppConfig) -> Router {
                         }
                     }
                     Err(e) => tracing::error!("Failed to clean up expired tokens: {}", e),
+                }
+            }
+        });
+    }
+
+    // DB health check every 60 seconds
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                match sqlx::query("SELECT 1").execute(&pool).await {
+                    Ok(_) => tracing::debug!("DB health check OK"),
+                    Err(e) => tracing::error!("DB health check failed: {}", e),
                 }
             }
         });
@@ -130,6 +146,27 @@ pub async fn build_router(config: AppConfig) -> Router {
                     );
                 }
                 Err(e) => tracing::error!("Thumbnail backfill failed: {}", e),
+            }
+        });
+    }
+
+    // Auto-sync: periodically scan media directory and sync to database
+    {
+        let svc = video_service.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(300)).await;
+                tracing::info!("Auto-sync: scanning media directory...");
+                match svc.scan_media_directory("local").await {
+                    Ok(added) => {
+                        if added > 0 {
+                            tracing::info!("Auto-sync: added {} new files", added);
+                        } else {
+                            tracing::debug!("Auto-sync: no new files");
+                        }
+                    }
+                    Err(e) => tracing::error!("Auto-sync scan failed: {}", e),
+                }
             }
         });
     }
@@ -182,6 +219,10 @@ pub async fn build_router(config: AppConfig) -> Router {
         Router::new()
             .route("/videos", get(handlers::videos::list_videos))
             .route("/videos/{id}", get(handlers::videos::get_video))
+            .route("/videos/{id}/like", post(handlers::videos::toggle_like))
+            .route("/videos/{id}/like", get(handlers::videos::get_like_status))
+            .route("/videos/{id}/favorite", post(handlers::videos::toggle_favorite))
+            .route("/videos/{id}/favorite", get(handlers::videos::get_favorite_status))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         30,
     );
@@ -209,6 +250,8 @@ pub async fn build_router(config: AppConfig) -> Router {
     let upload_route = {
         let r = Router::new()
             .route("/admin/videos/upload", post(handlers::admin::upload_video))
+            .route("/admin/videos/upload-resume", post(handlers::admin::upload_resume))
+            .route("/admin/videos/upload-status", get(handlers::admin::upload_status))
             .layer(DefaultBodyLimit::disable())
             .route_layer(axum_mw::from_fn(admin_auth))
             .route_layer(axum_mw::from_fn(bearer_auth));
@@ -251,7 +294,8 @@ pub async fn build_router(config: AppConfig) -> Router {
             .route("/auth/register", post(handlers::auth::register))
             .route("/auth/login", post(handlers::auth::login))
             .route("/docs/openapi.json", get(openapi_spec))
-            .route("/docs", get(docs_redirect)),
+            .route("/docs", get(docs_redirect))
+            .route("/videos/{id}/view", post(handlers::videos::increment_views)),
         30,
     );
 
@@ -275,6 +319,7 @@ pub async fn build_router(config: AppConfig) -> Router {
         )
         .layer(
             ServiceBuilder::new()
+                .layer(axum_mw::from_fn(request_id))
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
                 .layer(inject_state),

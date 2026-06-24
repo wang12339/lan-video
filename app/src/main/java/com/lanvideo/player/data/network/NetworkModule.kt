@@ -1,6 +1,7 @@
 package com.lanvideo.player.data.network
 
 import android.content.Context
+import com.lanvideo.player.BuildConfig
 import com.lanvideo.player.MyApplication
 import com.lanvideo.player.data.user.AuthSessionStore
 import java.util.concurrent.TimeUnit
@@ -26,18 +27,18 @@ object NetworkModule {
 
     private val client by lazy {
         val app = MyApplication.instance
-        OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(4, TimeUnit.HOURS)
-            .writeTimeout(4, TimeUnit.HOURS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val original = chain.request()
-                val builder = original.newBuilder()
+                val reqBuilder = original.newBuilder()
                 val token = AuthSessionStore.getToken(app)
                 if (token != null) {
-                    builder.header("Authorization", "Bearer $token")
+                    reqBuilder.header("Authorization", "Bearer $token")
                 }
-                val response = chain.proceed(builder.build())
+                val response = chain.proceed(reqBuilder.build())
                 // Token expired/invalid — clear session
                 if (response.code == 401 && token != null) {
                     AuthSessionStore.clear(app)
@@ -45,13 +46,22 @@ object NetworkModule {
                 }
                 response
             }
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.HEADERS
+        if (BuildConfig.DEBUG) {
+            builder.addInterceptor(HttpLoggingInterceptor().apply {
+                level = HttpLoggingInterceptor.Level.BASIC
             })
+        }
+        builder.build()
+    }
+
+    val uploadClient by lazy {
+        client.newBuilder()
+            .readTimeout(4, TimeUnit.HOURS)
+            .writeTimeout(4, TimeUnit.HOURS)
             .build()
     }
 
-    private const val DEFAULT_BASE_URL = "https://hke26xi9.ddnsto.com"
+    private const val DEFAULT_BASE_URL = "https://atmos.whanghui.top"
 
     fun init(context: Context) {
         val saved = ServerConfigStore.loadBaseUrl(context)?.trim()

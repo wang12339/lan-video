@@ -1,0 +1,160 @@
+<h2>页面布局设计</h2>
+<p class="subtitle">Material 3 + Dynamic Colors 主要页面</p>
+
+<div class="section">
+  <h3>首页 (Home)</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">手机视图</div>
+      <div class="mockup-body" style="padding: 12px;">
+        <!-- Status bar -->
+        <div style="height: 24px; background: var(--surface); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; padding: 0 12px; font-size: 11px;">
+          <span>10:30</span>
+          <span style="margin-left: auto;">📶 🔋</span>
+        </div>
+        <!-- App bar -->
+        <div style="height: 48px; background: var(--primary); border-radius: 12px; margin-bottom: 8px; display: flex; align-items: center; padding: 0 16px; color: white;">
+          <span style="font-weight: 600;">爱的天堂</span>
+        </div>
+        <!-- Featured carousel -->
+        <div style="height: 140px; background: linear-gradient(135deg, var(--primary), var(--secondary)); border-radius: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; color: white;">
+          <div style="text-align: center;">
+            <div style="font-size: 14px; font-weight: 600;">推荐视频</div>
+            <div style="font-size: 11px; opacity: 0.8;">横向滑动查看更多</div>
+          </div>
+        </div>
+        <!-- Category chips -->
+        <div style="display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto;">
+          <div style="background: var(--primary); color: white; padding: 6px 16px; border-radius: 20px; font-size: 12px; white-space: nowrap;">全部</div>
+          <div style="background: var(--surface-variant); padding: 6px 16px; border-radius: 20px; font-size: 12px; white-space: nowrap;">视频</div>
+          <div style="background: var(--surface-variant); padding: 6px 16px; border-radius: 20px; font-size: 12px; white-space: nowrap;">图片</div>
+        </div>
+        <!-- Video grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div style="background: var(--surface-variant); border-radius: 12px; overflow: hidden;">
+            <div style="height: 80px; background: var(--tertiary);"></div>
+            <div style="padding: 8px;">
+              <div style="font-size: 11px; font-weight: 500;">视频标题</div>
+              <div style="font-size: 10px; opacity: 0.7;">2分钟前</div>
+            </div>
+          </div>
+          <div style="background: var(--surface-variant); border-radius: 12px; overflow: hidden;">
+            <div style="height: 80px; background: var(--tertiary);"></div>
+            <div style="padding: 8px;">
+              <div style="font-size: 11px; font-weight: 500;">视频标题</div>
+              <div style="font-size: 10px; opacity: 0.7;">5分钟前</div>
+            </div>
+          </div>
+        </div>
+        <!-- Bottom nav -->
+        <div style="height: 56px; background: var(--surface); border-radius: 12px; margin-top: 8px; display: flex; align-items: center; justify-content: space-around;">
+          <div style="text-align: center; color: var(--primary);">
+            <div style="font-size: 18px;">🏠</div>
+            <div style="font-size: 10px;">首页</div>
+          </div>
+          <div style="text-align: center; opacity: 0.6;">
+            <div style="font-size: 18px;">🔍</div>
+            <div style="font-size: 10px;">搜索</div>
+          </div>
+          <div style="text-align: center; opacity: 0.6;">
+            <div style="font-size: 18px;">👤</div>
+            <div style="font-size: 10px;">用户</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">设计要点</div>
+      <div class="mockup-body" style="padding: 16px;">
+        <div class="label">首页</div>
+        <ul style="margin: 8px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+          <li>顶部推荐轮播卡片</li>
+          <li>分类标签过滤器</li>
+          <li>双列瀑布流视频网格</li>
+          <li>底部导航栏 (首页/搜索/用户)</li>
+          <li>Material 3 动态取色</li>
+        </ul>
+        <div class="label" style="margin-top: 16px;">组件</div>
+        <ul style="margin: 8px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+          <li><code>FeaturedCarousel</code> - 推荐轮播</li>
+          <li><code>CategoryChips</code> - 分类过滤</li>
+          <li><code>VideoGrid</code> - 视频网格</li>
+          <li><code>VideoCard</code> - 视频卡片</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>播放器 (Player)</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">播放器视图</div>
+      <div class="mockup-body" style="padding: 12px;">
+        <!-- Video player area -->
+        <div style="height: 200px; background: #000; border-radius: 12px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; color: white; position: relative;">
+          <div style="font-size: 32px;">▶️</div>
+          <div style="position: absolute; bottom: 8px; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px;">
+            <div style="flex: 1; height: 4px; background: rgba(255,255,255,0.3); border-radius: 2px;">
+              <div style="width: 30%; height: 100%; background: var(--primary); border-radius: 2px;"></div>
+            </div>
+            <span style="font-size: 11px;">12:34</span>
+          </div>
+        </div>
+        <!-- Video info -->
+        <div style="padding: 0 4px;">
+          <div style="font-size: 16px; font-weight: 600; margin-bottom: 4px;">视频标题</div>
+          <div style="font-size: 12px; opacity: 0.7; margin-bottom: 12px;">上传于 2 小时前 · 1.2K 次观看</div>
+          <!-- Action buttons -->
+          <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+              <div style="width: 40px; height: 40px; background: var(--surface-variant); border-radius: 20px; display: flex; align-items: center; justify-content: center;">👍</div>
+              <span style="font-size: 10px;">点赞</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+              <div style="width: 40px; height: 40px; background: var(--surface-variant); border-radius: 20px; display: flex; align-items: center; justify-content: center;">⬇️</div>
+              <span style="font-size: 10px;">下载</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+              <div style="width: 40px; height: 40px; background: var(--surface-variant); border-radius: 20px; display: flex; align-items: center; justify-content: center;">↗️</div>
+              <span style="font-size: 10px;">分享</span>
+            </div>
+          </div>
+          <!-- Related videos -->
+          <div class="label">相关推荐</div>
+          <div style="display: flex; gap: 8px; margin-top: 8px; overflow-x: auto;">
+            <div style="min-width: 120px; background: var(--surface-variant); border-radius: 8px; overflow: hidden;">
+              <div style="height: 68px; background: var(--tertiary);"></div>
+              <div style="padding: 6px; font-size: 10px;">相关视频 1</div>
+            </div>
+            <div style="min-width: 120px; background: var(--surface-variant); border-radius: 8px; overflow: hidden;">
+              <div style="height: 68px; background: var(--tertiary);"></div>
+              <div style="padding: 6px; font-size: 10px;">相关视频 2</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">设计要点</div>
+      <div class="mockup-body" style="padding: 16px;">
+        <div class="label">播放器</div>
+        <ul style="margin: 8px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+          <li>全屏播放器 + 进度条</li>
+          <li>视频信息 + 操作按钮</li>
+          <li>相关推荐横向滚动</li>
+          <li>支持画中画 (PiP)</li>
+          <li>手势控制 (亮度/音量/进度)</li>
+        </ul>
+        <div class="label" style="margin-top: 16px;">功能</div>
+        <ul style="margin: 8px 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+          <li><code>ExoPlayer</code> - 视频播放</li>
+          <li><code>PiP Mode</code> - 画中画</li>
+          <li><code>Gesture Controls</code> - 手势</li>
+          <li><code>Subtitle Support</code> - 字幕</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>

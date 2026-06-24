@@ -15,18 +15,27 @@ object AuthSessionStore {
     private const val KEY_TOKEN = "token"
     private const val KEY_USERNAME = "username"
 
-    private fun prefs(context: Context): SharedPreferences {
-        val masterKey = MasterKey.Builder(context.applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+    @Volatile
+    private var cachedPrefs: SharedPreferences? = null
 
-        return EncryptedSharedPreferences.create(
-            context.applicationContext,
-            PREFS,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+    private fun prefs(context: Context): SharedPreferences {
+        cachedPrefs?.let { return it }
+        return synchronized(this) {
+            cachedPrefs?.let { return it }
+            val masterKey = MasterKey.Builder(context.applicationContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+
+            val prefs = EncryptedSharedPreferences.create(
+                context.applicationContext,
+                PREFS,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            cachedPrefs = prefs
+            prefs
+        }
     }
 
     fun saveSession(context: Context, token: String, username: String) {

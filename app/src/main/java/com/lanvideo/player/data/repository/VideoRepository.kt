@@ -2,18 +2,23 @@ package com.lanvideo.player.data.repository
 
 import android.content.ContentResolver
 import android.content.Context
+import android.util.Log
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.SystemClock
-import com.lanvideo.player.data.model.FileCheckItem
 import android.util.LruCache
+import com.lanvideo.player.BuildConfig
+import com.lanvideo.player.data.local.AppDatabase
+import com.lanvideo.player.data.local.CachedVideoEntity
+import com.lanvideo.player.data.model.FileCheckItem
 import com.lanvideo.player.data.model.PagedVideoResponse
 import com.lanvideo.player.data.model.PlaybackHistoryRequest
 import com.lanvideo.player.data.model.PlaybackHistoryResponse
-import com.lanvideo.player.data.model.RecentWatchItem
 import com.lanvideo.player.data.model.VideoItem
 import com.lanvideo.player.data.model.VideoUpdateRequest
+import com.lanvideo.player.data.model.VideoUpdateResponse
+import com.lanvideo.player.data.model.PagedHistoryResponse
 import com.lanvideo.player.data.network.LanServerDiscovery
 import com.lanvideo.player.data.network.NetworkModule
 import com.lanvideo.player.data.util.queryDisplayName
@@ -32,10 +37,15 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
-object VideoRepository {
+class VideoRepository(private val database: AppDatabase) {
+    private val videoDao = database.videoDao()
     private const val MAX_CONCURRENT_UPLOADS = 2
     private const val CACHE_MAX_SIZE = 64
-    private val videoCache = LruCache<String, PagedVideoResponse>(CACHE_MAX_SIZE)
+    private const val CACHE_TTL_MS = 30_000L // 30秒过期
+
+    private data class CacheEntry(val data: PagedVideoResponse, val timestamp: Long)
+
+    private val videoCache = LruCache<String, CacheEntry>(CACHE_MAX_SIZE)
 
     fun invalidateCache() {
         videoCache.evictAll()
@@ -44,13 +54,47 @@ object VideoRepository {
     suspend fun listVideos(query: String? = null, type: String? = null, page: Int = 0, size: Int = 20, forceRefresh: Boolean = false): Result<PagedVideoResponse> {
         val cacheKey = "list:$query:$type:$page:$size"
         if (!forceRefresh) {
-            videoCache.get(cacheKey)?.let { return Result.success(it) }
+            // 1. Check in-memory cache
+            videoCache.get(cacheKey)?.let { entry ->
+                if (SystemClock.elapsedRealtime() - entry.timestamp < CACHE_TTL_MS) {
+                    return Result.success(entry.data)
+                }
+                videoCache.remove(cacheKey)
+            }
         }
-        return runCatching {
+
+        // 2. Try network fetch
+        val networkResult = runCatching {
             val resp = NetworkModule.createApi().listVideos(query, type, page, size)
-            videoCache.put(cacheKey, resp)
+            videoCache.put(cacheKey, CacheEntry(resp, SystemClock.elapsedRealtime()))
+            // Persist first page to Room for offline access
+            if (page == 0 && query.isNullOrBlank()) {
+                try {
+                    videoDao.deleteAll()
+                    videoDao.insertAll(resp.items.map { it.toEntity() })
+                } catch (_: Exception) { }
+            }
             resp
         }
+
+        // 3. On network error, fall back to Room cache (first page, no query)
+        if (networkResult.isFailure && page == 0 && query.isNullOrBlank()) {
+            val cached = try {
+                videoDao.getAll()
+            } catch (_: Exception) { emptyList() }
+            if (cached.isNotEmpty()) {
+                val items = cached.map { it.toModel() }
+                val fallback = PagedVideoResponse(items, items.size.toLong(), 0, items.size)
+                return Result.success(fallback)
+            }
+        }
+
+        return networkResult
+    }
+
+    /** Force a network fetch and update the Room cache. */
+    suspend fun refreshVideos(query: String? = null, type: String? = null, page: Int = 0, size: Int = 20): Result<PagedVideoResponse> {
+        return listVideos(query, type, page, size, forceRefresh = true)
     }
 
     suspend fun getPlaybackPosition(videoId: Long): Long? {
@@ -59,10 +103,10 @@ object VideoRepository {
         }.getOrNull()?.positionMs?.takeIf { it > 0L }
     }
 
-    suspend fun getAllPlaybackHistory(): List<RecentWatchItem> {
+    suspend fun getAllPlaybackHistory(page: Int = 0, size: Int = 20): Result<PagedHistoryResponse> {
         return runCatching {
-            NetworkModule.createApi().listPlaybackHistory()
-        }.getOrElse { emptyList() }
+            NetworkModule.createApi().listPlaybackHistory(page, size)
+        }
     }
 
     private fun is403(e: Throwable): Boolean =
@@ -115,7 +159,7 @@ object VideoRepository {
                     .url("$base/admin/videos/$videoId/cover")
                     .post(body)
                     .build()
-                NetworkModule.httpClient().newCall(req).execute().use { resp ->
+                NetworkModule.uploadClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 }
             }
@@ -363,14 +407,14 @@ object VideoRepository {
                     .url(url)
                     .post(body)
                     .build()
-                android.util.Log.d("UploadRepo", "POST $url")
-                NetworkModule.httpClient().newCall(request).execute().use { response ->
+                if (BuildConfig.DEBUG) Log.d("UploadRepo", "POST $url")
+                NetworkModule.uploadClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val errBody = response.body?.string().orEmpty()
                             .replace("\n", " ")
                             .take(400)
                         val detail = if (errBody.isNotBlank()) errBody else "服务器返回错误"
-                        android.util.Log.w("UploadRepo", "HTTP ${response.code} -> $detail")
+                        if (BuildConfig.DEBUG) Log.w("UploadRepo", "HTTP ${response.code} -> $detail")
                         val chineseMsg = when {
                             response.code == 413 -> "文件太大，服务器限制上传大小"
                             response.code == 415 -> "不支持的文件类型"
@@ -453,4 +497,31 @@ object VideoRepository {
             .take(120)
             .ifBlank { "upload.mp4" }
     }
+
+    // -- Entity <-> Model mapping --
+    private fun VideoItem.toEntity() = CachedVideoEntity(
+        id = id,
+        title = title,
+        description = description,
+        sourceType = sourceType,
+        coverUrl = coverUrl,
+        thumbUrl = thumbUrl,
+        streamUrl = streamUrl,
+        category = category,
+        duration = duration,
+        watchPosition = watchPosition
+    )
+
+    private fun CachedVideoEntity.toModel() = VideoItem(
+        id = id,
+        title = title,
+        description = description,
+        sourceType = sourceType,
+        coverUrl = coverUrl,
+        thumbUrl = thumbUrl,
+        streamUrl = streamUrl,
+        category = category,
+        duration = duration,
+        watchPosition = watchPosition
+    )
 }

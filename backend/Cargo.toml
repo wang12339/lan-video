@@ -13,11 +13,14 @@ tower-http = { version = "0.6", features = ["cors", "fs", "trace", "limit", "set
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4"] }
 argon2 = "0.5"
 md-5 = "0.10"
 dotenvy = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 moka = { version = "0.12", features = ["sync"] }
+dashmap = "6"
+rand = "0.8"
 infer = "0.19"
-sentry = { version = "0.34", features = ["anyhow", "tracing"] }
+sentry = { version = "0.34", features = ["anyhow", "tracing"], default-features = false }

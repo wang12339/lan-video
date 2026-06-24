@@ -2,7 +2,6 @@ package com.lanvideo.player.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,11 +49,12 @@ fun BottomNavBar(
                 .background(Color(0xFFE8F4FD).copy(alpha = 0.9f))
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceAround
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceAround
         ) {
+            // 首页按钮
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.clickable { /* TODO */ }
+                modifier = Modifier.clickable { onNavigate(Screen.Home) }
             ) {
                 Box(
                     modifier = Modifier
@@ -68,12 +68,13 @@ fun BottomNavBar(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("\uD83D\uDCAC", fontSize = 20.sp)
+                    Text("\uD83C\uDFE0", fontSize = 20.sp)
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("消息", fontSize = 11.sp, color = TextPrimary)
+                Text("首页", fontSize = 11.sp, color = TextPrimary)
             }
 
+            // 搜索按钮 (中心)
             Box(
                 modifier = Modifier
                     .offset(y = (-12).dp)
@@ -84,7 +85,8 @@ fun BottomNavBar(
                         Brush.linearGradient(
                             colors = listOf(SakuraPink, SkyBlue)
                         )
-                    ),
+                    )
+                    .clickable { onNavigate(Screen.Search) },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -94,10 +96,11 @@ fun BottomNavBar(
                         .background(Color.White),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("\uD83D\uDC30", fontSize = 32.sp)
+                    Text("\uD83D\uDD0D", fontSize = 28.sp)
                 }
             }
 
+            // 我的按钮
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.clickable { onNavigate(Screen.User) }

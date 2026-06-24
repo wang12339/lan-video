@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: atmos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kuaile
+      POSTGRES_DB: lan_video
+    ports:
+      - "5432:5432"
+    volumes:
+      - /mnt/docker-data/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kuaile -d lan_video"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: atmos-backend:latest
+    container_name: atmos-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      DATABASE_URL: postgres://kuaile@postgres:5432/lan_video
+      SERVER_PORT: "8082"
+      MEDIA_ROOT: /data/media
+      WEBA_ROOT: /data/webapp
+      REGISTRATION_ENABLED: "false"
+      CORS_ORIGIN: "https://atmos.whanghui.top"
+      COOKIE_SECURE: "true"
+      RUST_LOG: info
+    volumes:
+      - /mnt/atmos-project/backend/media:/data/media:ro
+      - /mnt/docker-data/webapp:/data/webapp:ro

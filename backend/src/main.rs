@@ -3,6 +3,8 @@ mod app;
 use std::net::SocketAddr;
 use std::future::Future;
 
+use tracing_subscriber::prelude::*;
+
 use lan_video_backend::config::AppConfig;
 use crate::app::build_router;
 
@@ -59,12 +61,27 @@ fn shutdown_signal() -> impl Future<Output = ()> {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-        )
+    let log_dir = std::path::Path::new("./logs");
+    std::fs::create_dir_all(log_dir).ok();
+
+    let file_appender = tracing_appender::rolling::daily(log_dir, "atmos.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    Box::leak(Box::new(_guard));
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    // Write to both stdout (human-readable) and file (JSON) simultaneously
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stdout);
+    let file_layer = tracing_subscriber::fmt::layer()
         .json()
+        .with_writer(non_blocking);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stdout_layer)
+        .with(file_layer)
         .init();
 
     dotenvy::dotenv().ok();
@@ -89,7 +106,7 @@ async fn main() {
     tracing::info!("Atmos Video server starting on http://{}", addr);
     tracing::info!("Media root: {}", config.media_root.display());
 
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap_or_else(|e| tracing::error!("server exited with error: {}", e));

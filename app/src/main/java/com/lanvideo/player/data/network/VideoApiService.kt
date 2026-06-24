@@ -5,7 +5,6 @@ import com.lanvideo.player.data.model.LoginRequest
 import com.lanvideo.player.data.model.PagedVideoResponse
 import com.lanvideo.player.data.model.PlaybackHistoryRequest
 import com.lanvideo.player.data.model.PlaybackHistoryResponse
-import com.lanvideo.player.data.model.RecentWatchItem
 import com.lanvideo.player.data.model.FileCheckItem
 import com.lanvideo.player.data.model.RegisterRequest
 import com.lanvideo.player.data.model.UserInfoResponse
@@ -13,6 +12,7 @@ import com.lanvideo.player.data.model.UserProfileResponse
 import com.lanvideo.player.data.model.VideoItem
 import com.lanvideo.player.data.model.VideoUpdateRequest
 import com.lanvideo.player.data.model.VideoUpdateResponse
+import com.lanvideo.player.data.model.PagedHistoryResponse
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -38,7 +38,10 @@ interface VideoApiService {
     suspend fun getPlaybackHistory(@Path("videoId") videoId: Long): PlaybackHistoryResponse
 
     @GET("playback/history")
-    suspend fun listPlaybackHistory(): List<RecentWatchItem>
+    suspend fun listPlaybackHistory(
+        @Query("page") page: Int? = null,
+        @Query("size") size: Int? = null
+    ): PagedHistoryResponse
 
     @PUT("admin/videos/{id}")
     suspend fun updateVideo(@Path("id") id: Long, @Body request: VideoUpdateRequest): VideoUpdateResponse
@@ -72,4 +75,16 @@ interface VideoApiService {
 
     @GET("auth/user/profile")
     suspend fun getUserProfile(): UserProfileResponse
+
+    @POST("videos/{id}/like")
+    suspend fun toggleLike(@Path("id") id: Long): Map<String, Boolean>
+
+    @GET("videos/{id}/like")
+    suspend fun getLikeStatus(@Path("id") id: Long): Map<String, Boolean>
+
+    @POST("videos/{id}/favorite")
+    suspend fun toggleFavorite(@Path("id") id: Long): Map<String, Boolean>
+
+    @GET("videos/{id}/favorite")
+    suspend fun getFavoriteStatus(@Path("id") id: Long): Map<String, Boolean>
 }
