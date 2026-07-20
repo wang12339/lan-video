@@ -1,2 +1,12 @@
+pub mod admin_service;
 pub mod auth_service;
+pub mod comment_service;
+pub mod media_service;
+pub mod playback_service;
+pub mod recommendation_service;
+pub mod search_service;
+pub mod share_service;
+pub mod tag_service;
+pub mod task_queue;
+pub mod transcoder;
 pub mod video_service;
