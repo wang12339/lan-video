@@ -1,0 +1,9 @@
+{
+  "name": "Atmos Video",
+  "short_name": "Atmos",
+  "start_url": "/webapp/",
+  "display": "standalone",
+  "theme_color": "#0c0c10",
+  "background_color": "#0c0c10",
+  "icons": []
+}

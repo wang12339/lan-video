@@ -1,0 +1,123 @@
+.skeleton-line {
+  background: linear-gradient(90deg, var(--bg3, #1e1e25) 25%, var(--surface, #24242c) 50%, var(--bg3, #1e1e25) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Stats skeleton */
+.skeleton-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.skeleton-stat-card {
+  background: var(--bg2, #15151a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius, 12px);
+  padding: 20px;
+  text-align: center;
+}
+
+.skeleton-value {
+  height: 28px;
+  width: 60%;
+  margin: 0 auto 12px;
+}
+
+.skeleton-label {
+  height: 14px;
+  width: 40%;
+  margin: 0 auto;
+}
+
+/* Table skeleton */
+.skeleton-table {
+  background: var(--bg2, #15151a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius, 12px);
+  overflow: hidden;
+}
+
+.skeleton-table-header {
+  display: grid;
+  grid-template-columns: 40px 60px 1fr 100px 100px 80px 80px;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg3, #1e1e25);
+}
+
+.skeleton-table-row {
+  display: grid;
+  grid-template-columns: 40px 60px 1fr 100px 100px 80px 80px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.skeleton-th {
+  height: 14px;
+}
+
+.skeleton-td {
+  height: 40px;
+}
+
+/* Card skeleton */
+.skeleton-card {
+  background: var(--bg2, #15151a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius, 12px);
+  padding: 16px;
+}
+
+.skeleton-card-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.skeleton-card-item:last-child {
+  border-bottom: none;
+}
+
+.skeleton-card-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.skeleton-card-content {
+  flex: 1;
+}
+
+.skeleton-card-title {
+  height: 16px;
+  width: 50%;
+  margin-bottom: 8px;
+}
+
+.skeleton-card-desc {
+  height: 12px;
+  width: 30%;
+}
+
+/* Text skeleton */
+.skeleton-text {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-text .skeleton-line {
+  height: 16px;
+}

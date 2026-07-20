@@ -1,0 +1,43 @@
+.eb-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.eb-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.eb-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.eb-message {
+  margin: 0 0 24px;
+  font-size: 14px;
+  color: var(--text2);
+  max-width: 400px;
+}
+
+.eb-retry-btn {
+  padding: 10px 24px;
+  background: var(--accent, #ff4433);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.eb-retry-btn:hover {
+  filter: brightness(1.1);
+}
