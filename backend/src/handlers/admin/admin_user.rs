@@ -1,0 +1,180 @@
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Extension, Json,
+};
+use serde::Deserialize;
+use std::sync::Arc;
+
+use crate::middleware::auth::AuthUser;
+use crate::models::video::OkResponse;
+use crate::services::admin_service::AdminError;
+use crate::state::AppState;
+use crate::util::response::{error_response, ErrorResponse, SafeJson};
+
+/// Convert an `AdminError` into a tuple response.
+fn map_admin_err(e: AdminError) -> (StatusCode, Json<ErrorResponse>) {
+    match e {
+        AdminError::NotFound => error_response(StatusCode::NOT_FOUND, "用户不存在"),
+        AdminError::SelfAction => error_response(StatusCode::BAD_REQUEST, "不能对自己执行此操作"),
+        AdminError::InvalidPassword => {
+            error_response(StatusCode::BAD_REQUEST, "密码长度需在 10-128 个字符之间")
+        }
+        AdminError::HashFailed => error_response(StatusCode::INTERNAL_SERVER_ERROR, "密码加密失败"),
+        AdminError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
+    }
+}
+
+/// GET /admin/users
+pub async fn list_users(
+    State(state): State<Arc<AppState>>,
+    Extension(_auth_user): Extension<AuthUser>,
+) -> Result<
+    Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
+    (StatusCode, Json<ErrorResponse>),
+> {
+    let users = state.admin_service.list_users().await.map_err(map_admin_err)?;
+    Ok(Json(users))
+}
+
+/// DELETE /admin/users/{id}
+pub async fn delete_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let outcome = state
+        .admin_service
+        .delete_user(id, auth_user.id)
+        .await
+        .map_err(map_admin_err)?;
+    if outcome.ok {
+        tracing::warn!(
+            actor = %auth_user.username,
+            target_user_id = id,
+            "admin deleted user"
+        );
+        Ok(Json(OkResponse {
+            ok: true,
+            error: None,
+            deleted: None,
+        }))
+    } else {
+        Ok(Json(OkResponse {
+            ok: false,
+            error: outcome.error_msg,
+            deleted: None,
+        }))
+    }
+}
+
+/// PUT /admin/users/{id}/password — 重置密码
+#[derive(Deserialize)]
+pub struct ResetPasswordRequest {
+    pub password: String,
+}
+
+pub async fn reset_user_password(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    SafeJson(req): SafeJson<ResetPasswordRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let outcome = state
+        .admin_service
+        .reset_user_password(id, &req.password)
+        .await
+        .map_err(map_admin_err)?;
+    if outcome.ok {
+        tracing::warn!(
+            actor = %auth_user.username,
+            target_user_id = id,
+            "admin reset user password (all tokens invalidated)"
+        );
+    }
+    Ok(Json(OkResponse {
+        ok: outcome.ok,
+        error: outcome.error_msg,
+        deleted: None,
+    }))
+}
+
+/// PUT /admin/users/{id}/admin — 切换管理员权限
+pub async fn toggle_user_admin(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let outcome = state
+        .admin_service
+        .toggle_user_admin(id, auth_user.id)
+        .await
+        .map_err(map_admin_err)?;
+    if outcome.ok {
+        tracing::warn!(
+            actor = %auth_user.username,
+            target_user_id = id,
+            new_role = ?outcome.new_role,
+            "admin toggled user admin status"
+        );
+    }
+    Ok(Json(OkResponse {
+        ok: outcome.ok,
+        error: outcome.error_msg,
+        deleted: None,
+    }))
+}
+
+/// PUT /admin/users/{id}/approve — 审批用户
+#[derive(Deserialize)]
+pub struct ApproveRequest {
+    pub approved: bool,
+}
+
+pub async fn approve_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    SafeJson(req): SafeJson<ApproveRequest>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let outcome = state
+        .admin_service
+        .approve_user(id, req.approved)
+        .await
+        .map_err(map_admin_err)?;
+    tracing::info!(
+        actor = %auth_user.username,
+        target_user_id = id,
+        approved = req.approved,
+        "admin set user approval"
+    );
+    Ok(Json(OkResponse {
+        ok: outcome.ok,
+        error: outcome.error_msg,
+        deleted: None,
+    }))
+}
+
+/// POST /admin/users/{id}/kick — 强制用户下线（删除所有 token）
+pub async fn kick_user(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let count = state
+        .admin_service
+        .kick_user(id)
+        .await
+        .map_err(map_admin_err)?;
+    tracing::warn!(
+        actor = %auth_user.username,
+        target_user_id = id,
+        tokens_deleted = count,
+        "admin kicked user offline"
+    );
+    Ok(Json(OkResponse {
+        ok: true,
+        error: None,
+        deleted: Some(count),
+    }))
+}

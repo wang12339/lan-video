@@ -17,6 +17,7 @@ pub struct AuthResponse {
 
 #[derive(Debug, Serialize)]
 pub struct UserInfoResponse {
+    pub id: i64,
     pub username: String,
     #[serde(rename = "isAdmin")]
     pub is_admin: bool,

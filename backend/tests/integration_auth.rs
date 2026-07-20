@@ -12,8 +12,9 @@ use lan_video_backend::services::auth_service::AuthService;
 fn auth_service(state: &lan_video_backend::state::AppState) -> AuthService {
     AuthService::new(
         state.user_repo.clone(),
-        state.video_service.clone(),
+        state.playback_service.clone(),
         state.rate_limiter.clone(),
+        state.ip_rate_limiter.clone(),
         state.config.clone(),
     )
 }
@@ -34,23 +35,32 @@ async fn test_register_login_get_user() {
 
     // Register
     let reg_result = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: password.into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: password.into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register should not error");
 
     assert!(reg_result.ok, "registration should succeed");
-    assert!(reg_result.token.is_some(), "registration should return a token");
+    assert!(
+        reg_result.token.is_some(),
+        "registration should return a token"
+    );
     let reg_token = reg_result.token.unwrap();
 
     // Login with correct credentials
     let login_result = svc
-        .login(&AuthRequest {
-            username: username.clone(),
-            password: password.into(),
-        })
+        .login(
+            &AuthRequest {
+                username: username.clone(),
+                password: password.into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("login should not error");
 
@@ -59,7 +69,10 @@ async fn test_register_login_get_user() {
     let login_token = login_result.token.unwrap();
 
     // Tokens should be different (each login creates a new token)
-    assert_ne!(reg_token, login_token, "login token should differ from register token");
+    assert_ne!(
+        reg_token, login_token,
+        "login token should differ from register token"
+    );
 
     // Get user info using the login token
     let user_info = svc
@@ -70,7 +83,7 @@ async fn test_register_login_get_user() {
     assert_eq!(user_info.username, username);
 
     // Cleanup
-    let pool = &state.db_pool;
+    let pool = state.video_repo.pool();
     cleanup_test_user(pool, &username).await;
 }
 
@@ -90,31 +103,40 @@ async fn test_login_wrong_password() {
 
     // Register first
     let reg = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: password.into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: password.into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
     assert!(reg.ok);
 
     // Login with wrong password
     let login = svc
-        .login(&AuthRequest {
-            username: username.clone(),
-            password: "wrongpassword".into(),
-        })
+        .login(
+            &AuthRequest {
+                username: username.clone(),
+                password: "wrongpassword".into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("login");
 
     assert!(!login.ok, "login with wrong password should fail");
-    assert!(login.token.is_none(), "wrong password should not return a token");
+    assert!(
+        login.token.is_none(),
+        "wrong password should not return a token"
+    );
     assert!(
         login.error.as_deref().is_some_and(|e| !e.is_empty()),
         "error message should be present"
     );
 
-    cleanup_test_user(&state.db_pool, &username).await;
+    cleanup_test_user(state.video_repo.pool(), &username).await;
 }
 
 #[tokio::test]
@@ -128,10 +150,13 @@ async fn test_login_nonexistent_user() {
     let svc = auth_service(&state);
 
     let login = svc
-        .login(&AuthRequest {
-            username: unique_username("ghost"),
-            password: "whatever123".into(),
-        })
+        .login(
+            &AuthRequest {
+                username: unique_username("ghost"),
+                password: "whatever123".into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("login");
 
@@ -153,10 +178,13 @@ async fn test_register_short_password() {
     let username = unique_username("short_pw");
 
     let reg = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: "ab".into(), // too short
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: "ab".into(), // too short
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
 
@@ -178,26 +206,32 @@ async fn test_register_duplicate_username() {
 
     // First registration
     let reg1 = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: password.into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: password.into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
     assert!(reg1.ok, "first registration should succeed");
 
     // Second registration with same username
     let reg2 = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: password.into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: password.into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
     assert!(!reg2.ok, "duplicate registration should fail");
     assert!(reg2.token.is_none());
 
-    cleanup_test_user(&state.db_pool, &username).await;
+    cleanup_test_user(state.video_repo.pool(), &username).await;
 }
 
 // ── Rate limiting on login ──
@@ -215,10 +249,13 @@ async fn test_rate_limiting_on_login() {
 
     // Register a user first
     let reg = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: "password123".into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: "password123".into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
     assert!(reg.ok);
@@ -227,10 +264,13 @@ async fn test_rate_limiting_on_login() {
     // The rate limiter allows 5 attempts in a 60s window
     for i in 0..6 {
         let result = svc
-            .login(&AuthRequest {
-                username: username.clone(),
-                password: "wrongpassword".into(),
-            })
+            .login(
+                &AuthRequest {
+                    username: username.clone(),
+                    password: "wrongpassword".into(),
+                },
+                "127.0.0.1",
+            )
             .await;
 
         match result {
@@ -244,13 +284,17 @@ async fn test_rate_limiting_on_login() {
             }
             Err(_) => {
                 // Rate limited — this is expected after too many attempts
-                assert!(i >= 4, "should not be rate limited before 5 attempts, got error at attempt {}", i);
+                assert!(
+                    i >= 4,
+                    "should not be rate limited before 5 attempts, got error at attempt {}",
+                    i
+                );
                 break;
             }
         }
     }
 
-    cleanup_test_user(&state.db_pool, &username).await;
+    cleanup_test_user(state.video_repo.pool(), &username).await;
 }
 
 // ── Logout ──
@@ -268,17 +312,20 @@ async fn test_logout() {
 
     // Register
     let reg = svc
-        .register(&AuthRequest {
-            username: username.clone(),
-            password: "password123".into(),
-        })
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: "password123".into(),
+            },
+            "127.0.0.1",
+        )
         .await
         .expect("register");
     assert!(reg.ok);
     let token = reg.token.unwrap();
 
     // Logout
-    svc.logout(Some(&token)).await;
+    svc.logout(Some(username.as_str()), Some(&token)).await;
 
     // Token should no longer work — find_user_by_token should return None
     let found = state
@@ -288,5 +335,5 @@ async fn test_logout() {
         .expect("query");
     assert!(found.is_none(), "token should be invalid after logout");
 
-    cleanup_test_user(&state.db_pool, &username).await;
+    cleanup_test_user(state.video_repo.pool(), &username).await;
 }

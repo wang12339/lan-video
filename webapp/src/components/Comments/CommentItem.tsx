@@ -105,7 +105,7 @@ export default function CommentItem({ comment, onDelete, videoId }: Props) {
 
         {comment.id != null && (
           <button className="show-replies-btn" onClick={toggleReplies}>
-            {expanded ? '收起回复' : '查看回复'}
+            {expanded ? t('comments.hideReplies') : t('comments.showReplies')}
           </button>
         )}
 

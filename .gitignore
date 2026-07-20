@@ -18,12 +18,10 @@ local.properties
 *.log
 *.pid
 
-# Release signing (keep private!)
-app/release.keystore
-app/keystore.properties
-
 # TLS certificates (self-signed test certs, regenerate per-device)
 **/certs/
 *.pem
 backend/gen-cert.sh
 backend/gen_cert.sh
+node_modules/
+webapp/dist/

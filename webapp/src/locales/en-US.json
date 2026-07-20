@@ -139,7 +139,9 @@
     "justNow": "Just now",
     "minutesAgo": "{{n}} min ago",
     "hoursAgo": "{{n}}h ago",
-    "daysAgo": "{{n}}d ago"
+    "daysAgo": "{{n}}d ago",
+    "showReplies": "Show replies",
+    "hideReplies": "Hide replies"
   },
   "admin": {
     "title": "Admin",

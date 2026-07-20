@@ -1,0 +1,12 @@
+{"timestamp":"2026-07-06T13:08:26.521041Z","level":"WARN","fields":{"message":"SENTRY_DSN not set — Sentry disabled"},"target":"lan_video_backend"}
+{"timestamp":"2026-07-06T13:08:26.521579Z","level":"WARN","fields":{"message":"DATABASE_URL not set, using default (set .env for production)"},"target":"lan_video_backend::config"}
+{"timestamp":"2026-07-06T13:08:26.531859Z","level":"INFO","fields":{"message":"Database connection pool established"},"target":"lan_video_backend::db"}
+{"timestamp":"2026-07-06T13:08:26.532310Z","level":"INFO","fields":{"message":"relation \"_schema_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-07-06T13:08:26.535933Z","level":"INFO","fields":{"message":"Starting thumbnail backfill for videos without covers..."},"target":"lan_video_backend::app"}
+{"timestamp":"2026-07-06T13:08:26.537265Z","level":"INFO","fields":{"message":"Atmos Video server starting on http://0.0.0.0:8082"},"target":"lan_video_backend"}
+{"timestamp":"2026-07-06T13:08:26.537276Z","level":"INFO","fields":{"message":"Media root: ./media"},"target":"lan_video_backend"}
+{"timestamp":"2026-07-06T13:08:27.029647Z","level":"INFO","fields":{"message":"Thumbnail backfill complete: 0 generated, 0 errors"},"target":"lan_video_backend::app"}
+{"timestamp":"2026-07-06T13:10:26.109881Z","level":"ERROR","fields":{"message":"response failed","classification":"Status code: 500 Internal Server Error","latency":"8 ms"},"target":"tower_http::trace::on_failure","span":{"request_id":"d2cb85ac-a265-4139-afcd-daf24fa4ac98","name":"request"},"spans":[{"request_id":"d2cb85ac-a265-4139-afcd-daf24fa4ac98","name":"request"}]}
+{"timestamp":"2026-07-06T13:13:13.328142Z","level":"ERROR","fields":{"message":"response failed","classification":"Status code: 500 Internal Server Error","latency":"3 ms"},"target":"tower_http::trace::on_failure"}
+{"timestamp":"2026-07-06T13:13:30.551411Z","level":"INFO","fields":{"message":"shutdown signal received, starting graceful shutdown"},"target":"lan_video_backend"}
+{"timestamp":"2026-07-06T13:13:30.551561Z","level":"INFO","fields":{"message":"Server shutdown complete"},"target":"lan_video_backend"}

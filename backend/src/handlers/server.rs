@@ -1,15 +1,11 @@
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::Json;
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::state::AppState;
-
-/// Server start time for uptime reporting
-static START_TIME: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
 
 #[derive(Serialize)]
 pub struct ServerInfo {
@@ -17,10 +13,21 @@ pub struct ServerInfo {
 }
 
 #[derive(Serialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub db: String,
+pub struct MetricsResponse {
     pub uptime_secs: u64,
+    pub http_requests_total: u64,
+    pub http_request_duration_seconds: f64,
+    pub video_views_total: u64,
+    pub video_uploads_total: u64,
+    pub video_deletes_total: u64,
+    pub auth_login_total: u64,
+    pub auth_login_failed_total: u64,
+    pub auth_register_total: u64,
+    pub cache_hits_total: u64,
+    pub cache_misses_total: u64,
+    pub active_connections: f64,
+    pub database_pool_size: f64,
+    pub database_pool_active: f64,
 }
 
 pub async fn server_info() -> Json<ServerInfo> {
@@ -31,32 +38,55 @@ pub async fn server_info() -> Json<ServerInfo> {
 
 /// GET /health — liveness + readiness probe
 ///
-/// Pings the database with `SELECT 1`. Returns 200 with `{"status":"ok","db":"ok",...}`
-/// or 503 with `{"status":"degraded","db":"unreachable",...}` if the DB is down.
+/// Minimal health endpoint for load balancer / k8s probes.
+/// Returns 200 on success, 503 on failure. No sensitive info leaked.
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let uptime_secs = START_TIME.elapsed().as_secs();
+    let db_ok = state.user_repo.count_users().await.is_ok();
 
-    match sqlx::query("SELECT 1").execute(&state.db_pool).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(HealthResponse {
-                status: "ok".into(),
-                db: "ok".into(),
-                uptime_secs,
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!("Health check DB ping failed: {}", e);
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(HealthResponse {
-                    status: "degraded".into(),
-                    db: "unreachable".into(),
-                    uptime_secs,
-                }),
-            )
-                .into_response()
-        }
+    if db_ok {
+        (StatusCode::OK, "ok").into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable").into_response()
     }
+}
+
+/// GET /metrics — Prometheus metrics endpoint
+///
+/// Returns JSON with current metrics for monitoring and alerting.
+pub async fn metrics(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
+    let metrics = &state.metrics;
+
+    Json(MetricsResponse {
+        uptime_secs: metrics.get_uptime_seconds(),
+        http_requests_total: metrics.http_requests_total.get(),
+        http_request_duration_seconds: metrics.http_request_duration_seconds.get_sample_sum(),
+        video_views_total: metrics.video_views_total.get(),
+        video_uploads_total: metrics.video_uploads_total.get(),
+        video_deletes_total: metrics.video_deletes_total.get(),
+        auth_login_total: metrics.auth_login_total.get(),
+        auth_login_failed_total: metrics.auth_login_failed_total.get(),
+        auth_register_total: metrics.auth_register_total.get(),
+        cache_hits_total: metrics.cache_hits_total.get(),
+        cache_misses_total: metrics.cache_misses_total.get(),
+        active_connections: metrics.active_connections.get(),
+        database_pool_size: metrics.database_pool_size.get(),
+        database_pool_active: metrics.database_pool_active.get(),
+    })
+}
+
+/// GET /metrics/prometheus — Prometheus text format metrics
+///
+/// Returns metrics in Prometheus text format for scraping.
+pub async fn metrics_prometheus(State(state): State<Arc<AppState>>) -> String {
+    state.metrics.encode_metrics()
+}
+
+/// GET /docs/openapi.json — OpenAPI specification
+pub async fn openapi_spec() -> Json<serde_json::Value> {
+    Json(crate::openapi::spec())
+}
+
+/// GET /docs — redirect to OpenAPI spec
+pub async fn docs_redirect() -> Redirect {
+    Redirect::permanent("/docs/openapi.json")
 }

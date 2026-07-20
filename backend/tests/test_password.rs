@@ -87,5 +87,8 @@ fn test_password_different_hashes_still_verify() {
 #[test]
 fn test_password_hash_format() {
     let hash = password::hash("test").unwrap();
-    assert!(hash.starts_with("$argon2"), "hash should use argon2 algorithm");
+    assert!(
+        hash.starts_with("$argon2"),
+        "hash should use argon2 algorithm"
+    );
 }

@@ -1,5 +1,6 @@
 .comments-section {
-  margin-top: 24px;
+  margin-top: 32px;
+  padding: 0 4px;
 }
 
 .comments-title {
@@ -16,15 +17,15 @@
 
 .comment-input {
   flex: 1;
-  padding: 10px 14px;
-  background: var(--bg2);
+  padding: 12px 16px;
+  background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
   resize: vertical;
   font-family: inherit;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .comment-input:focus {
@@ -64,6 +65,9 @@
 .comment-item {
   display: flex;
   gap: 12px;
+  padding: 12px;
+  background: var(--bg2);
+  border-radius: var(--radius-sm);
 }
 
 .comment-avatar img {
@@ -105,8 +109,8 @@
 }
 
 .comment-user {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--text);
 }
 
@@ -116,9 +120,9 @@
 }
 
 .comment-text {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text2);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
   margin: 0;
   word-break: break-word;
 }
@@ -189,8 +193,9 @@
   display: flex;
   gap: 8px;
   margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 10px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
 }
 
 .reply-avatar img {

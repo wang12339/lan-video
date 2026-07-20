@@ -1,5 +1,10 @@
-pub mod auth;
-pub mod videos;
 pub mod admin;
+pub mod auth;
+pub mod comments;
 pub mod playback;
+pub mod playlists;
+pub mod recommendations;
 pub mod server;
+pub mod shares;
+pub mod tags;
+pub mod videos;

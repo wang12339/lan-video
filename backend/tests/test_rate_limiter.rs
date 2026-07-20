@@ -9,8 +9,8 @@ async fn test_rate_limiter_blocks_after_max() {
     let limiter = RateLimiter::new();
     let key = "test_blocks_after_max";
 
-    // First 4 attempts should succeed (max_attempts = 5, block triggers at count >= 5)
-    for i in 0..4 {
+    // First 2 attempts should succeed (max_attempts = 3, block triggers at count >= 3)
+    for i in 0..2 {
         assert!(
             limiter.check(key).await.is_ok(),
             "attempt {} should be allowed",
@@ -18,16 +18,16 @@ async fn test_rate_limiter_blocks_after_max() {
         );
     }
 
-    // 5th attempt should trigger block
+    // 3rd attempt should trigger block
     assert!(
         limiter.check(key).await.is_err(),
-        "5th attempt should be blocked (rate limited)"
+        "3rd attempt should be blocked (rate limited)"
     );
 
     // Subsequent attempts should also be blocked
     assert!(
         limiter.check(key).await.is_err(),
-        "6th attempt should still be blocked"
+        "4th attempt should still be blocked"
     );
 }
 
@@ -62,7 +62,10 @@ async fn test_rate_limiter_independent_keys() {
     for _ in 0..5 {
         let _ = limiter.check("key_a").await;
     }
-    assert!(limiter.check("key_a").await.is_err(), "key_a should be blocked");
+    assert!(
+        limiter.check("key_a").await.is_err(),
+        "key_a should be blocked"
+    );
 
     // key_b should still be allowed
     assert!(
@@ -81,7 +84,10 @@ async fn test_rate_limiter_reset() {
     for _ in 0..5 {
         let _ = limiter.check(key).await;
     }
-    assert!(limiter.check(key).await.is_err(), "should be blocked before reset");
+    assert!(
+        limiter.check(key).await.is_err(),
+        "should be blocked before reset"
+    );
 
     // Reset
     limiter.reset(key).await;
@@ -140,9 +146,7 @@ async fn test_rate_limiter_consistency() {
     limiter.reset(key).await; // cleared
     assert!(limiter.check(key).await.is_ok()); // count = 1 (fresh)
     assert!(limiter.check(key).await.is_ok()); // count = 2
-    assert!(limiter.check(key).await.is_ok()); // count = 3
-    assert!(limiter.check(key).await.is_ok()); // count = 4
-    assert!(limiter.check(key).await.is_err()); // count = 5, blocked
+    assert!(limiter.check(key).await.is_err()); // count = 3, blocked
 }
 
 /// Test that check_with with very large max_attempts never blocks

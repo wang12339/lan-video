@@ -1,5 +1,6 @@
-# atmos-android CI/CD Pipeline
-# Triggers: push to main + PRs, produces APK artifacts
+# Atmos CI/CD Pipeline
+# Triggers: push to main + PRs
+# Jobs: backend (Rust) + frontend (React/Vite)
 
 name: CI
 
@@ -12,7 +13,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
 jobs:
   # ─── Backend: Rust build + test ───────────────────────────────
@@ -69,93 +69,47 @@ jobs:
           DATABASE_URL: postgres://lan_video:lan_video@localhost:5432/lan_video
         run: cargo test
 
-  # ─── Android: Build + test ────────────────────────────────────
-  android:
-    name: Android (Kotlin)
+  # ─── Security audit ──────────────────────────────────────────
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        working-directory: ./backend
+        run: cargo audit
+
+  # ─── Frontend: TypeScript + Vite build ────────────────────────
+  frontend:
+    name: Frontend (React)
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          java-version: 17
-          distribution: temurin
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: webapp/package-lock.json
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: Install dependencies
+        working-directory: ./webapp
+        run: npm ci
 
-      - name: Grant execute permission
-        run: chmod +x gradlew
+      - name: TypeScript check
+        working-directory: ./webapp
+        run: npx tsc --noEmit
 
-      - name: Build Debug APK + run tests
-        run: ./gradlew assembleDebug testDebugUnitTest
+      - name: Run tests
+        working-directory: ./webapp
+        run: npm test
 
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: atmos-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
-
-  # ─── Release: Signed APK (tags only) ──────────────────────────
-  release:
-    name: Release APK
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [backend, android]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: 17
-          distribution: temurin
-
-      - name: Decode Keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
-
-      - name: Create keystore.properties
-        run: |
-          cat > app/keystore.properties <<EOF
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          storeFile=release.keystore
-          EOF
-
-      - name: Grant execute permission
-        run: chmod +x gradlew
-
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
-        env:
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: atmos-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
-          retention-days: 90
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: app/build/outputs/apk/release/app-release.apk
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        working-directory: ./webapp
+        run: npm run build

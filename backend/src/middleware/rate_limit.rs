@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 
-const RATE_LIMIT_MAX_ATTEMPTS: u32 = 5;
+// Per-username: 3 attempts per 60s, 10-minute block after exceeding
+const RATE_LIMIT_MAX_ATTEMPTS: u32 = 3;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const RATE_LIMIT_BLOCK_SECS: u64 = 600;
 
@@ -35,25 +36,24 @@ impl RateLimiter {
     /// Atomically check and increment rate limit for the given key.
     /// Returns Ok(()) if allowed, Err(()) if rate-limited.
     pub async fn check(&self, key: &str) -> Result<(), ()> {
-        self.check_with(key, RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_SECS, RATE_LIMIT_BLOCK_SECS).await
+        self.check_with(
+            key,
+            RATE_LIMIT_MAX_ATTEMPTS,
+            RATE_LIMIT_WINDOW_SECS,
+            RATE_LIMIT_BLOCK_SECS,
+        )
+        .await
     }
 
     /// Like `check` but with custom parameters.
-    pub async fn check_with(&self, key: &str, max_attempts: u32, window_secs: u64, block_secs: u64) -> Result<(), ()> {
+    pub async fn check_with(
+        &self,
+        key: &str,
+        max_attempts: u32,
+        window_secs: u64,
+        block_secs: u64,
+    ) -> Result<(), ()> {
         let now = Instant::now();
-
-        // Lazily purge expired entries every call (cheap scan on DashMap)
-        self.cache.retain(|_, (expires_at, entry)| {
-            if now >= *expires_at && entry.blocked_until.is_none() {
-                return false; // expired window, not blocked
-            }
-            if let Some(until) = entry.blocked_until {
-                if now >= until && now >= *expires_at {
-                    return false; // block expired and window expired
-                }
-            }
-            true
-        });
 
         // Atomic read-modify-write via DashMap::entry — holds write guard
         let mut slot = self.cache.entry(key.to_string()).or_insert_with(|| {
@@ -71,6 +71,7 @@ impl RateLimiter {
         // If blocked, reject
         if let Some(until) = entry.blocked_until {
             if now < until {
+                tracing::warn!(key = %key, "rate limited: blocked until {:?}", until);
                 return Err(());
             }
             // Block expired — reset count and clear block
@@ -89,6 +90,13 @@ impl RateLimiter {
 
         if entry.count >= max_attempts {
             entry.blocked_until = Some(now + Duration::from_secs(block_secs));
+            tracing::warn!(
+                key = %key,
+                count = entry.count,
+                max = max_attempts,
+                block_secs = block_secs,
+                "rate limit exceeded, blocking"
+            );
             Err(())
         } else {
             Ok(())
@@ -98,4 +106,33 @@ impl RateLimiter {
     pub async fn reset(&self, key: &str) {
         self.cache.remove(key);
     }
+
+    /// Remove expired entries to prevent memory leak.
+    /// Should be called periodically (e.g., every 5 minutes).
+    pub fn cleanup_expired(&self) {
+        let now = Instant::now();
+        self.cache.retain(|_, (expires_at, entry)| {
+            // Keep if not expired OR if blocked and block hasn't expired
+            if now < *expires_at {
+                return true;
+            }
+            if let Some(until) = entry.blocked_until {
+                now < until
+            } else {
+                false
+            }
+        });
+    }
+}
+
+/// Start a background task that periodically cleans up expired entries from both rate limiters.
+pub fn start_cleanup_task(limiter: RateLimiter, ip_limiter: RateLimiter) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(300)).await; // Every 5 minutes
+            limiter.cleanup_expired();
+            ip_limiter.cleanup_expired();
+            tracing::debug!("rate limiter cleanup completed");
+        }
+    });
 }

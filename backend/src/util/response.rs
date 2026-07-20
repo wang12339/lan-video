@@ -1,10 +1,12 @@
 use axum::{
     extract::{FromRequest, Request},
     http::StatusCode,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::fmt::Display;
 
 #[derive(Serialize, Debug)]
 pub struct ErrorResponse {
@@ -15,9 +17,61 @@ pub struct ErrorResponse {
 /// Use this instead of writing `(StatusCode, Json<ErrorResponse>)` everywhere.
 pub type HandlerResult<T> = Result<T, (StatusCode, Json<ErrorResponse>)>;
 
+/// Generic handler error that can carry a status code + message.
+/// Use this in new handlers instead of `(StatusCode, String)` to keep
+/// the API error envelope consistent.
+#[derive(Debug)]
+pub struct ApiHandlerError {
+    pub status: StatusCode,
+    pub message: String,
+}
+
+impl ApiHandlerError {
+    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, msg)
+    }
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_FOUND, msg)
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, msg)
+    }
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, msg)
+    }
+}
+
+impl From<sqlx::Error> for ApiHandlerError {
+    fn from(e: sqlx::Error) -> Self {
+        tracing::error!("sqlx error in handler: {}", e);
+        Self::internal("数据库错误")
+    }
+}
+
+impl From<(StatusCode, String)> for ApiHandlerError {
+    fn from((status, msg): (StatusCode, String)) -> Self {
+        Self::new(status, msg)
+    }
+}
+
+impl IntoResponse for ApiHandlerError {
+    fn into_response(self) -> Response {
+        error_response(self.status, self.message).into_response()
+    }
+}
+
 /// Helper to produce a consistent JSON error body across all handlers.
 /// Pattern: `(StatusCode, Json<ErrorResponse>)` — the standard axum tuple `IntoResponse`.
-pub fn error_response(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+pub fn error_response(
+    status: StatusCode,
+    msg: impl Into<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
     (status, Json(ErrorResponse { error: msg.into() }))
 }
 
@@ -51,8 +105,21 @@ pub fn internal_error(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse
     error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
 }
 
+/// Convenience: log the original error and return a generic 500 response.
+/// Use this instead of `map_err(|e| error_response(500, &e))` to avoid
+/// leaking internal error details to clients.
+pub fn internal_error_log(context: &str, err: &impl Display) -> (StatusCode, Json<ErrorResponse>) {
+    tracing::error!(context = %context, error = %err, "internal error");
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
+}
+
 /// JSON wrapper that sanitizes deserialization errors to avoid info leakage.
 /// Replace `Json<T>` with `SafeJson<T>` in handler signatures.
+///
+/// SECURITY: Strictly requires `Content-Type: application/json` (not
+/// `application/ld+json` or any other `+json` variant). Axum's `Json<T>`
+/// extractor accepts any `+json` MIME type, which can confuse
+/// content-negotiation logic in reverse proxies and middlewares.
 pub struct SafeJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for SafeJson<T>
@@ -64,6 +131,24 @@ where
     type Rejection = (StatusCode, Json<ErrorResponse>);
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // Reject non-standard JSON Content-Types.
+        let content_type = req
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let is_json = content_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("application/json");
+        if !is_json {
+            return Err(error_response(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported media type, expected application/json",
+            ));
+        }
         match Json::<T>::from_request(req, state).await {
             Ok(value) => Ok(SafeJson(value.0)),
             Err(rejection) => {
@@ -98,7 +183,8 @@ mod tests {
 
     #[test]
     fn test_error_response_into_string() {
-        let (status, body) = error_response(StatusCode::BAD_REQUEST, format!("invalid input: {}", 42));
+        let (status, body) =
+            error_response(StatusCode::BAD_REQUEST, format!("invalid input: {}", 42));
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body.0.error, "invalid input: 42");
     }

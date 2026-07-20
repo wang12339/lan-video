@@ -45,7 +45,10 @@ fn test_playback_request_deserialize_missing_fields() {
     // Missing required fields should fail deserialization
     let json = r#"{"video_id": 1}"#;
     let result = serde_json::from_str::<PlaybackHistoryRequest>(json);
-    assert!(result.is_err(), "missing position_ms and duration_ms should fail");
+    assert!(
+        result.is_err(),
+        "missing position_ms and duration_ms should fail"
+    );
 
     let json = r#"{"video_id": 1, "position_ms": 0}"#;
     let result = serde_json::from_str::<PlaybackHistoryRequest>(json);
@@ -59,7 +62,8 @@ fn test_playback_request_deserialize_missing_fields() {
 #[test]
 fn test_playback_request_deserialize_extra_fields() {
     // Extra fields should be ignored (serde default behavior)
-    let json = r#"{"video_id": 1, "position_ms": 100, "duration_ms": 200, "extra_field": "ignored"}"#;
+    let json =
+        r#"{"video_id": 1, "position_ms": 100, "duration_ms": 200, "extra_field": "ignored"}"#;
     let req: PlaybackHistoryRequest = serde_json::from_str(json).unwrap();
     assert_eq!(req.video_id, 1);
     assert_eq!(req.position_ms, 100);
@@ -71,7 +75,10 @@ fn test_playback_request_deserialize_wrong_types() {
     // String values for integer fields should fail
     let json = r#"{"video_id": "not_a_number", "position_ms": 0, "duration_ms": 0}"#;
     let result = serde_json::from_str::<PlaybackHistoryRequest>(json);
-    assert!(result.is_err(), "string video_id should fail deserialization");
+    assert!(
+        result.is_err(),
+        "string video_id should fail deserialization"
+    );
 }
 
 #[test]

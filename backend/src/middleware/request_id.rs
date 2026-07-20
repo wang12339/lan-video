@@ -1,9 +1,5 @@
-use axum::{
-    extract::Request,
-    http::HeaderValue,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Header name for the request ID
@@ -32,9 +28,9 @@ pub async fn request_id(mut req: Request, next: Next) -> Response {
 
     // Create a tracing span so all downstream logs share this ID
     let span = tracing::info_span!("request", request_id = %id);
-    let _guard = span.enter();
 
-    let mut res = next.run(req).await;
+    // Use Instrument to properly propagate the span to the downstream future
+    let mut res = next.run(req).instrument(span).await;
 
     // Set response header
     if let Ok(val) = HeaderValue::from_str(&id) {

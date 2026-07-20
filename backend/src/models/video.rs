@@ -1,26 +1,25 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoItem {
     pub id: i64,
     pub title: String,
     pub description: String,
-    #[serde(rename = "sourceType")]
     pub source_type: String,
-    #[serde(rename = "coverUrl")]
     pub cover_url: Option<String>,
-    #[serde(rename = "streamUrl")]
     pub stream_url: String,
-    #[serde(rename = "thumbUrl")]
     pub thumb_url: Option<String>,
     pub category: String,
     pub views: i64,
     pub duration: i64,
-    #[serde(rename = "watchPosition")]
     pub watch_position: Option<i64>,
+    #[serde(default)]
+    pub has_variants: bool,
+    pub uploader_id: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PagedVideoResponse {
     pub items: Vec<VideoItem>,
     pub total: i64,
@@ -36,6 +35,7 @@ pub struct VideoQuery {
     pub category: Option<String>,
     pub page: Option<i64>,
     pub size: Option<i64>,
+    pub uploader_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

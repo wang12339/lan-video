@@ -900,6 +900,374 @@ pub fn spec() -> serde_json::Value {
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
                 }
+            },
+            "/admin/videos/{id}/transcode": {
+                "post": {
+                    "summary": "Start video transcoding",
+                    "operationId": "startTranscode",
+                    "description": "Queue a video for background transcoding into multiple quality variants (2160p/1080p/720p/480p/360p)",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": false,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TranscodeRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Transcoding started",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "get": {
+                    "summary": "Get transcode status",
+                    "operationId": "getTranscodeStatus",
+                    "description": "Get transcoding status and available variants for a video",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Transcode status",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TranscodeStatusResponse" } } }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/videos/{id}/transcode/{resolution}": {
+                "delete": {
+                    "summary": "Delete a transcode variant",
+                    "operationId": "deleteVariant",
+                    "description": "Delete a specific transcoded variant and its physical file",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } },
+                        { "name": "resolution", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Variant deleted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/videos/{id}/transcode/cancel": {
+                "post": {
+                    "summary": "Cancel transcoding jobs",
+                    "operationId": "cancelTranscode",
+                    "description": "Cancel all pending/running transcoding jobs for a video",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Jobs cancelled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/tags": {
+                "get": {
+                    "summary": "List all tags",
+                    "operationId": "listTags",
+                    "description": "Get all available tags with usage count",
+                    "responses": {
+                        "200": {
+                            "description": "Tag list",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagListResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/tags/popular": {
+                "get": {
+                    "summary": "Get popular tags",
+                    "operationId": "getPopularTags",
+                    "description": "Get most frequently used tags (limit 20)",
+                    "responses": {
+                        "200": {
+                            "description": "Popular tags",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagListResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/tags/{id}": {
+                "get": {
+                    "summary": "Get tag by ID",
+                    "operationId": "getTag",
+                    "description": "Get a single tag with its usage count",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Tag details",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagResponse" } } }
+                        },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/tags": {
+                "post": {
+                    "summary": "Create a tag",
+                    "operationId": "createTag",
+                    "description": "Create a new tag. Name must be unique and 1-50 characters.",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagCreateRequest" } } }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Tag created",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagResponse" } } }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/tags/{id}": {
+                "put": {
+                    "summary": "Update a tag",
+                    "operationId": "updateTag",
+                    "description": "Update tag name and/or color",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagUpdateRequest" } } }
+                    },
+                    "responses": {
+                        "200": { "description": "Tag updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagResponse" } } } },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "delete": {
+                    "summary": "Delete a tag",
+                    "operationId": "deleteTag",
+                    "description": "Delete a tag and all its video associations",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Tag deleted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/{id}/tags": {
+                "get": {
+                    "summary": "Get tags for a video",
+                    "operationId": "getVideoTags",
+                    "description": "Get all tags assigned to a video",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Video tags",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TagListResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "post": {
+                    "summary": "Add tags to a video",
+                    "operationId": "addVideoTags",
+                    "description": "Add one or more tags to a video by tag IDs",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VideoTagRequest" } } }
+                    },
+                    "responses": {
+                        "200": { "description": "Tags added", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/{id}/tags/{tag_id}": {
+                "delete": {
+                    "summary": "Remove a tag from a video",
+                    "operationId": "removeVideoTag",
+                    "description": "Remove a specific tag from a video",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } },
+                        { "name": "tag_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Tag removed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/search": {
+                "get": {
+                    "summary": "Full-text search videos",
+                    "operationId": "searchVideos",
+                    "description": "Search videos using PostgreSQL full-text search with ranking. Supports Chinese tokenization.",
+                    "parameters": [
+                        { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Search query" },
+                        { "name": "page", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 }, "description": "Page number (0-indexed)" },
+                        { "name": "size", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 }, "description": "Results per page" }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Search results",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchResponse" } } }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/search/suggest": {
+                "get": {
+                    "summary": "Search suggestions",
+                    "operationId": "searchSuggest",
+                    "description": "Get search suggestions based on partial query",
+                    "parameters": [
+                        { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Partial search query" },
+                        { "name": "page", "in": "query", "schema": { "type": "integer", "default": 0 }, "description": "Page number" },
+                        { "name": "size", "in": "query", "schema": { "type": "integer", "default": 10, "maximum": 20 }, "description": "Max suggestions" }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Search suggestions",
+                            "content": { "application/json": { "schema": { "type": "array", "items": { "type": "string" } } } }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/recommendations": {
+                "get": {
+                    "summary": "Get personalized recommendations",
+                    "operationId": "getRecommendations",
+                    "description": "Get video recommendations based on the user's viewing history and category preferences",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Recommendations",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/recommendations/trending": {
+                "get": {
+                    "summary": "Get trending videos",
+                    "operationId": "getTrendingVideos",
+                    "description": "Get popular videos ranked by views and engagement",
+                    "responses": {
+                        "200": {
+                            "description": "Trending videos",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/recommendations/recent": {
+                "get": {
+                    "summary": "Get recent videos",
+                    "operationId": "getRecentVideos",
+                    "description": "Get most recently uploaded videos",
+                    "responses": {
+                        "200": {
+                            "description": "Recent videos",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/recommendations/similar/{video_id}": {
+                "get": {
+                    "summary": "Get similar videos",
+                    "operationId": "getSimilarVideos",
+                    "description": "Get videos similar to a specific video based on category matching",
+                    "parameters": [
+                        { "name": "video_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Similar videos",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/metrics": {
+                "get": {
+                    "summary": "Server metrics (JSON)",
+                    "operationId": "metrics",
+                    "description": "Returns server metrics in JSON format",
+                    "responses": {
+                        "200": {
+                            "description": "Server metrics",
+                            "content": { "application/json": { "schema": { "type": "object" } } }
+                        }
+                    }
+                }
+            },
+            "/metrics/prometheus": {
+                "get": {
+                    "summary": "Prometheus metrics",
+                    "operationId": "metricsPrometheus",
+                    "description": "Returns server metrics in Prometheus text exposition format",
+                    "responses": {
+                        "200": {
+                            "description": "Prometheus metrics text",
+                            "content": { "text/plain": { "schema": { "type": "string" } } }
+                        }
+                    }
+                }
             }
         },
         "components": {
@@ -1170,6 +1538,146 @@ pub fn spec() -> serde_json::Value {
                         }
                     },
                     "required": ["existing_indices"]
+                },
+                "TranscodeRequest": {
+                    "type": "object",
+                    "properties": {
+                        "resolutions": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Target resolutions (e.g. [\"1080p\", \"720p\", \"480p\"])"
+                        }
+                    },
+                    "required": ["resolutions"]
+                },
+                "TranscodeStatusResponse": {
+                    "type": "object",
+                    "properties": {
+                        "videoId": { "type": "integer" },
+                        "variants": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/VariantInfo" }
+                        },
+                        "pendingJobs": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/JobInfo" }
+                        }
+                    },
+                    "required": ["videoId", "variants", "pendingJobs"]
+                },
+                "VariantInfo": {
+                    "type": "object",
+                    "properties": {
+                        "resolution": { "type": "string", "description": "Resolution label (e.g. 1080p)" },
+                        "filePath": { "type": "string", "description": "File path" },
+                        "fileSize": { "type": "integer", "description": "File size in bytes" },
+                        "bitrate": { "type": "integer", "nullable": true, "description": "Bitrate in bps" }
+                    },
+                    "required": ["resolution", "filePath", "fileSize"]
+                },
+                "JobInfo": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "resolution": { "type": "string", "description": "Target resolution" },
+                        "status": { "type": "string", "enum": ["pending", "running", "completed", "failed"], "description": "Job status" },
+                        "progress": { "type": "integer", "description": "Progress percentage 0-100" }
+                    },
+                    "required": ["id", "resolution", "status", "progress"]
+                },
+                "TagResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "name": { "type": "string" },
+                        "color": { "type": "string", "nullable": true, "description": "Hex color code (e.g. #3b82f6)" },
+                        "usageCount": { "type": "integer" }
+                    },
+                    "required": ["id", "name", "usageCount"]
+                },
+                "TagListResponse": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/TagResponse" }
+                        }
+                    },
+                    "required": ["tags"]
+                },
+                "TagCreateRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "minLength": 1, "maxLength": 50, "description": "Tag name (unique, 1-50 characters)" },
+                        "color": { "type": "string", "nullable": true, "description": "Optional hex color code" }
+                    },
+                    "required": ["name"]
+                },
+                "TagUpdateRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "nullable": true, "description": "New tag name" },
+                        "color": { "type": "string", "nullable": true, "description": "New hex color code" }
+                    }
+                },
+                "VideoTagRequest": {
+                    "type": "object",
+                    "properties": {
+                        "tagIds": {
+                            "type": "array",
+                            "items": { "type": "integer" },
+                            "description": "Array of tag IDs to assign"
+                        }
+                    },
+                    "required": ["tagIds"]
+                },
+                "SearchResponse": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/SearchResultItem" }
+                        },
+                        "total": { "type": "integer" },
+                        "page": { "type": "integer" },
+                        "size": { "type": "integer" }
+                    },
+                    "required": ["items", "total", "page", "size"]
+                },
+                "SearchResultItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "title": { "type": "string" },
+                        "description": { "type": "string", "nullable": true },
+                        "category": { "type": "string", "nullable": true },
+                        "rank": { "type": "number", "description": "Search relevance rank score" },
+                        "headline": { "type": "string", "nullable": true, "description": "Highlighted search result snippet" }
+                    },
+                    "required": ["id", "title", "rank"]
+                },
+                "RecommendationResponse": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/RecommendationItem" }
+                        },
+                        "total": { "type": "integer" }
+                    },
+                    "required": ["items", "total"]
+                },
+                "RecommendationItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "title": { "type": "string" },
+                        "category": { "type": "string", "nullable": true },
+                        "thumbUrl": { "type": "string", "nullable": true },
+                        "score": { "type": "number", "description": "Recommendation relevance score" },
+                        "reason": { "type": "string", "description": "Human-readable reason for recommendation" }
+                    },
+                    "required": ["id", "title", "score", "reason"]
                 }
             }
         }

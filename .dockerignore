@@ -1,7 +1,9 @@
-.git/
-backend/media/*
-backend/target/*
-*.log
-*.pid
-.DS_Store
-._*
+**/target
+**/node_modules
+.git
+*.md
+backend/data
+backend/logs
+media
+logs
+data

@@ -26,6 +26,7 @@ async fn test_add_external_video() {
             Some("test"),
             "https://example.com/video.mp4",
             Some("https://example.com/cover.jpg"),
+            None,
         )
         .await
         .expect("add_external_video");
@@ -43,10 +44,13 @@ async fn test_add_external_video() {
     assert_eq!(video.title, title);
     assert_eq!(video.source_type, "external");
     assert_eq!(video.stream_url, "https://example.com/video.mp4");
-    assert_eq!(video.cover_url, Some("https://example.com/cover.jpg".into()));
+    assert_eq!(
+        video.cover_url,
+        Some("https://example.com/cover.jpg".into())
+    );
     assert_eq!(video.category, "test");
 
-    cleanup_test_video(&state.db_pool, id).await;
+    cleanup_test_video(state.video_repo.pool(), id).await;
 }
 
 // ── List videos with pagination ──
@@ -72,6 +76,7 @@ async fn test_list_videos_pagination() {
                 Some("pagetest"),
                 &format!("https://example.com/{}.mp4", i),
                 None,
+                None,
             )
             .await
             .expect("add video");
@@ -81,7 +86,7 @@ async fn test_list_videos_pagination() {
     // List with size=2, page=0
     let (items_page0, total) = state
         .video_service
-        .list_videos_paged(0, 2, Some(&tag), None, None, None)
+        .list_videos_paged(0, 2, Some(&tag), None, None, None, None)
         .await
         .expect("list page 0");
 
@@ -91,7 +96,7 @@ async fn test_list_videos_pagination() {
     // List with size=2, page=1
     let (items_page1, total2) = state
         .video_service
-        .list_videos_paged(1, 2, Some(&tag), None, None, None)
+        .list_videos_paged(1, 2, Some(&tag), None, None, None, None)
         .await
         .expect("list page 1");
 
@@ -110,7 +115,7 @@ async fn test_list_videos_pagination() {
     }
 
     for id in ids {
-        cleanup_test_video(&state.db_pool, id).await;
+        cleanup_test_video(state.video_repo.pool(), id).await;
     }
 }
 
@@ -134,6 +139,7 @@ async fn test_video_search() {
             Some("searchtest"),
             "https://example.com/search.mp4",
             None,
+            None,
         )
         .await
         .expect("add video");
@@ -141,7 +147,7 @@ async fn test_video_search() {
     // Search by unique substring
     let (results, _) = state
         .video_service
-        .list_videos_paged(0, 10, Some(&unique), None, None, None)
+        .list_videos_paged(0, 10, Some(&unique), None, None, None, None)
         .await
         .expect("search");
 
@@ -153,14 +159,7 @@ async fn test_video_search() {
     // Search for something that doesn't exist
     let (empty, _) = state
         .video_service
-        .list_videos_paged(
-            0,
-            10,
-            Some("zzz_nonexistent_query_zzz"),
-            None,
-            None,
-            None,
-        )
+        .list_videos_paged(0, 10, Some("zzz_nonexistent_query_zzz"), None, None, None, None)
         .await
         .expect("empty search");
 
@@ -169,7 +168,7 @@ async fn test_video_search() {
         "search for nonexistent string should return empty"
     );
 
-    cleanup_test_video(&state.db_pool, id).await;
+    cleanup_test_video(state.video_repo.pool(), id).await;
 }
 
 // ── Toggle like (atomic CTE) ──
@@ -187,7 +186,7 @@ async fn test_toggle_like() {
 
     // Initially not liked
     let liked = state
-        .video_service
+        .playback_service
         .is_liked(&username, video_id)
         .await
         .expect("is_liked");
@@ -195,7 +194,7 @@ async fn test_toggle_like() {
 
     // Toggle on → liked
     let liked = state
-        .video_service
+        .playback_service
         .toggle_like(&username, video_id)
         .await
         .expect("toggle_like");
@@ -203,7 +202,7 @@ async fn test_toggle_like() {
 
     // Verify
     let liked = state
-        .video_service
+        .playback_service
         .is_liked(&username, video_id)
         .await
         .expect("is_liked");
@@ -211,7 +210,7 @@ async fn test_toggle_like() {
 
     // Toggle off → not liked
     let liked = state
-        .video_service
+        .playback_service
         .toggle_like(&username, video_id)
         .await
         .expect("toggle_like");
@@ -219,15 +218,15 @@ async fn test_toggle_like() {
 
     // Verify
     let liked = state
-        .video_service
+        .playback_service
         .is_liked(&username, video_id)
         .await
         .expect("is_liked");
     assert!(!liked, "is_liked should return false after toggle off");
 
     // Cleanup
-    cleanup_like(&state.db_pool, &username, video_id).await;
-    cleanup_test_video(&state.db_pool, video_id).await;
+    cleanup_like(state.video_repo.pool(), &username, video_id).await;
+    cleanup_test_video(state.video_repo.pool(), video_id).await;
 }
 
 // ── Toggle favorite (atomic CTE) ──
@@ -245,7 +244,7 @@ async fn test_toggle_favorite() {
 
     // Initially not favorited
     let fav = state
-        .video_service
+        .playback_service
         .is_favorited(&username, video_id)
         .await
         .expect("is_favorited");
@@ -253,7 +252,7 @@ async fn test_toggle_favorite() {
 
     // Toggle on
     let fav = state
-        .video_service
+        .playback_service
         .toggle_favorite(&username, video_id)
         .await
         .expect("toggle_favorite");
@@ -261,7 +260,7 @@ async fn test_toggle_favorite() {
 
     // Verify
     let fav = state
-        .video_service
+        .playback_service
         .is_favorited(&username, video_id)
         .await
         .expect("is_favorited");
@@ -269,14 +268,14 @@ async fn test_toggle_favorite() {
 
     // Toggle off
     let fav = state
-        .video_service
+        .playback_service
         .toggle_favorite(&username, video_id)
         .await
         .expect("toggle_favorite");
     assert!(!fav, "should not be favorited after second toggle");
 
-    cleanup_favorite(&state.db_pool, &username, video_id).await;
-    cleanup_test_video(&state.db_pool, video_id).await;
+    cleanup_favorite(state.video_repo.pool(), &username, video_id).await;
+    cleanup_test_video(state.video_repo.pool(), video_id).await;
 }
 
 // ── Playback history ──
@@ -293,53 +292,48 @@ async fn test_playback_history() {
     let video_id = create_test_video(&state, "playback").await;
 
     // Initially no history
-    let position = state
-        .video_service
-        .get_playback_position(&username, video_id)
+    let data = state
+        .playback_service
+        .get_playback_data(&username, video_id)
         .await
-        .expect("get position");
-    assert!(position.is_none(), "should have no playback position initially");
+        .expect("get data");
+    assert!(data.is_none(), "should have no playback data initially");
 
     // Update playback
     state
-        .video_service
+        .playback_service
         .update_playback(&username, video_id, 30_000, 120_000)
         .await
         .expect("update_playback");
 
     // Verify position
-    let position = state
-        .video_service
-        .get_playback_position(&username, video_id)
+    let (position, duration) = state
+        .playback_service
+        .get_playback_data(&username, video_id)
         .await
-        .expect("get position");
-    assert_eq!(position, Some(30_000), "position should be 30000ms");
-
-    // Verify duration
-    let duration = state
-        .video_service
-        .get_playback_duration(&username, video_id)
-        .await
-        .expect("get duration");
-    assert_eq!(duration, Some(120_000), "duration should be 120000ms");
+        .expect("get data")
+        .unwrap();
+    assert_eq!(position, 30_000, "position should be 30000ms");
+    assert_eq!(duration, 120_000, "duration should be 120000ms");
 
     // Update again (upsert)
     state
-        .video_service
+        .playback_service
         .update_playback(&username, video_id, 60_000, 120_000)
         .await
         .expect("update_playback again");
 
-    let position = state
-        .video_service
-        .get_playback_position(&username, video_id)
+    let (position, _) = state
+        .playback_service
+        .get_playback_data(&username, video_id)
         .await
-        .expect("get position after update");
-    assert_eq!(position, Some(60_000), "position should be updated to 60000ms");
+        .expect("get data after update")
+        .unwrap();
+    assert_eq!(position, 60_000, "position should be updated to 60000ms");
 
     // Check history list
     let history = state
-        .video_service
+        .playback_service
         .get_playback_history(&username)
         .await
         .expect("get history");
@@ -350,8 +344,8 @@ async fn test_playback_history() {
     );
 
     // Cleanup
-    cleanup_playback(&state.db_pool, &username).await;
-    cleanup_test_video(&state.db_pool, video_id).await;
+    cleanup_playback(state.video_repo.pool(), &username).await;
+    cleanup_test_video(state.video_repo.pool(), video_id).await;
 }
 
 // ── Increment views ──
@@ -391,7 +385,7 @@ async fn test_increment_views() {
 
     assert_eq!(video.views, initial_views + 1, "views should increase by 1");
 
-    cleanup_test_video(&state.db_pool, video_id).await;
+    cleanup_test_video(state.video_repo.pool(), video_id).await;
 }
 
 // ── Helper functions ──
@@ -405,6 +399,7 @@ async fn create_test_video(state: &lan_video_backend::state::AppState, prefix: &
             Some("integration test"),
             Some("integration"),
             &format!("https://example.com/{}.mp4", unique_username(prefix)),
+            None,
             None,
         )
         .await
