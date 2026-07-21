@@ -245,6 +245,7 @@ pub async fn build_router(config: AppConfig) -> Router {
                 delete(handlers::shares::revoke_my_share),
             )
             .route("/auth/logout", post(handlers::auth::logout))
+            .route("/admin/track", post(handlers::admin::track_action))
             .route(
                 "/recommendations",
                 get(handlers::recommendations::get_recommendations),
@@ -468,7 +469,6 @@ pub async fn build_router(config: AppConfig) -> Router {
             .route("/admin/system", get(handlers::admin::system_info))
             .route("/admin/logs", get(handlers::admin::get_logs))
             .route("/admin/logs", delete(handlers::admin::clear_logs))
-            .route("/admin/track", post(handlers::admin::track_action))
             .route_layer(axum_mw::from_fn(admin_auth))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         7200,
