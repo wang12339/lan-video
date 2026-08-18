@@ -1,28 +1,121 @@
 .home {
   padding: 16px;
+  min-height: 100vh;
+}
+
+.email-verify-banner {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  animation: slideDown 0.3s ease;
+}
+
+.email-verify-banner.success {
+  background: #065f46;
+  color: #6ee7b7;
+  border: 1px solid #059669;
+}
+
+.email-verify-banner.error {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #dc2626;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .hero {
+  position: relative;
   background: linear-gradient(135deg, var(--bg2), var(--bg3));
   border-radius: var(--radius);
-  padding: 32px;
+  padding: 48px 32px;
   margin-bottom: 24px;
   text-align: center;
+  overflow: hidden;
+  animation: heroFadeIn 0.6s ease-out;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle at 30% 50%,
+    rgba(var(--accent-rgb, 99, 102, 241), 0.08) 0%,
+    transparent 50%
+  ),
+  radial-gradient(
+    circle at 70% 50%,
+    rgba(255, 136, 102, 0.06) 0%,
+    transparent 50%
+  );
+  animation: heroGlow 8s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes heroFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes heroGlow {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate(5%, -3%) rotate(3deg);
+  }
 }
 
 .hero-title {
-  font-size: 32px;
+  position: relative;
+  font-size: 36px;
   font-weight: 700;
   margin-bottom: 8px;
   background: linear-gradient(135deg, var(--accent), #ff8866);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  animation: heroTitleShimmer 3s ease-in-out infinite alternate;
+  background-size: 200% 100%;
+}
+
+@keyframes heroTitleShimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
 }
 
 .hero-sub {
   color: var(--text2);
   font-size: 16px;
+  position: relative;
+  max-width: 480px;
+  margin: 0 auto;
+  line-height: 1.6;
 }
 
 .category-bar {
@@ -39,25 +132,40 @@
 }
 
 .cat-tag {
-  padding: 6px 16px;
+  padding: 8px 18px;
   border-radius: 20px;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   background: var(--bg2);
   color: var(--text2);
   border: 1px solid var(--border);
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  position: relative;
+  will-change: transform, box-shadow;
 }
 
 .cat-tag:hover {
-  background: var(--bg3);
+  background: var(--bg3, #2a2a3e);
   color: var(--text);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.cat-tag:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
 }
 
 .cat-tag.active {
   background: var(--accent);
   color: white;
   border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb, 99, 102, 241), 0.35);
+}
+
+.cat-tag.active:hover {
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb, 99, 102, 241), 0.45);
 }
 
 .home-count {
@@ -72,16 +180,99 @@
   gap: 16px;
 }
 
-.video-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* Staggered fade-in animation for video cards */
+.video-grid .video-card,
+.video-grid > * {
+  opacity: 0;
+  animation: cardFadeIn 0.4s ease-out forwards;
+  animation-delay: calc(var(--card-index, 0) * 60ms);
+}
+
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .loading-more {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 24px;
   color: var(--text3);
+  font-size: 13px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.loading-more::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.retry-btn {
+  margin-top: 12px;
+  padding: 8px 24px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+}
+
+.retry-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb, 99, 102, 241), 0.3);
+}
+
+.retry-btn:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.load-more-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text3);
+  font-size: 13px;
+}
+
+.load-more-error .retry-btn {
+  margin-top: 0;
+  padding: 6px 16px;
+}
+
+.load-sentinel {
+  height: 1px;
 }
 
 .no-more {
@@ -93,21 +284,58 @@
 
 .empty-state {
   text-align: center;
-  padding: 48px 16px;
+  padding: 64px 24px;
   color: var(--text3);
+  animation: emptyFadeIn 0.5s ease-out;
+}
+
+@keyframes emptyFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .empty-icon {
   font-size: 48px;
   margin-bottom: 16px;
+  animation: emptyIconBounce 2s ease-in-out infinite;
+}
+
+@keyframes emptyIconBounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 .empty-text {
   font-size: 16px;
+  max-width: 320px;
+  margin: 0 auto;
+  line-height: 1.5;
 }
 
 .trending-section {
   margin-bottom: 24px;
+  animation: sectionSlideIn 0.5s ease-out;
+}
+
+@keyframes sectionSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .trending-title {
@@ -115,19 +343,136 @@
   font-weight: 600;
   margin-bottom: 12px;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trending-title::before {
+  content: '🔥';
+}
+
+.hero-decoration {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+.hero-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.3;
+  animation: heroDotPulse 2s ease-in-out infinite;
+}
+
+.hero-dot--1 {
+  animation-delay: 0s;
+}
+
+.hero-dot--2 {
+  animation-delay: 0.4s;
+}
+
+.hero-dot--3 {
+  animation-delay: 0.8s;
+}
+
+@keyframes heroDotPulse {
+  0%, 100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.3);
+  }
 }
 
 @media (max-width: 640px) {
+  .home {
+    padding: 12px;
+  }
+
   .hero {
-    padding: 24px 16px;
+    padding: 32px 16px;
+    border-radius: 12px;
   }
 
   .hero-title {
     font-size: 24px;
   }
 
+  .hero-sub {
+    font-size: 14px;
+  }
+
   .video-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
     gap: 12px;
+  }
+
+  /* Reduce stagger delay on mobile for faster perception */
+  .video-grid .video-card,
+  .video-grid > * {
+    animation-delay: calc(var(--card-index, 0) * 40ms);
+  }
+
+  .cat-tag {
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+
+  .retry-btn {
+    padding: 12px 24px;
+  }
+
+  .empty-state {
+    padding: 48px 16px;
+  }
+
+  .trending-title {
+    font-size: 16px;
+  }
+}
+
+/* Small phones */
+@media (max-width: 380px) {
+  .video-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .cat-tag {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+
+  .hero {
+    padding: 24px 12px;
+  }
+
+  .hero-title {
+    font-size: 20px;
+  }
+}
+
+/* Tablet breakpoint */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+}
+
+/* Large screens */
+@media (min-width: 1440px) {
+  .video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    max-width: 1600px;
+    margin: 0 auto;
   }
 }

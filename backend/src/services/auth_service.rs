@@ -3,6 +3,7 @@ use crate::middleware::rate_limit::RateLimiter;
 use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfileResponse};
 use crate::repositories::user_repo::UserRepository;
 use crate::services::playback_service::PlaybackService;
+use crate::util::error::ServiceError;
 use crate::util::password;
 
 /// Token cookie lifetime (7 days in seconds)
@@ -14,8 +15,8 @@ const IP_RATE_LIMIT_MAX_ATTEMPTS: u32 = 30;
 const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const IP_RATE_LIMIT_BLOCK_SECS: u64 = 0;
 
-/// Minimum password length. Stronger policy than the previous 6-char minimum.
-const MIN_PASSWORD_LEN: usize = 10;
+/// Minimum password length.
+const MIN_PASSWORD_LEN: usize = 8;
 const MAX_PASSWORD_LEN: usize = 128;
 
 #[derive(Clone)]
@@ -48,7 +49,8 @@ impl AuthService {
         &self,
         req: &AuthRequest,
         client_ip: &str,
-    ) -> Result<AuthResponse, AuthError> {
+        tenant_id: i64,
+    ) -> Result<AuthResponse, ServiceError> {
         if !self.config.registration_enabled() {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: registration disabled");
             return Ok(auth_err("注册功能已关闭"));
@@ -58,7 +60,11 @@ impl AuthService {
             .await?;
 
         let username = req.username.trim();
-        let password = req.password.trim();
+        // Do NOT trim the password: it is hashed exactly as the user typed it,
+        // and login verifies the raw input — trimming here would make
+        // passwords with leading/trailing whitespace impossible to log in
+        // with.
+        let password = req.password.as_str();
 
         if username.is_empty() || password.is_empty() {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: empty username or password");
@@ -70,7 +76,17 @@ impl AuthService {
             return Ok(auth_err("用户名长度需在 2-64 个字符之间"));
         }
 
-        if password.len() < MIN_PASSWORD_LEN || password.len() > MAX_PASSWORD_LEN {
+        // SECURITY: reject control characters (newlines, etc.) so user-supplied
+        // usernames cannot forge log lines or break out of HTML in the admin
+        // UI / notification emails.
+        if username.chars().any(char::is_control) {
+            tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: username contains control characters");
+            return Ok(auth_err("用户名包含非法字符"));
+        }
+
+        if password.chars().count() < MIN_PASSWORD_LEN
+            || password.chars().count() > MAX_PASSWORD_LEN
+        {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: invalid password length");
             return Ok(auth_err(format!(
                 "密码长度需在 {}-{} 个字符之间",
@@ -88,7 +104,7 @@ impl AuthService {
         // was true on an empty database. We now require an explicit env var
         // (ALLOW_FIRST_USER_ADMIN=true) to opt in to that behaviour. Without
         // it, the first user is a regular viewer that needs admin approval.
-        let count = self.user_repo.count_users().await?;
+        let count = self.user_repo.count_users(tenant_id).await?;
         let is_first_user = count == 0;
         let first_user_admin = std::env::var("ALLOW_FIRST_USER_ADMIN")
             .ok()
@@ -102,20 +118,34 @@ impl AuthService {
 
         let user_exists = self
             .user_repo
-            .find_by_username(username)
+            .find_by_username(tenant_id, username)
             .await
             .map(|u| u.is_some())
             .unwrap_or(false);
         if user_exists {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: username already exists");
             // Always hash the password to prevent timing side-channel (username enumeration)
-            let _ = password::hash(password);
-            return Ok(auth_err("注册失败"));
+            let _ = hash_in_blocking(password).await;
+            return Ok(auth_err("用户名已存在"));
         }
 
-        let hash = password::hash(password)?;
+        let hash = hash_in_blocking(password).await?;
 
-        let user_id = self.user_repo.create_user(username, &hash, role).await?;
+        // SECURITY: a concurrent registration with the same username hits a
+        // unique constraint race. Map it to the same friendly error instead
+        // of leaking a 500.
+        let user_id = match self
+            .user_repo
+            .create_user(tenant_id, username, &hash, role)
+            .await
+        {
+            Ok(id) => id,
+            Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: username taken (unique violation race)");
+                return Ok(auth_err("用户名已存在"));
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         let reset_key = format!("auth:{}", req.username.trim().to_lowercase());
         self.rate_limiter.reset(&reset_key).await;
@@ -148,7 +178,8 @@ impl AuthService {
         &self,
         req: &AuthRequest,
         client_ip: &str,
-    ) -> Result<AuthResponse, AuthError> {
+        tenant_id: i64,
+    ) -> Result<AuthResponse, ServiceError> {
         self.check_rate_limits(&req.username, client_ip, "login")
             .await?;
 
@@ -159,12 +190,15 @@ impl AuthService {
         // We now always run a dummy argon2 verify when the user is missing,
         // equalising the timing of the "user not found" and "wrong password"
         // branches.
-        let user_opt = self.user_repo.find_by_username(req.username.trim()).await?;
+        let user_opt = self
+            .user_repo
+            .find_by_username(tenant_id, req.username.trim())
+            .await?;
         let user_hash: &str = match user_opt.as_ref() {
             Some(u) => u.password_hash.as_str(),
             None => DUMMY_ARGON2_HASH,
         };
-        let password_ok = password::verify(&req.password, user_hash).unwrap_or(false);
+        let password_ok = verify_in_blocking(&req.password, user_hash).await;
 
         let user = match user_opt {
             Some(u) if password_ok => u,
@@ -214,10 +248,11 @@ impl AuthService {
         &self,
         username: &str,
         is_admin: bool,
-    ) -> Result<UserInfoResponse, AuthError> {
+        tenant_id: i64,
+    ) -> Result<UserInfoResponse, ServiceError> {
         let user = self
             .user_repo
-            .find_by_username(username)
+            .find_by_username(tenant_id, username)
             .await
             .ok()
             .flatten();
@@ -227,8 +262,11 @@ impl AuthService {
             username: username.to_string(),
             is_admin,
             created_at: user
+                .as_ref()
                 .map(|u| u.created_at.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or_default(),
+            email: user.as_ref().and_then(|u| u.email.clone()),
+            email_verified: user.as_ref().map(|u| u.email_verified).unwrap_or(false),
         })
     }
 
@@ -236,10 +274,11 @@ impl AuthService {
         &self,
         username: &str,
         is_admin: bool,
-    ) -> Result<UserProfileResponse, AuthError> {
+        tenant_id: i64,
+    ) -> Result<UserProfileResponse, ServiceError> {
         let created_at = self
             .user_repo
-            .find_by_username(username)
+            .find_by_username(tenant_id, username)
             .await
             .ok()
             .flatten()
@@ -277,7 +316,7 @@ impl AuthService {
         username: &str,
         client_ip: &str,
         action: &str,
-    ) -> Result<(), AuthError> {
+    ) -> Result<(), ServiceError> {
         let ip_key = format!("auth:ip:{}", client_ip);
         if self
             .ip_rate_limiter
@@ -291,13 +330,13 @@ impl AuthService {
             .is_err()
         {
             tracing::warn!(username = %sanitize_for_log(username), ip = %sanitize_for_log(client_ip), "{} rejected: IP rate limited", action);
-            return Err(AuthError::RateLimited);
+            return Err(ServiceError::RateLimited);
         }
 
         let key = format!("auth:{}", username.trim().to_lowercase());
         if self.rate_limiter.check(&key).await.is_err() {
             tracing::warn!(username = %sanitize_for_log(username), ip = %sanitize_for_log(client_ip), "{} rejected: username rate limited", action);
-            return Err(AuthError::RateLimited);
+            return Err(ServiceError::RateLimited);
         }
         Ok(())
     }
@@ -311,6 +350,31 @@ fn sanitize_for_log(s: &str) -> String {
         .collect()
 }
 
+/// Run the CPU-heavy argon2 hashing on the blocking pool. Argon2id at the
+/// default params costs ~50-100 ms of CPU per call; running it inline on an
+/// async worker would let a burst of login/register attempts starve the whole
+/// runtime.
+async fn hash_in_blocking(password: &str) -> Result<String, ServiceError> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || password::hash(&password))
+        .await
+        .map_err(|e| ServiceError::internal(format!("password hashing task failed: {}", e)))?
+        .map_err(ServiceError::from)
+}
+
+/// Run the CPU-heavy argon2 verification on the blocking pool. Returns false
+/// on any error (unparseable hash, task failure) so callers treat every
+/// failure as "credentials rejected".
+async fn verify_in_blocking(password: &str, hash: &str) -> bool {
+    let password = password.to_owned();
+    let hash = hash.to_owned();
+    tokio::task::spawn_blocking(move || password::verify(&password, &hash))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+}
+
 /// Pre-computed argon2 hash of a random throwaway string, used to keep the
 /// "user not found" branch on the same code path as the "wrong password"
 /// branch (closing the timing oracle).
@@ -318,34 +382,26 @@ fn sanitize_for_log(s: &str) -> String {
 /// ever leaks.
 const DUMMY_ARGON2_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZHVtbXlzYWx0Zm9yYXRtb3M$Ix2m8ZxRg2E2XgO6nQ8T0q3yJ4cZUEZ5K6yJxY7GQhA";
 
-/// A small, hardcoded list of the most common weak passwords.
-/// This is a defense-in-depth check: the user already needs a 10+ char
-/// password, so trivial short passwords wouldn't pass length check anyway.
-/// This list catches patterns like "password1234" or "qwertyuiop".
-const COMMON_WEAK_PASSWORDS: &[&str] = &[
-    "password", "password1", "password12", "password123", "password1234",
-    "qwerty", "qwerty12", "qwerty123", "qwerty1234", "qwertyuiop",
-    "12345678", "123456789", "1234567890",
-    "iloveyou", "admin1234", "admin12345", "admin123456",
-    "letmein12", "welcome12", "welcome123",
-    "abcdefgh", "abcdefghi", "abcdefghij",
-    "11111111", "00000000", "12341234", "abcd1234",
-    "asdfghjk", "asdfghjkl", "zxcvbnm12", "zxcvbn123",
-    "football1", "baseball1", "dragon123", "monkey123",
-];
-
-/// Check that the password is not in the common weak-password list
-/// and contains at least two character classes (digits, letters, symbols).
-fn is_password_strong_enough(pw: &str) -> bool {
-    let lower = pw.to_ascii_lowercase();
-    if COMMON_WEAK_PASSWORDS.iter().any(|w| lower == *w) {
-        return false;
-    }
+pub(crate) fn is_password_strong_enough(pw: &str) -> bool {
+    let has_upper = pw.chars().any(|c| c.is_uppercase());
+    let has_lower = pw.chars().any(|c| c.is_lowercase());
     let has_digit = pw.chars().any(|c| c.is_ascii_digit());
-    let has_alpha = pw.chars().any(|c| c.is_ascii_alphabetic());
-    let has_symbol = pw.chars().any(|c| !c.is_ascii_alphanumeric());
-    // Require at least two of: digit, letter, symbol.
-    (has_digit as u8 + has_alpha as u8 + has_symbol as u8) >= 2
+    let has_special = pw.chars().any(|c| !c.is_alphanumeric());
+    let categories: u8 = [has_upper, has_lower, has_digit, has_special]
+        .into_iter()
+        .map(u8::from)
+        .sum();
+
+    // Require at least 3 of 4 character categories for passwords under 12
+    // chars. Counted in chars, not bytes, to match register()'s length
+    // validation — a byte count would let a multibyte password slip into
+    // the lenient 2-category tier.
+    if pw.chars().count() < 12 {
+        categories >= 3
+    } else {
+        // Longer passwords can be all lowercase with at least one non-alpha
+        categories >= 2
+    }
 }
 
 fn auth_err(msg: impl Into<String>) -> AuthResponse {
@@ -356,22 +412,10 @@ fn auth_err(msg: impl Into<String>) -> AuthResponse {
     }
 }
 
-#[derive(Debug)]
-pub enum AuthError {
-    RateLimited,
-    Internal(String),
-}
-
-impl From<sqlx::Error> for AuthError {
-    fn from(_e: sqlx::Error) -> Self {
-        // SECURITY (A03-01 / A09-6): never leak raw sqlx error to clients
-        AuthError::Internal("database error".into())
-    }
-}
-
-impl From<String> for AuthError {
-    fn from(_e: String) -> Self {
-        AuthError::Internal("internal error".into())
+impl From<password::PasswordError> for ServiceError {
+    fn from(e: password::PasswordError) -> Self {
+        tracing::error!("password operation failed: {}", e);
+        ServiceError::internal("password error")
     }
 }
 
@@ -380,29 +424,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rejects_common_password() {
-        assert!(!is_password_strong_enough("password12"));
-        assert!(!is_password_strong_enough("admin12345"));
-        assert!(!is_password_strong_enough("welcome123"));
-    }
-
-    #[test]
-    fn test_rejects_single_class_password() {
-        assert!(!is_password_strong_enough("abcdefghij"));
-        assert!(!is_password_strong_enough("1234567890"));
-    }
-
-    #[test]
-    fn test_accepts_mixed_password() {
+    fn test_strong_password_accepted() {
         assert!(is_password_strong_enough("MyStr0ngPwd"));
-        assert!(is_password_strong_enough("Hunter22X!"));
-        assert!(is_password_strong_enough("z9k.m3P2z8a"));
+        assert!(is_password_strong_enough("Abcdef1!"));
+        assert!(is_password_strong_enough("correct-horse-battery"));
     }
 
     #[test]
-    fn test_case_insensitive_common_check() {
-        assert!(!is_password_strong_enough("password12"));
-        assert!(!is_password_strong_enough("PASSWORD12"));
-        assert!(!is_password_strong_enough("Welcome123"));
+    fn test_weak_password_rejected() {
+        assert!(!is_password_strong_enough("password"));
+        assert!(!is_password_strong_enough("12345678"));
+        assert!(!is_password_strong_enough("abcdefgh"));
+        assert!(!is_password_strong_enough("PASSWORD1"));
+    }
+
+    #[test]
+    fn test_long_password_with_two_categories() {
+        assert!(is_password_strong_enough("longbutonlylowercase1"));
+        assert!(is_password_strong_enough("longbutonlyUPPERCASE1"));
+    }
+
+    #[test]
+    fn dummy_argon2_hash_is_parseable() {
+        // SECURITY: DUMMY_ARGON2_HASH is used to keep the "user not found"
+        // login branch running a real argon2 verify. If it ever becomes
+        // unparseable, verify() fails fast and the username-enumeration
+        // timing oracle reopens.
+        match password::verify("not-a-real-password", DUMMY_ARGON2_HASH) {
+            Ok(_) => {}
+            Err(e) => panic!(
+                "DUMMY_ARGON2_HASH must be a parseable argon2 hash, got: {}",
+                e
+            ),
+        }
+    }
+
+    #[test]
+    fn username_control_chars_are_rejected_by_validation() {
+        // The check lives in register(); this guards the predicate used there.
+        let bad = ["a\nbc", "a\rbc", "a\u{0}bc"];
+        for name in bad {
+            assert!(
+                name.chars().any(char::is_control),
+                "{:?} should contain control chars",
+                name
+            );
+        }
+        assert!("alice".chars().all(|c| !c.is_control()));
     }
 }

@@ -1,7 +1,9 @@
 // Integration tests for video_service functions
 // Run with: cargo test --test test_video_service -- --nocapture
 
-use lan_video_backend::services::media_service::{safe_media_path, validate_file_type};
+use atmos_video_backend::services::media_service::{
+    is_safe_external_url, safe_media_path, sanitize_filename, validate_file_type,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -346,4 +348,74 @@ fn test_safe_media_path_multiple_slashes() {
     assert!(result.is_none(), "double slash path should be blocked");
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_validate_file_type_valid_mp4() {
+    // 最小合法 MP4 头：ftyp + isom 主品牌（infer 的 mp4 识别条件）
+    let mp4_bytes: Vec<u8> = vec![
+        0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, // size + ftyp
+        0x69, 0x73, 0x6F, 0x6D, 0x00, 0x00, 0x02, 0x00, // major brand: isom
+        0x69, 0x73, 0x6F, 0x6D, 0x69, 0x73, 0x6F, 0x32, // compatible: isom iso2
+        0x6D, 0x70, 0x34, 0x31, 0x00, 0x00, 0x00, 0x00, // compatible: mp41
+    ];
+    let path = create_temp_file("test_validate_mp4.mp4", &mp4_bytes);
+    assert!(validate_file_type(&path, "mp4").is_ok());
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_validate_file_type_mp4_rejects_quicktime_brand() {
+    // ftyp 但主品牌是 qt（QuickTime）→ 应识别为 mov 而非 mp4
+    let qt_bytes: Vec<u8> = vec![
+        0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, // size + ftyp
+        0x71, 0x74, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00, // major brand: qt
+        0x71, 0x74, 0x20, 0x20, // compatible: qt
+    ];
+    let path = create_temp_file("test_validate_qt.mp4", &qt_bytes);
+    assert!(
+        validate_file_type(&path, "mp4").is_err(),
+        "QuickTime 品牌文件不应被当作 mp4 接受"
+    );
+    assert!(validate_file_type(&path, "mov").is_ok());
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn test_sanitize_filename_backslash_windows_traversal() {
+    // Windows 风格路径穿越（反斜杠）→ 必须被替换为 '_'
+    let result = sanitize_filename("..\\..\\evil.mp4");
+    assert!(!result.contains('\\'), "反斜杠必须被清除");
+    assert!(!result.contains('/'), "正斜杠必须被清除");
+    assert_eq!(result, ".._.._evil.mp4");
+}
+
+#[test]
+fn test_sanitize_filename_absolute_path() {
+    // 绝对路径只保留最后一段
+    assert_eq!(sanitize_filename("/etc/passwd"), "passwd");
+    assert_eq!(sanitize_filename("../../etc/shadow"), "shadow");
+}
+
+#[test]
+fn test_is_safe_external_url_rejects_non_http() {
+    assert!(!is_safe_external_url("ftp://example.com/v.mp4"));
+    assert!(!is_safe_external_url("file:///etc/passwd"));
+    assert!(!is_safe_external_url("javascript:alert(1)"));
+    // 无主机名
+    assert!(!is_safe_external_url("http:///no-host.mp4"));
+    assert!(!is_safe_external_url("https://"));
+}
+
+#[test]
+fn test_is_safe_external_url_port_and_userinfo() {
+    // 带端口与 userinfo 的合法外部地址
+    assert!(is_safe_external_url("https://example.com:8443/v.mp4"));
+    assert!(is_safe_external_url(
+        "http://user:pass@example.com:8080/v.mp4"
+    ));
+    // userinfo 不能掩盖私有主机
+    assert!(!is_safe_external_url(
+        "http://user:pass@10.0.0.1:8080/v.mp4"
+    ));
 }

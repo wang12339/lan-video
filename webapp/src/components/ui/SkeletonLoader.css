@@ -10,6 +10,18 @@
   100% { background-position: -200% 0; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}
+
 /* Stats skeleton */
 .skeleton-stats {
   display: grid;

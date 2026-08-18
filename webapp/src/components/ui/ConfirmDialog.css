@@ -8,6 +8,7 @@
   justify-content: center;
   z-index: 1000;
   animation: fadeIn 0.15s ease;
+  padding: 16px;
 }
 
 .cd-dialog {
@@ -16,7 +17,7 @@
   border-radius: var(--radius, 12px);
   padding: 24px;
   width: 400px;
-  max-width: 90vw;
+  max-width: 100%;
   animation: modalIn 0.2s ease;
 }
 
@@ -41,7 +42,7 @@
 }
 
 .cd-btn {
-  padding: 8px 20px;
+  padding: 11px 20px;
   border-radius: var(--radius-sm, 8px);
   font-size: 14px;
   font-weight: 500;
@@ -90,4 +91,18 @@
 @keyframes modalIn {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 480px) {
+  .cd-dialog {
+    padding: 20px;
+  }
+
+  .cd-actions {
+    flex-direction: column-reverse;
+  }
+
+  .cd-btn {
+    width: 100%;
+  }
 }

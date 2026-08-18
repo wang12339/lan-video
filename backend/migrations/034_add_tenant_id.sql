@@ -1,0 +1,24 @@
+ALTER TABLE users ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE auth_tokens ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE videos ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE comments ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE share_links ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE tags ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE video_tags ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE playlists ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE playlist_items ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE playback_history ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE user_likes ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE user_favorites ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE video_variants ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+ALTER TABLE transcoding_jobs ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1 REFERENCES tenants(id);
+
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_tenant ON auth_tokens(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_videos_tenant ON videos(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_comments_tenant ON comments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_share_links_tenant ON share_links(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tags_tenant ON tags(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_video_tags_tenant ON video_tags(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_playlists_tenant ON playlists(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_playback_history_tenant ON playback_history(tenant_id);

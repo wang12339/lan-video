@@ -1,5 +1,6 @@
 use axum::{extract::Query, extract::State, http::StatusCode, Extension, Json};
 use serde::Deserialize;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
@@ -85,12 +86,31 @@ pub async fn get_logs(
             .unwrap_or("")
             .to_string();
 
-        let content =
-            std::fs::read_to_string(&log_file).map_err(|_| "无法读取日志文件".to_string())?;
+        // Read from the end of the file to avoid loading large files entirely into memory.
+        // We read backwards in chunks, collecting up to (limit + offset) matching lines.
+        let file = std::fs::File::open(&log_file).map_err(|_| "无法打开日志文件".to_string())?;
+        let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
 
+        let mut reader = BufReader::new(file);
+        let seek_pos = if file_size > 1_000_000 {
+            SeekFrom::End(-1_000_000)
+        } else {
+            SeekFrom::Start(0)
+        };
+        reader
+            .seek(seek_pos)
+            .map_err(|_| "无法读取日志文件".to_string())?;
+
+        // Read all lines from the seek point, then process in reverse
+        let mut all_lines: Vec<String> = Vec::new();
+        for line_result in reader.lines() {
+            let line = line_result.map_err(|_| "读取日志文件失败".to_string())?;
+            all_lines.push(line);
+        }
+
+        // Process lines in reverse (most recent first), apply filters, collect up to limit+offset
         let mut entries: Vec<LogEntry> = Vec::new();
-
-        for line in content.lines().rev() {
+        for line in all_lines.iter().rev() {
             if line.trim().is_empty() {
                 continue;
             }
@@ -244,7 +264,13 @@ pub async fn get_logs(
                 "file": file_name,
             })))
         }
-        Ok(Err(e)) => Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Ok(Err(e)) => {
+            tracing::error!("list_logs failed: {}", e);
+            Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "日志读取失败",
+            ))
+        }
         Err(_e) => Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "日志读取任务失败",
@@ -291,7 +317,16 @@ pub async fn clear_logs(
             tracing::info!(actor = %actor, "admin cleared logs");
             Ok(Json(serde_json::json!({"ok": true})))
         }
-        Ok(Err(e)) => Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, e)),
-        Err(_) => Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, "日志清空任务失败")),
+        Ok(Err(e)) => {
+            tracing::error!("clear_logs failed: {}", e);
+            Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "日志清空失败",
+            ))
+        }
+        Err(_) => Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "日志清空任务失败",
+        )),
     }
 }

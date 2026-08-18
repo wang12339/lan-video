@@ -1,0 +1,90 @@
+.pwa-install-banner {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pwa-install-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.pwa-install-icon {
+  font-size: 24px;
+}
+
+.pwa-install-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pwa-install-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pwa-install-text span {
+  font-size: 12px;
+  color: var(--text3);
+}
+
+.pwa-install-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pwa-install-btn {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.pwa-install-btn:hover {
+  opacity: 0.9;
+}
+
+/* 移动端 */
+@media (max-width: 640px) {
+  .pwa-install-banner {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    padding: 12px;
+  }
+  
+  .pwa-install-btn {
+    padding: 11px 16px;
+  }
+}

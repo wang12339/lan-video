@@ -1,7 +1,7 @@
 // API 类型定义
 
 export interface Video {
-  id: number;
+  id: string;
   title: string;
   description: string;
   sourceType: string;
@@ -14,7 +14,7 @@ export interface Video {
   createdAt: string;
   watchPosition?: number;
   hasVariants?: boolean;
-  uploaderId?: number;
+  uploaderId?: string;
 }
 
 export interface VideoVariant {
@@ -25,7 +25,7 @@ export interface VideoVariant {
 }
 
 export interface TranscodeStatusResponse {
-  videoId: number;
+  videoId: string;
   variants: VideoVariant[];
   pendingJobs: Array<{
     id: number;
@@ -43,7 +43,7 @@ export interface VideoListResponse {
 }
 
 export interface PlaybackHistory {
-  videoId: number;
+  videoId: string;
   title: string;
   coverUrl: string | null;
   streamUrl: string;
@@ -55,11 +55,13 @@ export interface PlaybackHistory {
 }
 
 export interface UserInfo {
-  id: number;
+  id: string;
   username: string;
   isAdmin: boolean;
   avatarUrl?: string;
   createdAt: string;
+  email?: string;
+  emailVerified: boolean;
 }
 
 export interface UserProfile extends UserInfo {
@@ -86,7 +88,7 @@ export interface HealthResponse {
 
 // 映射后的类型
 export interface MappedVideo {
-  id: number;
+  id: string;
   title: string;
   category: string;
   description: string;
@@ -99,11 +101,11 @@ export interface MappedVideo {
   date: string;
   progress: number;
   hasVariants?: boolean;
-  uploaderId?: number;
+  uploaderId?: string;
 }
 
 export interface MappedImage {
-  id: number;
+  id: string;
   title: string;
   category: string;
   thumb: string | null;
@@ -111,7 +113,7 @@ export interface MappedImage {
 }
 
 export interface MappedHistory {
-  id: number;
+  id: string;
   title: string;
   category: string;
   thumb: string | null;
@@ -124,7 +126,7 @@ export interface MappedHistory {
 }
 
 export interface MappedPlaylist {
-  id: number;
+  id: string;
   name: string;
   description: string | null;
   isPublic: boolean;

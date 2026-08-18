@@ -1,5 +1,5 @@
 [package]
-name = "lan-video-backend"
+name = "atmos-video-backend"
 version = "0.1.0"
 edition = "2021"
 
@@ -27,7 +27,11 @@ hex = "0.4"
 sentry = { version = "0.34", features = ["anyhow", "tracing"], default-features = false }
 prometheus = "0.13"
 anyhow = "1.0"
+thiserror = "1"
 ammonia = "4.0"
+harsh = "0.2"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder", "hostname", "pool"] }
 
 [profile.release]
 lto = true

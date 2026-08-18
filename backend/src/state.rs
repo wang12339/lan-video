@@ -7,21 +7,23 @@ use tokio::sync::Mutex;
 use crate::config::AppConfig;
 use crate::metrics::Metrics;
 use crate::middleware::rate_limit::RateLimiter;
-use crate::models::video::PagedVideoResponse;
+use crate::models::video::{PagedVideoResponse, VideoItem};
 use crate::repositories::comment_repo::CommentRepository;
 use crate::repositories::playback_repo::PlaybackRepository;
 use crate::repositories::playlist_repo::PlaylistRepository;
 use crate::repositories::registration_repo::RegistrationRepository;
 use crate::repositories::share_repo::ShareRepository;
 use crate::repositories::tag_repo::TagRepository;
+use crate::repositories::tenant_repo::TenantRepository;
 use crate::repositories::user_repo::UserRepository;
 use crate::repositories::video_repo::VideoRepository;
 use crate::services::admin_service::AdminService;
 use crate::services::auth_service::AuthService;
 use crate::services::comment_service::CommentService;
+use crate::services::email_service::EmailService;
 use crate::services::media_service::MediaService;
 use crate::services::playback_service::PlaybackService;
-use crate::services::recommendation_service::RecommendationService;
+use crate::services::recommendation_service::{RecommendationService, VideoRecommendation};
 use crate::services::search_service::SearchService;
 use crate::services::share_service::ShareService;
 use crate::services::tag_service::TagService;
@@ -30,6 +32,10 @@ use crate::services::transcoder::Transcoder;
 use crate::services::video_service::VideoService;
 
 pub type VideoListCache = Cache<String, PagedVideoResponse>;
+pub type RecommendationCache = Cache<String, Vec<VideoRecommendation>>;
+/// 单视频详情缓存（`GET /videos/{id}` 热路径）：60 秒 TTL。
+/// 视频列表/详情查询共享同一失效入口 `AppState::invalidate_caches`。
+pub type VideoDetailCache = Cache<i64, VideoItem>;
 
 /// Tracks active playback sessions: key = "username:video_id", value = last heartbeat time
 pub struct PlaybackSessionTracker {
@@ -37,7 +43,7 @@ pub struct PlaybackSessionTracker {
 }
 
 /// Session timeout: if no heartbeat within this window, session is considered inactive
-pub const SESSION_TIMEOUT_SECS: u64 = 30;
+pub const SESSION_TIMEOUT_SECS: u64 = 120;
 
 impl Default for PlaybackSessionTracker {
     fn default() -> Self {
@@ -76,43 +82,89 @@ impl PlaybackSessionTracker {
     }
 
     /// Returns true if the user has any active playback session for any video.
-    /// Used by the media middleware to gate access to non-video assets
-    /// (thumbnails, covers, avatars) without binding to a specific video.
+    ///
+    /// NOTE (security review): this is deliberately NOT used as an
+    /// authorization basis anywhere — it would let any active session pass
+    /// for *arbitrary* videos. Grep confirms zero call sites; media_auth only
+    /// ever uses the video-bound `is_active`. It is kept for symmetry as a
+    /// potential non-security helper. It is O(n) over all sessions (flat
+    /// map key "username:video_id"); with no callers there is no hot path,
+    /// so no refactor to a nested DashMap is warranted today. If a caller
+    /// ever appears, prefer a per-user nested map or active-count index.
     pub fn has_any_active(&self, username: &str) -> bool {
         let prefix = format!("{}:", username);
         self.sessions
             .iter()
             .any(|e| e.key().starts_with(&prefix) && e.elapsed().as_secs() < SESSION_TIMEOUT_SECS)
     }
+
+    /// Remove all expired sessions to prevent memory leaks.
+    pub fn evict_expired(&self) {
+        self.sessions
+            .retain(|_, last| last.elapsed().as_secs() < SESSION_TIMEOUT_SECS);
+    }
+}
+
+/// Start a background task that periodically cleans up expired playback sessions.
+pub fn start_session_cleanup(tracker: std::sync::Arc<PlaybackSessionTracker>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            tracker.evict_expired();
+        }
+    });
+}
+
+#[derive(Clone)]
+pub struct RepoLayer {
+    pub registration: RegistrationRepository,
+    pub user: UserRepository,
+    pub video: VideoRepository,
+    pub playback: PlaybackRepository,
+    pub playlist: PlaylistRepository,
+    pub comment: CommentRepository,
+    pub share: ShareRepository,
+    pub tag: TagRepository,
+    pub tenant: TenantRepository,
+}
+
+#[derive(Clone)]
+pub struct ServiceLayer {
+    pub video: VideoService,
+    pub media: MediaService,
+    pub playback: PlaybackService,
+    pub auth: AuthService,
+    pub email: EmailService,
+    pub tag: TagService,
+    pub search: SearchService,
+    pub recommendation: RecommendationService,
+    pub comment: CommentService,
+    pub share: ShareService,
+    pub admin: AdminService,
 }
 
 #[derive(Clone)]
 pub struct AppState {
-    pub registration_repo: RegistrationRepository,
-    pub user_repo: UserRepository,
-    pub video_repo: VideoRepository,
-    pub playback_repo: PlaybackRepository,
-    pub playlist_repo: PlaylistRepository,
-    pub comment_repo: CommentRepository,
-    pub share_repo: ShareRepository,
-    pub tag_repo: TagRepository,
-    pub video_service: VideoService,
-    pub media_service: MediaService,
-    pub playback_service: PlaybackService,
-    pub auth_service: AuthService,
-    pub tag_service: TagService,
-    pub search_service: SearchService,
-    pub recommendation_service: RecommendationService,
-    pub comment_service: CommentService,
-    pub share_service: ShareService,
-    pub admin_service: AdminService,
+    pub repos: RepoLayer,
+    pub services: ServiceLayer,
     pub config: AppConfig,
     pub rate_limiter: RateLimiter,
     pub ip_rate_limiter: RateLimiter,
     pub video_cache: VideoListCache,
+    pub recommendation_cache: RecommendationCache,
+    pub video_detail_cache: VideoDetailCache,
     pub playback_sessions: Arc<PlaybackSessionTracker>,
     pub upload_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
     pub metrics: Metrics,
+    pub redis: Option<redis::aio::ConnectionManager>,
     pub transcoder: Transcoder,
     pub task_queue: TaskQueue,
+}
+
+impl AppState {
+    pub fn invalidate_caches(&self) {
+        self.video_cache.invalidate_all();
+        self.recommendation_cache.invalidate_all();
+        self.video_detail_cache.invalidate_all();
+    }
 }

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoItem {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
     pub title: String,
     pub description: String,
@@ -16,7 +17,12 @@ pub struct VideoItem {
     pub watch_position: Option<i64>,
     #[serde(default)]
     pub has_variants: bool,
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_option_id")]
     pub uploader_id: Option<i64>,
+    /// ISO-ish timestamp `%Y-%m-%d %H:%M:%S`（UTC）。旧版响应不含该字段，
+    /// 用 `#[serde(default)]` 保持反序列化兼容。
+    #[serde(default)]
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -35,7 +41,8 @@ pub struct VideoQuery {
     pub category: Option<String>,
     pub page: Option<i64>,
     pub size: Option<i64>,
-    pub uploader_id: Option<i64>,
+    pub uploader_id: Option<String>,
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +63,7 @@ pub struct VideoUpdateRequest {
 
 #[derive(Debug, Serialize)]
 pub struct IdResponse {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
 }
 

@@ -57,7 +57,7 @@ impl CommentRepository {
                FROM comments c
                JOIN users u ON c.user_id = u.id
                WHERE c.video_id = $1 AND c.parent_id IS NULL
-               ORDER BY c.created_at DESC
+               ORDER BY c.created_at DESC, c.id DESC
                LIMIT $2 OFFSET $3"#,
         )
         .bind(video_id)
@@ -78,7 +78,7 @@ impl CommentRepository {
                FROM comments c
                JOIN users u ON c.user_id = u.id
                WHERE c.parent_id = $1
-               ORDER BY c.created_at ASC
+               ORDER BY c.created_at ASC, c.id ASC
                LIMIT $2"#,
         )
         .bind(parent_id)
@@ -88,10 +88,12 @@ impl CommentRepository {
     }
 
     pub async fn count_comments(&self, video_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM comments WHERE video_id = $1")
-            .bind(video_id)
-            .fetch_one(&self.pool)
-            .await?;
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM comments WHERE video_id = $1 AND parent_id IS NULL",
+        )
+        .bind(video_id)
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
@@ -110,5 +112,28 @@ impl CommentRepository {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn video_exists(&self, video_id: i64) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM videos WHERE id = $1)")
+                .bind(video_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(exists)
+    }
+
+    /// Lightweight lookup used to validate a reply target before insert.
+    /// Returns the comment's `(video_id, parent_id)` or `None` if missing.
+    pub async fn get_comment_meta(
+        &self,
+        comment_id: i64,
+    ) -> Result<Option<(i64, Option<i64>)>, sqlx::Error> {
+        sqlx::query_as::<_, (i64, Option<i64>)>(
+            "SELECT video_id, parent_id FROM comments WHERE id = $1",
+        )
+        .bind(comment_id)
+        .fetch_optional(&self.pool)
+        .await
     }
 }

@@ -1,11 +1,15 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
+use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::middleware::auth::AuthUser;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse};
+use crate::util::hashid;
+use crate::util::response::{
+    conflict, error_response, internal_error_log, ErrorResponse, SafeJson,
+};
 
 #[derive(Deserialize)]
 pub struct CreateTagRequest {
@@ -20,6 +24,7 @@ pub struct UpdateTagRequest {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TagResponse {
     pub id: i32,
     pub name: String,
@@ -28,6 +33,7 @@ pub struct TagResponse {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TagListResponse {
     pub tags: Vec<TagResponse>,
     pub total: i64,
@@ -40,6 +46,13 @@ pub struct TagQuery {
     pub page: Option<i64>,
     pub size: Option<i64>,
 }
+
+/// Error message from `tag_service` for a unique-violation (SQLSTATE 23505)
+/// on tag creation, e.g. re-creating a tag whose name already exists.
+const TAG_ALREADY_EXISTS: &str = "标签已存在";
+/// Error message from `tag_service` when an update targets a tag name that is
+/// already taken by another tag (also a 23505 unique violation).
+const TAG_NAME_TAKEN: &str = "标签名已存在";
 
 impl From<crate::services::tag_service::TagResponse> for TagResponse {
     fn from(t: crate::services::tag_service::TagResponse) -> Self {
@@ -59,26 +72,23 @@ pub async fn list_tags(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TagQuery>,
 ) -> Result<Json<TagListResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let page = query.page.unwrap_or(0);
-    let size = query.size.unwrap_or(50);
+    let page = query.page.unwrap_or(0).max(0);
+    // Clamp size so `page * size` cannot overflow i64 and the query stays bounded.
+    let size = query.size.unwrap_or(50).clamp(1, 100);
 
     let tags = state
-        .tag_service
+        .services
+        .tag
         .list_tags(page, size)
         .await
-        .map_err(|e| {
-            tracing::error!("list_tags failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?;
+        .map_err(|e| internal_error_log("list_tags failed", &e))?;
 
     let total = state
-        .tag_repo
+        .repos
+        .tag
         .count_tags()
         .await
-        .map_err(|e| {
-            tracing::error!("count_tags failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?;
+        .map_err(|e| internal_error_log("count_tags failed", &e))?;
 
     Ok(Json(TagListResponse {
         tags: tags.into_iter().map(TagResponse::from).collect(),
@@ -93,16 +103,23 @@ pub async fn list_tags(
 /// Create a new tag (admin only)
 pub async fn create_tag(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<CreateTagRequest>,
+    SafeJson(req): SafeJson<CreateTagRequest>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
     let tag = state
-        .tag_service
+        .services
+        .tag
         .create_tag(crate::services::tag_service::CreateTagRequest {
             name: req.name,
             color: req.color,
         })
         .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| {
+            tracing::error!("create_tag failed: {}", e);
+            if e == TAG_ALREADY_EXISTS {
+                return conflict(e);
+            }
+            error_response(StatusCode::BAD_REQUEST, "创建标签失败")
+        })?;
 
     Ok(Json(tag.into()))
 }
@@ -114,11 +131,10 @@ pub async fn get_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let tag = state
-        .tag_service
-        .get_tag(tag_id)
-        .await
-        .map_err(|e| error_response(StatusCode::NOT_FOUND, e))?;
+    let tag = state.services.tag.get_tag(tag_id).await.map_err(|e| {
+        tracing::error!("get_tag failed: {}", e);
+        error_response(StatusCode::NOT_FOUND, "标签不存在")
+    })?;
 
     Ok(Json(tag.into()))
 }
@@ -129,10 +145,11 @@ pub async fn get_tag(
 pub async fn update_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
-    Json(req): Json<UpdateTagRequest>,
+    SafeJson(req): SafeJson<UpdateTagRequest>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
     let tag = state
-        .tag_service
+        .services
+        .tag
         .update_tag(
             tag_id,
             crate::services::tag_service::UpdateTagRequest {
@@ -141,7 +158,13 @@ pub async fn update_tag(
             },
         )
         .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| {
+            tracing::error!("update_tag failed: {}", e);
+            if e == TAG_NAME_TAKEN {
+                return conflict(e);
+            }
+            error_response(StatusCode::BAD_REQUEST, "更新标签失败")
+        })?;
 
     Ok(Json(tag.into()))
 }
@@ -153,11 +176,10 @@ pub async fn delete_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .tag_service
-        .delete_tag(tag_id)
-        .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+    state.services.tag.delete_tag(tag_id).await.map_err(|e| {
+        tracing::error!("delete_tag failed: {}", e);
+        error_response(StatusCode::BAD_REQUEST, "删除标签失败")
+    })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -172,13 +194,11 @@ pub async fn get_popular_tags(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<TagResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let tags = state
-        .tag_service
+        .services
+        .tag
         .get_popular_tags(20)
         .await
-        .map_err(|e| {
-            tracing::error!("get_popular_tags failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?;
+        .map_err(|e| internal_error_log("get_popular_tags failed", &e))?;
 
     Ok(Json(tags.into_iter().map(TagResponse::from).collect()))
 }
@@ -188,14 +208,25 @@ pub async fn get_popular_tags(
 /// Add tags to a video
 pub async fn add_tags_to_video(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
-    Json(tag_ids): Json<Vec<i32>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(video_id): Path<String>,
+    SafeJson(tag_ids): SafeJson<Vec<i32>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     state
-        .tag_service
-        .add_tags_to_video(video_id, &tag_ids)
+        .services
+        .tag
+        .add_tags_to_video(video_id, &tag_ids, auth_user.id, auth_user.is_admin)
         .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| {
+            tracing::error!("add_tags_to_video failed: {}", e);
+            if e == "无权操作" {
+                error_response(StatusCode::FORBIDDEN, &e)
+            } else {
+                error_response(StatusCode::BAD_REQUEST, "添加标签失败")
+            }
+        })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -208,14 +239,25 @@ pub async fn add_tags_to_video(
 /// Remove tags from a video
 pub async fn remove_tags_from_video(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
-    Json(tag_ids): Json<Vec<i32>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(video_id): Path<String>,
+    SafeJson(tag_ids): SafeJson<Vec<i32>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     state
-        .tag_service
-        .remove_tags_from_video(video_id, &tag_ids)
+        .services
+        .tag
+        .remove_tags_from_video(video_id, &tag_ids, auth_user.id, auth_user.is_admin)
         .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| {
+            tracing::error!("remove_tags_from_video failed: {}", e);
+            if e == "无权操作" {
+                error_response(StatusCode::FORBIDDEN, &e)
+            } else {
+                error_response(StatusCode::BAD_REQUEST, "移除标签失败")
+            }
+        })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -228,13 +270,24 @@ pub async fn remove_tags_from_video(
 /// Remove a single tag from a video
 pub async fn remove_tag_from_video(
     State(state): State<Arc<AppState>>,
-    Path((video_id, tag_id)): Path<(i64, i32)>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path((video_id, tag_id)): Path<(String, i32)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     state
-        .tag_service
-        .remove_tag_from_video(video_id, tag_id)
+        .services
+        .tag
+        .remove_tag_from_video(video_id, tag_id, auth_user.id, auth_user.is_admin)
         .await
-        .map_err(|e| error_response(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| {
+            tracing::error!("remove_tag_from_video failed: {}", e);
+            if e == "无权操作" {
+                error_response(StatusCode::FORBIDDEN, &e)
+            } else {
+                error_response(StatusCode::BAD_REQUEST, "移除标签失败")
+            }
+        })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -247,16 +300,16 @@ pub async fn remove_tag_from_video(
 /// Get tags for a video
 pub async fn get_video_tags(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
+    Path(video_id): Path<String>,
 ) -> Result<Json<Vec<TagResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     let tags = state
-        .tag_service
+        .services
+        .tag
         .get_video_tags(video_id)
         .await
-        .map_err(|e| {
-            tracing::error!("get_video_tags failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?;
+        .map_err(|e| internal_error_log("get_video_tags failed", &e))?;
 
     Ok(Json(tags.into_iter().map(TagResponse::from).collect()))
 }

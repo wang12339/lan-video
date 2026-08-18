@@ -25,3 +25,17 @@ backend/gen-cert.sh
 backend/gen_cert.sh
 node_modules/
 webapp/dist/
+
+# Vite cache
+webapp/node_modules/.vite/
+
+# Playwright MCP
+.playwright-mcp/
+**/.playwright-mcp/
+
+# Mimocode
+.mimocode/
+
+# Backend build artifacts
+backend/screenshot-*.png
+/media

@@ -1,0 +1,225 @@
+.watch-stats {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 480px;
+  max-height: 80vh;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  z-index: 1000;
+  opacity: 0;
+  visibility: hidden;
+  transition: all var(--duration-normal) var(--ease-spring);
+}
+
+.watch-stats.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.watch-stats-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 999;
+  opacity: 0;
+  visibility: hidden;
+  transition: all var(--duration-normal) ease;
+}
+
+.watch-stats-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.watch-stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.watch-stats-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.watch-stats-title svg {
+  color: var(--accent);
+}
+
+.watch-stats-close {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) ease;
+}
+
+.watch-stats-close:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.watch-stats-content {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/* Summary cards */
+.watch-stats-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.watch-stats-card {
+  background: var(--bg3);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  text-align: center;
+}
+
+.watch-stats-card-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.watch-stats-card-label {
+  font-size: 0.8125rem;
+  color: var(--text3);
+}
+
+/* Chart section */
+.watch-stats-chart {
+  background: var(--bg3);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.watch-stats-chart-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text2);
+  margin-bottom: 16px;
+}
+
+.watch-stats-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 120px;
+}
+
+.watch-stats-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+  transition: height var(--duration-normal) var(--ease-spring);
+  position: relative;
+}
+
+.watch-stats-bar:hover {
+  background: var(--accent2);
+}
+
+.watch-stats-bar::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.625rem;
+  color: var(--text3);
+  white-space: nowrap;
+}
+
+/* Top videos */
+.watch-stats-top {
+  margin-bottom: 16px;
+}
+
+.watch-stats-top-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text2);
+  margin-bottom: 12px;
+}
+
+.watch-stats-top-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.watch-stats-top-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg3);
+  border-radius: var(--radius-sm);
+}
+
+.watch-stats-top-rank {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text3);
+  background: var(--bg);
+  border-radius: 50%;
+}
+
+.watch-stats-top-rank.gold { background: #ffd700; color: #000; }
+.watch-stats-top-rank.silver { background: #c0c0c0; color: #000; }
+.watch-stats-top-rank.bronze { background: #cd7f32; color: #000; }
+
+.watch-stats-top-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.watch-stats-top-name {
+  font-size: 0.875rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-stats-top-time {
+  font-size: 0.75rem;
+  color: var(--text3);
+}
+
+.watch-stats-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--text3);
+}
+
+.watch-stats-empty svg {
+  margin-bottom: 12px;
+  opacity: 0.5;
+}

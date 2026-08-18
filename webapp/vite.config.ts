@@ -16,21 +16,24 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
-              return 'react-vendor'
-            }
-            if (id.includes('node_modules/react-router-dom') || id.includes('node_modules/@remix-run')) {
-              return 'router'
-            }
-            if (id.includes('node_modules/@tanstack/react-query')) {
-              return 'query'
-            }
-          },
+    // 启用 CSS 代码分割
+    cssCodeSplit: true,
+    // 启用压缩（使用默认的 esbuild）
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
+            return 'react-vendor'
+          }
+          if (id.includes('node_modules/react-router-dom') || id.includes('node_modules/@remix-run')) {
+            return 'router'
+          }
+          if (id.includes('node_modules/@tanstack/react-query')) {
+            return 'query'
+          }
         },
       },
+    },
   },
   server: {
     port: 5173,

@@ -8,21 +8,13 @@ use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
 use crate::models::video::OkResponse;
-use crate::services::admin_service::AdminError;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse, SafeJson};
+use crate::util::error::ServiceError;
+use crate::util::response::{ErrorResponse, SafeJson};
 
-/// Convert an `AdminError` into a tuple response.
-fn map_admin_err(e: AdminError) -> (StatusCode, Json<ErrorResponse>) {
-    match e {
-        AdminError::NotFound => error_response(StatusCode::NOT_FOUND, "用户不存在"),
-        AdminError::SelfAction => error_response(StatusCode::BAD_REQUEST, "不能对自己执行此操作"),
-        AdminError::InvalidPassword => {
-            error_response(StatusCode::BAD_REQUEST, "密码长度需在 10-128 个字符之间")
-        }
-        AdminError::HashFailed => error_response(StatusCode::INTERNAL_SERVER_ERROR, "密码加密失败"),
-        AdminError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-    }
+/// Convert a `ServiceError` into a tuple response.
+fn map_admin_err(e: ServiceError) -> (StatusCode, Json<ErrorResponse>) {
+    e.into_tuple()
 }
 
 /// GET /admin/users
@@ -33,7 +25,12 @@ pub async fn list_users(
     Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
     (StatusCode, Json<ErrorResponse>),
 > {
-    let users = state.admin_service.list_users().await.map_err(map_admin_err)?;
+    let users = state
+        .services
+        .admin
+        .list_users(_auth_user.tenant_id)
+        .await
+        .map_err(map_admin_err)?;
     Ok(Json(users))
 }
 
@@ -44,7 +41,8 @@ pub async fn delete_user(
     Path(id): Path<i64>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let outcome = state
-        .admin_service
+        .services
+        .admin
         .delete_user(id, auth_user.id)
         .await
         .map_err(map_admin_err)?;
@@ -81,7 +79,8 @@ pub async fn reset_user_password(
     SafeJson(req): SafeJson<ResetPasswordRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let outcome = state
-        .admin_service
+        .services
+        .admin
         .reset_user_password(id, &req.password)
         .await
         .map_err(map_admin_err)?;
@@ -106,7 +105,8 @@ pub async fn toggle_user_admin(
     Path(id): Path<i64>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let outcome = state
-        .admin_service
+        .services
+        .admin
         .toggle_user_admin(id, auth_user.id)
         .await
         .map_err(map_admin_err)?;
@@ -138,7 +138,8 @@ pub async fn approve_user(
     SafeJson(req): SafeJson<ApproveRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let outcome = state
-        .admin_service
+        .services
+        .admin
         .approve_user(id, req.approved)
         .await
         .map_err(map_admin_err)?;
@@ -162,7 +163,8 @@ pub async fn kick_user(
     Path(id): Path<i64>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let count = state
-        .admin_service
+        .services
+        .admin
         .kick_user(id)
         .await
         .map_err(map_admin_err)?;

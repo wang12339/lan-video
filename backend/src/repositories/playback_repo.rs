@@ -7,6 +7,36 @@ struct PlaybackRow {
     pub duration_ms: i64,
 }
 
+/// 共享行结构：观看历史与收藏列表返回相同字段。
+#[derive(Debug, sqlx::FromRow)]
+struct HistoryRow {
+    video_id: i64,
+    title: String,
+    cover_url: Option<String>,
+    stream_url: String,
+    source_type: String,
+    category: String,
+    position_ms: i64,
+    duration_ms: i64,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<HistoryRow> for RecentWatchItem {
+    fn from(r: HistoryRow) -> Self {
+        RecentWatchItem {
+            video_id: r.video_id,
+            title: r.title,
+            cover_url: r.cover_url,
+            stream_url: r.stream_url,
+            source_type: r.source_type,
+            category: r.category,
+            position_ms: r.position_ms,
+            duration_ms: r.duration_ms,
+            updated_at: r.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PlaybackRepository {
     pool: PgPool,
@@ -41,20 +71,8 @@ impl PlaybackRepository {
         username: &str,
         limit: Option<i64>,
     ) -> Result<Vec<RecentWatchItem>, sqlx::Error> {
-        #[derive(Debug, sqlx::FromRow)]
-        struct Row {
-            video_id: i64,
-            title: String,
-            cover_url: Option<String>,
-            stream_url: String,
-            source_type: String,
-            category: String,
-            position_ms: i64,
-            duration_ms: i64,
-            updated_at: chrono::DateTime<chrono::Utc>,
-        }
         let limit = limit.unwrap_or(500);
-        let rows = sqlx::query_as::<_, Row>(
+        let rows = sqlx::query_as::<_, HistoryRow>(
             r#"SELECT h.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
                       h.position_ms, h.duration_ms, h.updated_at
                FROM playback_history h
@@ -67,20 +85,7 @@ impl PlaybackRepository {
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| RecentWatchItem {
-                video_id: r.video_id,
-                title: r.title,
-                cover_url: r.cover_url,
-                stream_url: r.stream_url,
-                source_type: r.source_type,
-                category: r.category,
-                position_ms: r.position_ms,
-                duration_ms: r.duration_ms,
-                updated_at: r.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            })
-            .collect())
+        Ok(rows.into_iter().map(RecentWatchItem::from).collect())
     }
 
     pub async fn upsert_playback(
@@ -190,22 +195,10 @@ impl PlaybackRepository {
         &self,
         username: &str,
     ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
-        #[derive(Debug, sqlx::FromRow)]
-        struct Row {
-            video_id: i64,
-            title: String,
-            cover_url: Option<String>,
-            stream_url: String,
-            source_type: String,
-            category: String,
-            position_ms: i64,
-            duration_ms: i64,
-            updated_at: chrono::DateTime<chrono::Utc>,
-        }
-        let rows = sqlx::query_as::<_, Row>(
+        let rows = sqlx::query_as::<_, HistoryRow>(
             r#"SELECT f.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
                       COALESCE(h.position_ms, 0) AS position_ms, COALESCE(h.duration_ms, 0) AS duration_ms,
-                      f.created_at AS updated_at
+                      f.created_at::timestamptz AS updated_at
                FROM user_favorites f
                JOIN videos v ON f.video_id = v.id
                LEFT JOIN playback_history h ON f.video_id = h.video_id AND h.username = f.username
@@ -216,43 +209,6 @@ impl PlaybackRepository {
         .bind(username)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| RecentWatchItem {
-                video_id: r.video_id,
-                title: r.title,
-                cover_url: r.cover_url,
-                stream_url: r.stream_url,
-                source_type: r.source_type,
-                category: r.category,
-                position_ms: r.position_ms,
-                duration_ms: r.duration_ms,
-                updated_at: r.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            })
-            .collect())
-    }
-
-    pub async fn delete_playback_history_by_video(&self, id: i64) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM playback_history WHERE video_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected())
-    }
-
-    pub async fn delete_likes_by_video(&self, video_id: i64) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM user_likes WHERE video_id = $1")
-            .bind(video_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected())
-    }
-
-    pub async fn delete_favorites_by_video(&self, video_id: i64) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM user_favorites WHERE video_id = $1")
-            .bind(video_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected())
+        Ok(rows.into_iter().map(RecentWatchItem::from).collect())
     }
 }

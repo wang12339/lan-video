@@ -11,6 +11,21 @@
   min-height: 100vh;
   color: var(--text2);
   gap: 16px;
+  padding: 32px;
+}
+
+.player-error p {
+  font-size: 16px;
+  font-weight: 500;
+  text-align: center;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+.player-error-icon {
+  font-size: 48px;
+  margin-bottom: 4px;
+  opacity: 0.6;
 }
 
 .player-error button {
@@ -19,6 +34,18 @@
   color: #fff;
   border-radius: 20px;
   font-size: 13px;
+  font-weight: 500;
+  transition: transform 150ms, box-shadow 150ms;
+  box-shadow: 0 2px 12px rgba(255, 68, 51, 0.2);
+}
+
+.player-error button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(255, 68, 51, 0.35);
+}
+
+.player-error button:active {
+  transform: scale(0.97);
 }
 
 .player-wrap {
@@ -28,8 +55,19 @@
   aspect-ratio: 16 / 9;
   max-height: 80vh;
   overflow: hidden;
+  border-radius: 0;
 }
 
+.player-page > .player-detail {
+  border-radius: 0;
+}
+
+.player-page {
+  background: #000;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
 .player-video {
   width: 100%;
   height: 100%;
@@ -43,12 +81,12 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 52px;
+  height: calc(52px + env(safe-area-inset-top));
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
+  padding: env(safe-area-inset-top) 16px 0;
   background: linear-gradient(rgba(0, 0, 0, 0.85), transparent);
   opacity: 0;
   transition: opacity 250ms;
@@ -113,7 +151,7 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.45);
   opacity: 0;
   transition: 300ms;
   pointer-events: none;
@@ -126,12 +164,13 @@
 }
 
 .loading-ring {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.04);
+  border: 3px solid rgba(255, 255, 255, 0.06);
   border-top-color: var(--accent);
-  animation: player-spin 0.7s linear infinite;
+  border-right-color: rgba(255, 255, 255, 0.15);
+  animation: player-spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 @keyframes player-spin {
@@ -198,7 +237,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 36px 14px 12px;
+  padding: 36px 14px calc(12px + env(safe-area-inset-bottom));
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.9) 35%);
   opacity: 0;
   transition: opacity 280ms;
@@ -318,7 +357,7 @@
 }
 
 .speed-btn {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   width: auto;
   padding: 0 6px;
@@ -426,7 +465,7 @@
 }
 
 .pd-meta span {
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 12px;
   border-radius: 10px;
 }
@@ -435,30 +474,38 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  padding: 4px 12px;
+  font-size: 12px;
+  padding: 6px 14px;
   background: var(--bg3);
   color: var(--text2);
   border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .pd-share-btn:hover {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(255, 68, 51, 0.2);
+}
+
+.pd-share-btn:active {
+  transform: scale(0.96);
 }
 
 .pd-share-tooltip {
   font-size: 11px;
   color: var(--accent);
-  animation: fadeIn 0.2s;
+  animation: shareTooltipIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
+@keyframes shareTooltipIn {
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; }
 }
 
@@ -524,7 +571,7 @@
 
 /* Related */
 .player-related {
-  padding: 6px 28px 48px;
+  padding: 8px 28px calc(48px + env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid rgba(255, 255, 255, 0.03);
 }
@@ -532,13 +579,25 @@
 .prs-title {
   font-size: 17px;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prs-title::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 2px;
 }
 
 .prs-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
 
 .player-loading-text {
@@ -553,7 +612,68 @@
     padding: 18px 20px 12px;
   }
   .player-related {
-    padding: 4px 20px 36px;
+    padding: 4px 20px calc(36px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .player-back,
+  .player-delete {
+    width: 44px;
+    height: 44px;
+  }
+
+  .ctrl-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .progress-wrap {
+    padding: 12px 0;
+  }
+
+  /* Progress bar thicker by default on touch */
+  .progress-bar {
+    height: 5px;
+  }
+
+  /* Progress dot always visible on touch */
+  .progress-dot {
+    opacity: 1;
+    width: 16px;
+    height: 16px;
+  }
+
+  .player-controls {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .volume-wrap:hover .volume-slider {
+    width: 56px;
+  }
+
+  /* Speed/Quality menu items larger */
+  .speed-opt {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  .quality-opt {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  /* Center play button larger */
+  .center-play {
+    width: 72px;
+    height: 72px;
+    font-size: 30px;
+  }
+
+  /* Player detail share button */
+  .pd-share-btn {
+    padding: 10px 18px;
+    font-size: 14px;
   }
 }
 
@@ -562,10 +682,24 @@
     aspect-ratio: 16 / 9;
     max-height: 45vh;
   }
+  .player-detail {
+    padding: 16px 14px 12px;
+  }
   .pd-title {
     font-size: 18px;
   }
+  .pd-desc {
+    font-size: 13px;
+    -webkit-line-clamp: 3;
+  }
+  .player-related {
+    padding: 4px 14px calc(32px + env(safe-area-inset-bottom));
+  }
   .prs-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .prs-title {
+    font-size: 15px;
   }
 }

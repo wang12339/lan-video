@@ -1,6 +1,6 @@
 use axum::{
     extract::{FromRequest, Request},
-    http::StatusCode,
+    http::{HeaderName, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -49,8 +49,18 @@ impl ApiHandlerError {
 
 impl From<sqlx::Error> for ApiHandlerError {
     fn from(e: sqlx::Error) -> Self {
-        tracing::error!("sqlx error in handler: {}", e);
-        Self::internal("数据库错误")
+        match e {
+            // A missing row is an expected condition, not an internal error.
+            // Log at debug (not error) so operations isn't spammed by 404s.
+            sqlx::Error::RowNotFound => {
+                tracing::debug!("sqlx RowNotFound in handler");
+                Self::not_found("资源不存在")
+            }
+            other => {
+                tracing::error!("sqlx error in handler: {}", other);
+                Self::internal("数据库错误")
+            }
+        }
     }
 }
 
@@ -88,6 +98,11 @@ pub fn unauthorized(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>)
 /// Convenience: build a 403 Forbidden response
 pub fn forbidden(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     error_response(StatusCode::FORBIDDEN, msg)
+}
+
+/// Convenience: build a 409 Conflict response
+pub fn conflict(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    error_response(StatusCode::CONFLICT, msg)
 }
 
 /// Convenience: build a 404 Not Found response
@@ -168,6 +183,9 @@ impl<T> std::ops::Deref for SafeJson<T> {
         &self.0
     }
 }
+
+/// Convenience: a response with a cache-control header for video list endpoints.
+pub type CachedResponse<T> = (StatusCode, [(HeaderName, String); 1], Json<T>);
 
 #[cfg(test)]
 mod tests {

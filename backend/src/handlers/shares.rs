@@ -1,14 +1,17 @@
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::header::SET_COOKIE;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::services::share_service::{is_valid_share_token, ShareError};
+use crate::services::share_service::is_valid_share_token;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse};
+use crate::util::error::ServiceError;
+use crate::util::hashid;
+use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
 #[derive(Deserialize)]
 pub struct CreateShareRequest {
@@ -18,7 +21,9 @@ pub struct CreateShareRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateShareResponse {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub video_id: i64,
     /// Raw share token — shown ONCE on creation. Never returned by any other endpoint.
     pub token: String,
@@ -30,65 +35,68 @@ pub struct CreateShareResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareListItem {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
     pub expires_at: Option<String>,
     pub created_at: String,
     pub active: bool,
 }
 
-/// Build the share URL.
-/// SECURITY (A08-01): prefer the configured `PUBLIC_URL` over request headers.
-fn build_share_url(
-    headers: &HeaderMap,
-    config: &crate::config::AppConfig,
-    token: &str,
-) -> String {
-    let base = if !config.public_url.is_empty() {
-        config.public_url.clone()
-    } else {
-        let scheme = headers
-            .get("x-forwarded-proto")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_ascii_lowercase())
-            .filter(|s| s == "http" || s == "https")
-            .unwrap_or_else(|| if config.cookie_secure { "https" } else { "http" }.into());
-        let host = headers
-            .get("Host")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("localhost:8082");
-        format!("{}://{}", scheme, host)
-    };
-    format!("{}/player#share={}", base.trim_end_matches('/'), token)
+/// Build the share URL from the configured PUBLIC_URL.
+fn build_share_url(config: &crate::config::AppConfig, token: &str) -> String {
+    format!(
+        "{}/webapp/player#share={}",
+        config.public_url.trim_end_matches('/'),
+        token
+    )
 }
+
+/// Longest a share_token cookie is kept alive (365 days), matching the max
+/// lifetime allowed for a share link itself.
+const SHARE_COOKIE_MAX_AGE_SECS: i64 = 31_536_000;
 
 /// POST /videos/{id}/share
 pub async fn create_share_link(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Path(video_id): Path<i64>,
-    headers: HeaderMap,
-    Json(req): Json<CreateShareRequest>,
+    Path(video_id): Path<String>,
+    SafeJson(req): SafeJson<CreateShareRequest>,
 ) -> Result<(StatusCode, Json<CreateShareResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let _video = state
-        .video_repo
-        .find_by_id(video_id)
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+
+    // SECURITY (H-02): a share link exposes the video to anonymous access,
+    // so only the video's uploader (or an admin) may create one. The
+    // ownership lookup doubles as the existence check: a missing video keeps
+    // its 404 semantics, and nothing beyond the video's existence is
+    // revealed to callers who are not allowed to share it.
+    let ownership = state
+        .repos
+        .share
+        .find_video_ownership(video_id)
         .await
-        .map_err(|e| {
-            tracing::error!("create_share_link failed to find video: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?
+        .map_err(|e| internal_error_log("create_share_link failed to look up video ownership", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
 
+    if !auth_user.is_admin && ownership.uploader_id != Some(auth_user.id) {
+        return Err(error_response(StatusCode::FORBIDDEN, "无权分享该视频"));
+    }
+    // Multi-tenant boundary: a video may only be shared by a user of its own
+    // tenant. `videos.tenant_id` has existed since migration 034 but is
+    // never populated with a non-default value yet, so this check is a
+    // no-op today and becomes an active boundary once tenants exist (H-02).
+    if ownership.tenant_id != auth_user.tenant_id {
+        return Err(error_response(StatusCode::FORBIDDEN, "无权分享该视频"));
+    }
+
     let (token, share) = state
-        .share_service
+        .services
+        .share
         .create_share_link(video_id, auth_user.id, req.expires_in_days)
         .await
-        .map_err(|e| match e {
-            ShareError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            other => other.into_response(),
-        })?;
+        .map_err(ServiceError::into_tuple)?;
 
-    let share_url = build_share_url(&headers, &state.config, &token);
+    let share_url = build_share_url(&state.config, &token);
 
     tracing::info!(
         actor = %auth_user.username,
@@ -122,28 +130,27 @@ pub async fn get_share_video(
         return Err(error_response(StatusCode::BAD_REQUEST, "分享链接格式无效"));
     }
     let share = state
-        .share_service
+        .services
+        .share
         .get_share_video(&token)
         .await
         .map_err(|e| match e {
-            ShareError::Invalid(msg) => error_response(StatusCode::BAD_REQUEST, msg),
-            ShareError::NotFound => error_response(StatusCode::NOT_FOUND, "分享链接无效或已过期"),
-            ShareError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"),
+            ServiceError::NotFound(_) => {
+                error_response(StatusCode::NOT_FOUND, "分享链接无效或已过期")
+            }
+            other => other.into_tuple(),
         })?;
 
     let video = state
-        .video_repo
+        .repos
+        .video
         .find_by_id(share.video_id)
         .await
-        .map_err(|e| {
-            tracing::error!("get_share_video find_by_id failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?
+        .map_err(|e| internal_error_log("get_share_video find_by_id failed", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
 
     let body = Json(serde_json::json!({
-        "id": video.id,
+        "id": hashid::encode_id(video.id),
         "title": video.title,
         "description": video.description,
         "category": video.category,
@@ -151,21 +158,35 @@ pub async fn get_share_video(
         "sourceType": video.source_type,
         "streamUrl": video.stream_url,
         "share": {
-            "id": share.id,
+            "id": hashid::encode_id(share.id),
             "expiresAt": share.expires_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
         }
     }));
 
     let mut resp = body.into_response();
-    use axum::http::header::{HeaderName, HeaderValue};
-    let cookie_name = HeaderName::from_static("set-cookie");
+    // Persist the token as an HttpOnly SameSite=Strict cookie so the browser's
+    // <video> element can authenticate media range requests without putting the
+    // token in the URL. Max-Age tracks the share's remaining lifetime (capped
+    // at one year) so playback keeps working for long-lived shares.
+    let max_age = match share.expires_at {
+        Some(exp) => {
+            let remaining = (exp - chrono::Utc::now().naive_utc()).num_seconds();
+            remaining.clamp(0, SHARE_COOKIE_MAX_AGE_SECS)
+        }
+        None => SHARE_COOKIE_MAX_AGE_SECS,
+    };
     let cookie = format!(
-        "share_token={}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict{}",
+        "share_token={}; Path=/; Max-Age={}; HttpOnly; SameSite=Strict{}",
         token,
-        if state.config.cookie_secure { "; Secure" } else { "" }
+        max_age,
+        if state.config.cookie_secure {
+            "; Secure"
+        } else {
+            ""
+        }
     );
     if let Ok(val) = HeaderValue::from_str(&cookie) {
-        resp.headers_mut().insert(cookie_name, val);
+        resp.headers_mut().insert(SET_COOKIE, val);
     }
     Ok(resp)
 }
@@ -176,13 +197,11 @@ pub async fn list_my_shares(
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Vec<ShareListItem>>, (StatusCode, Json<ErrorResponse>)> {
     let shares = state
-        .share_service
+        .services
+        .share
         .list_my_shares(auth_user.id)
         .await
-        .map_err(|e| match e {
-            ShareError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            other => other.into_response(),
-        })?;
+        .map_err(ServiceError::into_tuple)?;
     let now = chrono::Utc::now().naive_utc();
     let items: Vec<ShareListItem> = shares
         .into_iter()
@@ -208,17 +227,20 @@ pub async fn list_my_shares(
 pub async fn delete_share_link(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Path((video_id, share_id)): Path<(i64, i64)>,
+    Path((video_id, share_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    let share_id = hashid::decode_id_or_numeric(&share_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的分享链接ID"))?;
     state
-        .share_service
+        .services
+        .share
         .delete_share_link(video_id, share_id, auth_user.id, auth_user.is_admin)
         .await
         .map_err(|e| match e {
-            ShareError::NotFound => error_response(StatusCode::NOT_FOUND, "分享链接不存在"),
-            ShareError::Forbidden => error_response(StatusCode::FORBIDDEN, "无权删除"),
-            ShareError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"),
+            ServiceError::Forbidden(_) => error_response(StatusCode::FORBIDDEN, "无权删除"),
+            other => other.into_tuple(),
         })?;
 
     tracing::info!(
@@ -235,17 +257,16 @@ pub async fn delete_share_link(
 pub async fn revoke_my_share(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Path(share_id): Path<i64>,
+    Path(share_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let share_id = hashid::decode_id_or_numeric(&share_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的分享链接ID"))?;
     state
-        .share_service
+        .services
+        .share
         .revoke_my_share(share_id, auth_user.id)
         .await
-        .map_err(|e| match e {
-            ShareError::NotFound => error_response(StatusCode::NOT_FOUND, "分享链接不存在"),
-            ShareError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"),
-        })?;
+        .map_err(ServiceError::into_tuple)?;
     tracing::info!(
         actor = %auth_user.username,
         share_id = share_id,

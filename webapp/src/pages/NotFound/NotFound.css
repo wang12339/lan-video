@@ -1,0 +1,26 @@
+.not-found {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  gap: 1rem;
+  color: var(--text3);
+  padding: 0 16px;
+  text-align: center;
+}
+.not-found h1 {
+  font-size: clamp(2.75rem, 18vw, 4rem);
+  margin: 0;
+  color: var(--accent);
+}
+.not-found a {
+  color: var(--accent);
+  text-decoration: none;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+}
+.not-found a:hover {
+  background: var(--bg2);
+}

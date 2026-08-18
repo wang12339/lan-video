@@ -3,7 +3,7 @@
 import { request } from './client';
 
 export interface Playlist {
-  id: number;
+  id: string;
   name: string;
   description: string | null;
   is_public: boolean;
@@ -22,26 +22,29 @@ export async function listMyPlaylists(): Promise<Playlist[]> {
   return res.playlists;
 }
 
-export async function getPlaylist(id: number): Promise<Playlist> {
-  return request<Playlist>(`/playlists/${id}`);
-}
-
 export async function createPlaylist(data: { name: string; description?: string; isPublic?: boolean }): Promise<Playlist> {
-  return request<Playlist>('/playlists', { method: 'POST', body: { name: data.name, description: data.description, is_public: data.isPublic } });
+  const body: Record<string, unknown> = { name: data.name };
+  if (data.description !== undefined) body.description = data.description;
+  if (data.isPublic !== undefined) body.is_public = data.isPublic;
+  return request<Playlist>('/playlists', { method: 'POST', body });
 }
 
-export async function updatePlaylist(id: number, data: { name?: string; description?: string; isPublic?: boolean }): Promise<void> {
-  await request(`/playlists/${id}`, { method: 'PUT', body: { name: data.name, description: data.description, is_public: data.isPublic } });
+export async function updatePlaylist(id: string, data: { name?: string; description?: string; isPublic?: boolean }): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (data.name !== undefined) body.name = data.name;
+  if (data.description !== undefined) body.description = data.description;
+  if (data.isPublic !== undefined) body.is_public = data.isPublic;
+  await request(`/playlists/${id}`, { method: 'PUT', body });
 }
 
-export async function deletePlaylist(id: number): Promise<void> {
+export async function deletePlaylist(id: string): Promise<void> {
   await request(`/playlists/${id}`, { method: 'DELETE' });
 }
 
-export async function addVideoToPlaylist(playlistId: number, videoId: number): Promise<void> {
+export async function addVideoToPlaylist(playlistId: string, videoId: string): Promise<void> {
   await request(`/playlists/${playlistId}/videos`, { method: 'POST', body: { video_id: videoId } });
 }
 
-export async function removeVideoFromPlaylist(playlistId: number, videoId: number): Promise<void> {
+export async function removeVideoFromPlaylist(playlistId: string, videoId: string): Promise<void> {
   await request(`/playlists/${playlistId}/videos/${videoId}`, { method: 'DELETE' });
 }

@@ -1,0 +1,147 @@
+.feature-flags {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.feature-flags-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+
+.feature-flags-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.feature-flags-reset {
+  padding: 6px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.feature-flags-reset:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.feature-flags-list {
+  padding: 8px;
+}
+
+.feature-flag-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.feature-flag-item:hover {
+  background: var(--bg3);
+}
+
+.feature-flag-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-flag-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.feature-flag-key {
+  display: block;
+  font-size: 11px;
+  color: var(--text3);
+  font-family: monospace;
+}
+
+.feature-flag-toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.feature-flag-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.feature-flag-toggle .toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.feature-flag-toggle.on .toggle-thumb {
+  transform: translateX(20px);
+}
+
+.feature-flag-value {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text2);
+  padding: 4px 8px;
+  background: var(--bg3);
+  border-radius: var(--radius-sm);
+}
+
+.feature-flag-reset-btn {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 16px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.feature-flag-reset-btn:hover {
+  color: var(--text);
+}
+
+/* 移动端适配 */
+@media (max-width: 480px) {
+  .feature-flag-item {
+    flex-wrap: wrap;
+  }
+  
+  .feature-flag-info {
+    flex: 1 1 100%;
+  }
+  
+  .feature-flag-toggle,
+  .feature-flag-value {
+    flex: 1;
+  }
+}

@@ -1,5 +1,6 @@
 // 数据映射工具
 
+import i18n from '../i18n';
 import { mediaUrl } from './client';
 import type { Video, PlaybackHistory, MappedPlaylist, MappedVideo, MappedImage, MappedHistory } from './types'
 import type { Playlist } from './playlists'
@@ -8,7 +9,7 @@ import type { Playlist } from './playlists'
 const placeholderCache = new Map<string, string>();
 const PLACEHOLDER_CACHE_MAX = 100;
 
-function placeholderDataURL(id: number, type: string): string {
+function placeholderDataURL(id: string, type: string): string {
   const key = `${id}:${type}`;
   const cached = placeholderCache.get(key);
   if (cached) return cached;
@@ -58,8 +59,8 @@ export function formatDuration(totalSeconds: number, zeroFallback?: string): str
 
 export function formatViews(n: number | null | undefined): string {
   if (!n && n !== 0) return '';
-  if (n >= 100000000) return (n / 100000000).toFixed(1) + '亿';
-  if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+  if (n >= 100000000) return i18n.t('common.unitYi', { n: (n / 100000000).toFixed(1) });
+  if (n >= 10000) return i18n.t('common.unitWan', { n: (n / 10000).toFixed(1) });
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
 }
@@ -71,7 +72,7 @@ export function mapVideo(v: Video | null): MappedVideo | null {
   if (!v) return null;
   return {
     id: v.id,
-    title: v.title || '未命名',
+    title: v.title || i18n.t('common.untitled'),
     category: v.category || 'general',
     description: v.description || '',
     thumb: mediaUrl(v.thumbUrl) || mediaUrl(v.coverUrl) || placeholderDataURL(v.id, 'local_video'),
@@ -82,6 +83,7 @@ export function mapVideo(v: Video | null): MappedVideo | null {
     views: v.views || 0,
     date: v.createdAt || '',
     progress: v.watchPosition || 0,
+    hasVariants: v.hasVariants,
     uploaderId: v.uploaderId,
   };
 }
@@ -90,7 +92,7 @@ export function mapImage(v: Video | null): MappedImage | null {
   if (!v) return null;
   return {
     id: v.id,
-    title: v.title || '未命名',
+    title: v.title || i18n.t('common.untitled'),
     category: v.category || 'general',
     thumb: mediaUrl(v.thumbUrl) || mediaUrl(v.streamUrl) || placeholderDataURL(v.id, 'local_image'),
     sourceType: v.sourceType || 'local_image',
@@ -102,9 +104,9 @@ export function mapHistory(h: PlaybackHistory | null): MappedHistory | null {
   const prog = h.durationMs > 0 ? Math.round((h.positionMs / h.durationMs) * 100) : 0;
   return {
     id: h.videoId,
-    title: h.title || '未命名',
+    title: h.title || i18n.t('common.untitled'),
     category: h.category || 'general',
-    thumb: mediaUrl(h.coverUrl) || (h.streamUrl && h.sourceType === 'local_image' ? mediaUrl(h.streamUrl) : null) || placeholderDataURL(h.videoId || 0, 'local_video'),
+    thumb: mediaUrl(h.coverUrl) || (h.streamUrl && h.sourceType === 'local_image' ? mediaUrl(h.streamUrl) : null) || placeholderDataURL(h.videoId || '0', 'local_video'),
     stream: mediaUrl(h.streamUrl),
     sourceType: h.sourceType || 'local_video',
     positionMs: h.positionMs || 0,

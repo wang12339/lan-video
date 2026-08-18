@@ -1,17 +1,18 @@
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::middleware::auth::AuthUser;
 use crate::models::video::OkResponse;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse, SafeJson};
+use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
 /// POST /admin/track — 记录用户操作
 pub async fn track_action(
     _state: State<Arc<AppState>>,
     axum::Extension(auth_user): axum::Extension<crate::middleware::auth::AuthUser>,
     SafeJson(req): SafeJson<TrackRequest>,
-) -> Result<axum::http::StatusCode, (axum::http::StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     tracing::info!(
         user = %auth_user.username,
         action = %req.action,
@@ -19,7 +20,7 @@ pub async fn track_action(
         page = req.page.as_deref().unwrap_or(""),
         "用户操作"
     );
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(serde::Deserialize)]
@@ -32,33 +33,44 @@ pub struct TrackRequest {
 /// GET /admin/stats — 数据统计面板
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<ErrorResponse>)> {
-    use axum::http::StatusCode;
-
-    let by_type = state.video_repo.count_by_type().await.map_err(|e| {
-        tracing::error!("count_by_type: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
-    let by_category = state.video_repo.count_by_category().await.map_err(|e| {
-        tracing::error!("count_by_category: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
-    let total_views = state.video_repo.total_views().await.map_err(|e| {
-        tracing::error!("total_views: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
-    let total_duration = state.video_repo.total_duration_secs().await.map_err(|e| {
-        tracing::error!("total_duration: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
-    let user_count = state.user_repo.count_users().await.map_err(|e| {
-        tracing::error!("count_users: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
-    let pending_count = state.user_repo.count_pending_users().await.map_err(|e| {
-        tracing::error!("count_pending: {}", e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-    })?;
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let by_type = state
+        .repos
+        .video
+        .count_by_type()
+        .await
+        .map_err(|e| internal_error_log("count_by_type", &e))?;
+    let by_category = state
+        .repos
+        .video
+        .count_by_category()
+        .await
+        .map_err(|e| internal_error_log("count_by_category", &e))?;
+    let total_views = state
+        .repos
+        .video
+        .total_views()
+        .await
+        .map_err(|e| internal_error_log("total_views", &e))?;
+    let total_duration = state
+        .repos
+        .video
+        .total_duration_secs()
+        .await
+        .map_err(|e| internal_error_log("total_duration", &e))?;
+    let user_count = state
+        .repos
+        .user
+        .count_users(auth_user.tenant_id)
+        .await
+        .map_err(|e| internal_error_log("count_users", &e))?;
+    let pending_count = state
+        .repos
+        .user
+        .count_pending_users(auth_user.tenant_id)
+        .await
+        .map_err(|e| internal_error_log("count_pending", &e))?;
 
     let total_videos: i64 = by_type.iter().map(|(_, c)| c).sum();
     let video_count: i64 = by_type
@@ -103,28 +115,37 @@ pub struct RegistrationToggleRequest {
 pub async fn set_registration_enabled(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<RegistrationToggleRequest>,
-) -> Json<OkResponse> {
+) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Persist to DB first; only update in-memory state on success
+    state
+        .repos
+        .registration
+        .set_enabled(req.enabled)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to persist registration toggle: {}", e);
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "保存注册开关失败")
+        })?;
     state.config.set_registration_enabled(req.enabled);
-    if let Err(e) = state.registration_repo.set_enabled(req.enabled).await {
-        tracing::error!("Failed to persist registration toggle: {}", e);
-    }
     tracing::info!(
         enabled = req.enabled,
         "registration toggle changed by admin"
     );
-    Json(OkResponse {
+    Ok(Json(OkResponse {
         ok: true,
         error: None,
         deleted: None,
-    })
+    }))
 }
 
 /// GET /admin/system — 系统监控
 pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let db_stats = sqlx::query_as::<_, (i32,)>("SELECT count(*)::int FROM pg_stat_activity")
-        .fetch_one(state.user_repo.pool())
+    let db_connections = state
+        .repos
+        .user
+        .count_active_connections()
         .await
-        .unwrap_or((0,));
+        .unwrap_or(0);
 
     // Media directory disk usage
     let media_root = state.config.media_root.clone();
@@ -153,9 +174,7 @@ pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json:
     Json(serde_json::json!({
         "mediaSizeBytes": disk_usage,
         "mediaSizeHuman": format_bytes(disk_usage),
-        "dbConnections": db_stats.0,
-        "rustLog": std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        "mediaRoot": state.config.media_root,
+        "dbConnections": db_connections,
     }))
 }
 

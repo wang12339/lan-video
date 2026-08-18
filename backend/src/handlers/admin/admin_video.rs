@@ -11,7 +11,8 @@ use crate::middleware::auth::AuthUser;
 use crate::models::video::*;
 use crate::services::media_service::is_safe_external_url;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse, SafeJson};
+use crate::util::hashid;
+use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 use serde::Deserialize;
 
 /// POST /admin/videos/external
@@ -54,7 +55,8 @@ pub async fn add_external_video(
     }
 
     let id = state
-        .video_service
+        .services
+        .video
         .add_external_video(
             &req.title,
             req.description.as_deref(),
@@ -64,9 +66,9 @@ pub async fn add_external_video(
             Some(auth_user.id),
         )
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
 
-    state.video_cache.invalidate_all();
+    state.invalidate_caches();
     tracing::info!(
         actor = %auth_user.username,
         video_id = id,
@@ -87,7 +89,6 @@ pub async fn upload_video(
 
     let mut file_name: Option<String> = None;
     let mut category = "local".to_string();
-    let mut client_hash: Option<String> = None;
     let mut temp_path: Option<std::path::PathBuf> = None;
 
     while let Some(mut field) = multipart
@@ -148,9 +149,6 @@ pub async fn upload_video(
             "category" => {
                 category = field.text().await.unwrap_or_default();
             }
-            "fileHash" => {
-                client_hash = Some(field.text().await.unwrap_or_default());
-            }
             _ => {}
         }
     }
@@ -159,14 +157,9 @@ pub async fn upload_video(
     let tmp_path = temp_path.ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "缺少文件"))?;
 
     let id = match state
-        .media_service
-        .upload_video_file(
-            &file_name,
-            &tmp_path,
-            &category,
-            client_hash.as_deref(),
-            auth_user.id,
-        )
+        .services
+        .media
+        .upload_video_file(&file_name, &tmp_path, &category, auth_user.id)
         .await
     {
         Ok(id) => id,
@@ -181,7 +174,7 @@ pub async fn upload_video(
         }
     };
 
-    state.video_cache.invalidate_all();
+    state.invalidate_caches();
     tracing::info!(
         actor = %auth_user.username,
         video_id = id,
@@ -303,11 +296,15 @@ pub async fn upload_resume(
     if received >= total_size {
         let tmp_clone = tmp.clone();
         let id = state
-            .media_service
-            .upload_video_file(&file_name, &tmp_clone, &category, Some(&hash), auth_user.id)
+            .services
+            .media
+            .upload_video_file(&file_name, &tmp_clone, &category, auth_user.id)
             .await
             .map_err(|e| {
-                let _ = std::fs::remove_file(&tmp);
+                let tmp_for_cleanup = tmp.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::fs::remove_file(&tmp_for_cleanup).await;
+                });
                 if e.starts_with("重复") || e.starts_with("存储配额") {
                     error_response(StatusCode::CONFLICT, e)
                 } else {
@@ -315,7 +312,7 @@ pub async fn upload_resume(
                 }
             })?;
         state.upload_locks.remove(&hash);
-        state.video_cache.invalidate_all();
+        state.invalidate_caches();
         tracing::info!(
             actor = %auth_user.username,
             video_id = id,
@@ -345,10 +342,11 @@ pub async fn check_hashes(
         ));
     }
     let existing = state
-        .video_service
+        .services
+        .video
         .check_existing_hashes(req.hashes)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
     Ok(Json(CheckHashesResponse { existing }))
 }
 
@@ -364,10 +362,11 @@ pub async fn check_files(
         ));
     }
     let existing_indices = state
-        .video_service
+        .services
+        .video
         .check_existing_files(&files)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
     Ok(Json(CheckFilesResponse {
         existing_indices: existing_indices.into_iter().collect(),
     }))
@@ -392,13 +391,14 @@ pub async fn scan_media(
 
     tracing::info!(category = %category, "admin started media scan");
     let added = state
-        .video_service
+        .services
+        .video
         .scan_media_directory(&category)
         .await
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "扫描失败"))?;
 
     tracing::info!(category = %category, added = added, "admin media scan complete");
-    state.video_cache.invalidate_all();
+    state.invalidate_caches();
     Ok(Json(serde_json::json!({"added": added})))
 }
 
@@ -426,7 +426,8 @@ pub async fn update_video(
     }
 
     let ok = state
-        .video_service
+        .services
+        .video
         .update_video(
             id,
             req.title.as_deref(),
@@ -434,12 +435,9 @@ pub async fn update_video(
             req.category.as_deref(),
         )
         .await
-        .map_err(|e| {
-            tracing::error!("update_video failed: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-        })?;
+        .map_err(|e| internal_error_log("update_video failed", &e))?;
 
-    state.video_cache.invalidate_all();
+    state.invalidate_caches();
     if ok {
         Ok(Json(OkResponse {
             ok: true,
@@ -458,10 +456,13 @@ pub async fn update_video(
 /// DELETE /admin/videos/{id}
 pub async fn delete_video(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
-    state.video_cache.invalidate_all();
-    match state.video_service.delete_video(id).await {
+    let Some(id) = hashid::decode_id_or_numeric(&id) else {
+        return Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"));
+    };
+    state.invalidate_caches();
+    match state.services.video.delete_video(id).await {
         Ok(true) => {
             tracing::info!(video_id = id, "admin deleted video");
             Ok(Json(OkResponse {
@@ -488,7 +489,7 @@ pub async fn delete_video(
 /// DELETE /admin/videos/batch
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
-    SafeJson(ids): SafeJson<Vec<i64>>,
+    SafeJson(ids): SafeJson<Vec<String>>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ids.len() > 500 {
         return Err(error_response(
@@ -496,17 +497,22 @@ pub async fn delete_videos(
             "最多批量删除 500 个",
         ));
     }
-    state.video_cache.invalidate_all();
+    let numeric_ids: Vec<i64> = ids
+        .iter()
+        .filter_map(|id| hashid::decode_id_or_numeric(id))
+        .collect();
+    state.invalidate_caches();
     let deleted = state
-        .video_service
-        .delete_videos(&ids)
+        .services
+        .video
+        .delete_videos(&numeric_ids)
         .await
-        .unwrap_or_else(|e| {
+        .map_err(|e| {
             tracing::error!("delete_videos failed: {}", e);
-            0
-        });
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "批量删除视频失败")
+        })?;
     tracing::info!(
-        count = ids.len(),
+        count = numeric_ids.len(),
         deleted = deleted,
         "admin batch deleted videos"
     );
@@ -533,12 +539,13 @@ pub async fn upload_cover(
                 .map_err(|_| error_response(StatusCode::BAD_REQUEST, "读取封面数据失败"))?;
 
             state
-                .media_service
+                .services
+                .media
                 .update_cover(id, &file_name, data)
                 .await
                 .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "封面更新失败"))?;
 
-            state.video_cache.invalidate_all();
+            state.invalidate_caches();
             return Ok(StatusCode::NO_CONTENT);
         }
     }
@@ -548,9 +555,9 @@ pub async fn upload_cover(
 
 /// POST /admin/videos/backfill-thumbnails
 pub async fn backfill_thumbnails(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    match state.media_service.backfill_thumbnails().await {
+    match state.services.media.backfill_thumbnails().await {
         Ok((generated, errors)) => {
-            state.video_cache.invalidate_all();
+            state.invalidate_caches();
             Json(serde_json::json!({"ok": true, "generated": generated, "errors": errors}))
         }
         Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
@@ -581,11 +588,12 @@ pub async fn batch_update_category(
         ));
     }
     let updated = state
-        .video_repo
+        .repos
+        .video
         .batch_update_category(&req.ids, &req.category)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
-    state.video_cache.invalidate_all();
+        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+    state.invalidate_caches();
     Ok(Json(OkResponse {
         ok: true,
         error: None,

@@ -1,72 +1,141 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listComments, createComment, deleteComment } from '../../api'
-import type { Comment } from '../../api'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import type { InfiniteData } from '@tanstack/react-query'
+import { request } from '../../api/client'
+import { createComment, deleteComment } from '../../api'
+import type { Comment, CommentListResponse } from '../../api'
 import { useAuth } from '../../context/AuthContext'
+import { ConfirmDialog } from '../ui'
 import CommentItem from './CommentItem'
+import { COMMENT_MAX_LENGTH } from './utils'
 import './Comments.css'
 
+const COMMENT_PAGE_SIZE = 20
+
 interface Props {
-  videoId: number
+  videoId: string
 }
 
 export default function Comments({ videoId }: Props) {
   const { t } = useTranslation()
   const { user } = useAuth()
-  const [comments, setComments] = useState<Comment[]>([])
-  const [total, setTotal] = useState(0)
-  const pageRef = useRef(0)
-  const [loading, setLoading] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const queryClient = useQueryClient()
   const [content, setContent] = useState('')
-  const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Comment | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false)
+  const newCommentRef = useRef<HTMLDivElement>(null)
+  const commentsListRef = useRef<HTMLDivElement>(null)
 
-  const loadComments = useCallback(async (p: number, append = false) => {
-    setLoading(true)
-    setLoadError('')
-    try {
-      const res = await listComments(videoId, p)
-      setTotal(res.total)
-      setComments(prev => append ? [...prev, ...res.comments] : res.comments)
-    } catch (e) {
-      const err = e as { status?: number; message?: string }
-      setLoadError(err.status ? `服务器错误 (${err.status})` : t('comments.loadFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }, [videoId])
+  // 评论列表由 react-query 缓存（staleTime 30s，组件卸载后 gcTime 5min 内命中）；
+  // queryFn 走 request 但 skipCache=true，绕过 client 层 LRU，避免双重缓存失效不一致
+  const queryKey = ['comments', videoId] as const
+  const {
+    data,
+    isPending,
+    isError,
+    error,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) =>
+      request<CommentListResponse>(
+        `/videos/${videoId}/comments?page=${pageParam}&size=${COMMENT_PAGE_SIZE}`,
+        { skipCache: true },
+      ),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.comments.length, 0)
+      return loaded < lastPage.total ? allPages.length : undefined
+    },
+    enabled: !!videoId,
+    staleTime: 30_000,
+  })
 
-  useEffect(() => {
-    loadComments(0)
-  }, [loadComments])
+  const comments = data?.pages.flatMap((p) => p.comments) ?? []
+  const total = data?.pages[data.pages.length - 1]?.total ?? 0
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const trimmed = content.trim()
-    if (!trimmed || submitting) return
-    setSubmitting(true)
-    setSubmitError('')
-    try {
-      await createComment(videoId, trimmed)
+  const createMutation = useMutation({
+    mutationFn: (text: string) => createComment(videoId, text),
+    onSuccess: (created) => {
       setContent('')
-      loadComments(0)
-    } catch {
-      setSubmitError(t('comments.submitFailed'))
-    } finally {
-      setSubmitting(false)
+      setSubmitError('')
+      // 乐观插入第一页头部，避免提交后整页重拉
+      queryClient.setQueryData<InfiniteData<CommentListResponse>>(queryKey, (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          pages: old.pages.map((p, i) => (i === 0
+            ? { ...p, comments: [created, ...p.comments], total: p.total + 1 }
+            : p)),
+        }
+      })
+      // 滚动到新评论
+      setTimeout(() => {
+        newCommentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
+    },
+    onError: () => setSubmitError(t('comments.submitFailed')),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteComment(id),
+    onSuccess: (_data, id) => {
+      setDeleteTarget(null)
+      // 本地移除，避免删除后重拉
+      queryClient.setQueryData<InfiniteData<CommentListResponse>>(queryKey, (old) => {
+        if (!old || !old.pages.some((p) => p.comments.some((c) => c.id === id))) return old
+        return {
+          ...old,
+          pages: old.pages.map((p) => ({
+            ...p,
+            comments: p.comments.filter((c) => c.id !== id),
+            total: Math.max(0, p.total - 1),
+          })),
+        }
+      })
+    },
+    onError: () => setDeleteError(t('errors.serverError')),
+  })
+
+  const submit = () => {
+    const trimmed = content.trim()
+    if (!trimmed || createMutation.isPending) return
+    createMutation.mutate(trimmed)
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    submit()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      submit()
     }
   }
 
-  const handleDelete = async (commentId: number) => {
-    try {
-      await deleteComment(commentId)
-      setComments(prev => prev.filter(c => c.id !== commentId))
-      setTotal(prev => prev - 1)
-    } catch (e) {
-      console.error('Failed to delete comment:', e)
-    }
+  const handleLoadMore = () => {
+    if (isFetchingNextPage || !hasNextPage) return
+    setLoadMoreFailed(false)
+    fetchNextPage().catch(() => setLoadMoreFailed(true))
   }
+
+  const handleDelete = () => {
+    if (!deleteTarget) return
+    setDeleteError('')
+    deleteMutation.mutate(deleteTarget.id)
+  }
+
+  const countAtLimit = content.length > COMMENT_MAX_LENGTH * 0.9
+  const errorMessage = error?.message || t('comments.loadFailed')
 
   return (
     <div className="comments-section">
@@ -78,39 +147,76 @@ export default function Comments({ videoId }: Props) {
             className="comment-input"
             value={content}
             onChange={(e) => setContent(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={t('comments.placeholder')}
             rows={2}
-            maxLength={2000}
+            maxLength={COMMENT_MAX_LENGTH}
+            aria-label={t('comments.placeholder')}
           />
-          <button
-            className="comment-submit"
-            type="submit"
-            disabled={!content.trim() || submitting}
-          >
-            {submitting ? t('comments.submitting') : t('comments.submit')}
-          </button>
-          {submitError && <p className="comments-error" style={{ marginTop: 0 }}>{submitError}</p>}
+          <div className="comment-form-side">
+            <span className={`comment-count${countAtLimit ? ' near-limit' : ''}`}>
+              {content.length}/{COMMENT_MAX_LENGTH}
+            </span>
+            <button
+              className="comment-submit"
+              type="submit"
+              disabled={!content.trim() || createMutation.isPending}
+            >
+              {createMutation.isPending ? t('comments.submitting') : t('comments.submit')}
+            </button>
+            {submitError && <p className="comments-error compact" role="alert">{submitError}</p>}
+          </div>
         </form>
       )}
 
-      <div className="comments-list">
-        {comments.map(c => (
-          <CommentItem key={c.id} comment={c} onDelete={handleDelete} videoId={videoId} />
+      <div className="comments-list" ref={commentsListRef}>
+        {comments.map((c, index) => (
+          <div key={c.id} ref={index === 0 ? newCommentRef : undefined}>
+            <CommentItem comment={c} onDelete={setDeleteTarget} videoId={videoId} />
+          </div>
         ))}
 
-        {loadError && (
-          <p className="comments-error">{loadError}</p>
+        {isPending && comments.length === 0 && (
+          <p className="comments-loading">{t('common.loading')}</p>
         )}
-        {comments.length === 0 && !loading && !loadError && (
+        {isError && comments.length === 0 && (
+          <div className="comments-error-block">
+            <p className="comments-error" role="alert">{errorMessage}</p>
+            <button className="retry-btn" onClick={() => void refetch()} disabled={isFetching}>
+              {t('common.retry')}
+            </button>
+          </div>
+        )}
+        {deleteError && (
+          <p className="comments-error" role="alert">{deleteError}</p>
+        )}
+        {comments.length === 0 && !isPending && !isError && (
           <p className="comments-empty">{t('comments.noComments')}</p>
         )}
 
-        {comments.length < total && (
-          <button className="load-more-btn" onClick={() => { pageRef.current += 1; loadComments(pageRef.current, true) }} disabled={loading}>
-            {loading ? t('common.loading') : t('common.loadMore')}
+        {loadMoreFailed && (
+          <>
+            <p className="comments-error compact" role="alert">{t('comments.loadFailed')}</p>
+            <button className="load-more-btn" onClick={handleLoadMore}>
+              {t('common.retry')}
+            </button>
+          </>
+        )}
+        {!loadMoreFailed && comments.length < total && (
+          <button className="load-more-btn" onClick={handleLoadMore} disabled={isFetchingNextPage}>
+            {isFetchingNextPage ? t('common.loading') : t('common.loadMore')}
           </button>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('comments.deleteConfirm')}
+        message={t('comments.notRecoverable')}
+        danger
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

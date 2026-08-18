@@ -1,0 +1,154 @@
+.sleep-timer {
+  position: relative;
+  display: inline-block;
+}
+
+.sleep-timer-trigger {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+}
+
+.sleep-timer-trigger:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.sleep-timer-trigger.active {
+  color: var(--accent);
+}
+
+.sleep-timer-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: all var(--duration-normal) var(--ease-spring);
+}
+
+.sleep-timer-dropdown.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.sleep-timer-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.sleep-timer-options {
+  padding: 8px;
+}
+
+.sleep-timer-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.sleep-timer-option:hover {
+  background: var(--bg3);
+}
+
+.sleep-timer-option.active {
+  background: rgba(255, 68, 51, 0.1);
+  color: var(--accent);
+}
+
+.sleep-timer-option-label {
+  font-size: 0.9375rem;
+}
+
+.sleep-timer-option-icon {
+  display: none;
+}
+
+.sleep-timer-option.active .sleep-timer-option-icon {
+  display: block;
+}
+
+.sleep-timer-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.sleep-timer-cancel {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.sleep-timer-cancel:hover {
+  background: var(--bg3);
+  border-color: var(--text3);
+}
+
+/* Toast notification */
+.sleep-timer-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  opacity: 0;
+  visibility: hidden;
+  transition: all var(--duration-normal) var(--ease-spring);
+}
+
+.sleep-timer-toast.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.sleep-timer-toast-icon {
+  color: var(--accent);
+}
+
+.sleep-timer-toast-text {
+  font-size: 0.9375rem;
+  color: var(--text);
+}
+
+.sleep-timer-toast-time {
+  color: var(--accent);
+  font-weight: 600;
+}

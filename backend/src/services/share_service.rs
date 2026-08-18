@@ -1,48 +1,10 @@
 use crate::repositories::share_repo::{ShareLink, ShareRepository};
-use crate::util::response::ErrorResponse;
-use axum::{http::StatusCode, Json};
+use crate::util::error::ServiceError;
 use rand::Rng;
 
 #[derive(Clone)]
 pub struct ShareService {
     repo: ShareRepository,
-}
-
-pub enum ShareError {
-    NotFound,
-    Forbidden,
-    Invalid(String),
-    Internal(String),
-}
-
-impl ShareError {
-    pub fn into_response(self) -> (StatusCode, Json<ErrorResponse>) {
-        match self {
-            ShareError::NotFound => (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse { error: "分享链接不存在".into() }),
-            ),
-            ShareError::Forbidden => (
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse { error: "无权操作".into() }),
-            ),
-            ShareError::Invalid(msg) => (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse { error: msg }),
-            ),
-            ShareError::Internal(msg) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: msg }),
-            ),
-        }
-    }
-}
-
-impl From<sqlx::Error> for ShareError {
-    fn from(e: sqlx::Error) -> Self {
-        tracing::error!("share service sqlx error: {}", e);
-        ShareError::Internal("数据库错误".into())
-    }
 }
 
 impl ShareService {
@@ -52,43 +14,43 @@ impl ShareService {
 
     /// Create a share link. Owner is the authenticated user.
     /// Returns the raw token (shown once) and the persisted share record.
+    ///
+    /// SECURITY (H-02): the authorization boundary (only the video's
+    /// uploader or an admin may create a share) is enforced by the caller —
+    /// `handlers::shares::create_share_link` checks `VideoOwnership` before
+    /// invoking this method. Do not call this method directly from an
+    /// unauthenticated or non-uploader path.
     pub async fn create_share_link(
         &self,
         video_id: i64,
         user_id: i64,
         expires_in_days: Option<i32>,
-    ) -> Result<(String, ShareLink), ShareError> {
+    ) -> Result<(String, ShareLink), ServiceError> {
         let token = generate_token();
+        let base = chrono::Utc::now().naive_utc();
+        // Inputs are clamped (1..=365 days, or the fixed 3h default), so the
+        // addition can never overflow; the fallback path is dead weight.
         let expires_at = match expires_in_days {
-            Some(days) => chrono::Utc::now()
-                .naive_utc()
-                .checked_add_signed(chrono::Duration::days(days.clamp(1, 365) as i64)),
-            None => chrono::Utc::now()
-                .naive_utc()
-                .checked_add_signed(chrono::Duration::hours(3)),
+            Some(days) => base + chrono::Duration::days(days.clamp(1, 365) as i64),
+            None => base + chrono::Duration::hours(3),
         };
         let share = self
             .repo
-            .create_share_link(video_id, user_id, &token, expires_at)
+            .create_share_link(video_id, user_id, &token, Some(expires_at))
             .await?;
         Ok((token, share))
     }
 
-    pub async fn list_my_shares(&self, user_id: i64) -> Result<Vec<ShareLink>, ShareError> {
+    pub async fn list_my_shares(&self, user_id: i64) -> Result<Vec<ShareLink>, ServiceError> {
         let shares = self.repo.list_shares_for_user(user_id).await?;
         Ok(shares)
     }
 
-    pub async fn revoke_my_share(
-        &self,
-        share_id: i64,
-        user_id: i64,
-    ) -> Result<(), ShareError> {
-        let shares = self.repo.list_shares_for_user(user_id).await?;
-        if !shares.iter().any(|s| s.id == share_id) {
-            return Err(ShareError::NotFound);
+    pub async fn revoke_my_share(&self, share_id: i64, user_id: i64) -> Result<(), ServiceError> {
+        let deleted = self.repo.delete_share_by_owner(share_id, user_id).await?;
+        if !deleted {
+            return Err(ServiceError::not_found("分享链接不存在"));
         }
-        self.repo.delete_share_link(share_id).await?;
         Ok(())
     }
 
@@ -98,29 +60,27 @@ impl ShareService {
         share_id: i64,
         user_id: i64,
         is_admin: bool,
-    ) -> Result<(), ShareError> {
-        let shares = self.repo.list_video_shares(video_id).await?;
-        let share = shares
-            .iter()
-            .find(|s| s.id == share_id)
-            .ok_or(ShareError::NotFound)?;
-        if !is_admin && share.user_id != user_id {
-            return Err(ShareError::Forbidden);
+    ) -> Result<(), ServiceError> {
+        let deleted = self
+            .repo
+            .delete_share_with_auth(share_id, video_id, user_id, is_admin)
+            .await?;
+        if !deleted {
+            return Err(ServiceError::not_found("分享链接不存在"));
         }
-        self.repo.delete_share_link(share_id).await?;
         Ok(())
     }
 
-    pub async fn get_share_video(&self, token: &str) -> Result<ShareLink, ShareError> {
+    pub async fn get_share_video(&self, token: &str) -> Result<ShareLink, ServiceError> {
         if !is_valid_share_token(token) {
-            return Err(ShareError::Invalid("分享链接格式无效".into()));
+            return Err(ServiceError::bad_request("分享链接格式无效"));
         }
         let token_hash = crate::repositories::share_repo::hash_share_token(token);
         let share = self
             .repo
             .is_valid_token_hash(&token_hash)
             .await?
-            .ok_or(ShareError::NotFound)?;
+            .ok_or_else(|| ServiceError::not_found("分享链接不存在"))?;
         Ok(share)
     }
 }

@@ -7,12 +7,12 @@ pub fn spec() -> serde_json::Value {
         "openapi": "3.1.0",
         "info": {
             "title": "ATMOS API",
-            "description": "局域网视频播放平台 — REST API",
+            "description": "ATMOS Video — REST API",
             "version": "0.1.0"
         },
         "servers": [
             { "url": "/", "description": "Same-origin (reverse proxy)" },
-            { "url": "http://localhost:8082", "description": "Local dev server" }
+            { "url": "http://localhost:8082", "description": "Development server" }
         ],
         "paths": {
             "/health": {
@@ -37,6 +37,7 @@ pub fn spec() -> serde_json::Value {
                     "summary": "Server information",
                     "operationId": "serverInfo",
                     "description": "Returns the server version",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
                     "responses": {
                         "200": {
                             "description": "Server version and status",
@@ -53,7 +54,7 @@ pub fn spec() -> serde_json::Value {
                 "post": {
                     "summary": "Register a new user",
                     "operationId": "authRegister",
-                    "description": "Create a new user account. The first user registered becomes admin. Rate-limited per username.",
+                    "description": "Create a new user account. Requires REGISTRATION_ENABLED=true. The first registered user becomes admin ONLY when ALLOW_FIRST_USER_ADMIN=true (default: false — new users start as viewers and need admin approval). Rate-limited per username.",
                     "requestBody": {
                         "required": true,
                         "content": {
@@ -134,6 +135,106 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/auth/forgot-password": {
+                "post": {
+                    "summary": "Request a password reset email",
+                    "operationId": "forgotPassword",
+                    "description": "发送密码重置邮件。无论邮箱是否注册都返回相同响应，避免邮箱枚举。IP 与邮箱均有速率限制。",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EmailRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Reset request accepted",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                                }
+                            }
+                        },
+                        "429": { "$ref": "#/components/responses/RateLimited" }
+                    }
+                }
+            },
+            "/auth/reset-password": {
+                "get": {
+                    "summary": "Password reset page (email link)",
+                    "operationId": "resetPasswordGet",
+                    "description": "处理邮件中的重置链接，携带 token 重定向到前端重置密码页面",
+                    "parameters": [
+                        { "name": "token", "in": "query", "required": true, "description": "密码重置令牌", "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "302": { "description": "重定向到前端重置密码页面" }
+                    }
+                },
+                "post": {
+                    "summary": "Reset password",
+                    "operationId": "resetPassword",
+                    "description": "使用邮件中的令牌设置新密码（8-128 字符，需包含大小写字母、数字、特殊字符中至少三种），成功后吊销该用户所有令牌",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ResetPasswordRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Password reset",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" }
+                    }
+                }
+            },
+            "/auth/verify-email": {
+                "get": {
+                    "summary": "Email verification page (email link)",
+                    "operationId": "verifyEmailGet",
+                    "description": "处理邮件中的验证链接，验证成功后直接返回成功/失败 HTML 页面",
+                    "parameters": [
+                        { "name": "token", "in": "query", "required": true, "description": "邮箱验证令牌", "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "验证结果 HTML 页面" }
+                    }
+                },
+                "post": {
+                    "summary": "Verify email with token",
+                    "operationId": "verifyEmail",
+                    "description": "使用令牌验证邮箱地址",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/VerifyEmailRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Email verified",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" }
+                    }
+                }
+            },
             "/auth/user": {
                 "get": {
                     "summary": "Get current user info",
@@ -168,6 +269,168 @@ pub fn spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/auth/user/email": {
+                "put": {
+                    "summary": "Update current user's email",
+                    "operationId": "updateEmail",
+                    "description": "更新当前用户邮箱（自动转小写），成功后重置邮箱验证状态",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EmailRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Email updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "409": {
+                            "description": "该邮箱已被其他账号绑定",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/auth/user/avatar": {
+                "post": {
+                    "summary": "Upload avatar image",
+                    "operationId": "uploadAvatar",
+                    "description": "通过 multipart 表单上传头像（JPG/PNG/WebP/GIF，最大 5MB），按 magic bytes 校验文件类型",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "multipart/form-data": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file": { "type": "string", "format": "binary", "description": "头像图片文件" }
+                                    },
+                                    "required": ["file"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Avatar uploaded",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ok": { "type": "boolean" },
+                                            "avatarUrl": { "type": "string", "description": "头像地址" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/auth/user/shares": {
+                "get": {
+                    "summary": "List current user's share links",
+                    "operationId": "listMyShares",
+                    "description": "列出当前用户创建的所有分享链接",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Share link list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/ShareListItem" }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/auth/user/shares/{share_id}": {
+                "delete": {
+                    "summary": "Revoke own share link",
+                    "operationId": "revokeMyShare",
+                    "description": "删除当前用户自己的分享链接",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "share_id", "in": "path", "required": true, "description": "分享链接 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Share link revoked",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
+            "/auth/send-verification-email": {
+                "post": {
+                    "summary": "Resend email verification link",
+                    "operationId": "sendVerificationEmail",
+                    "description": "重新发送邮箱验证邮件。每 5 分钟最多 2 次（用户级速率限制）；SMTP 未配置时直接标记已验证",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Verification email result",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/admin/track": {
+                "post": {
+                    "summary": "Record user action (analytics)",
+                    "operationId": "trackAction",
+                    "description": "记录用户操作日志（页面、动作、目标），仅返回 204",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TrackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "204": { "description": "Action recorded" },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
                         "401": { "$ref": "#/components/responses/Unauthorized" }
                     }
                 }
@@ -394,6 +657,458 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/videos/favorites": {
+                "get": {
+                    "summary": "List current user's favorites",
+                    "operationId": "listFavorites",
+                    "description": "返回当前用户收藏的视频列表",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Favorite video list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/RecentWatchItem" }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/{id}/variants": {
+                "get": {
+                    "summary": "List transcoded variants for a video",
+                    "operationId": "getVideoVariants",
+                    "description": "返回视频可用的转码分片（分辨率、播放地址、大小等）",
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        }
+                    ],
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Variant list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/VideoVariantResponse" }
+                                    }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/playlists": {
+                "get": {
+                    "summary": "List current user's playlists",
+                    "operationId": "listMyPlaylists",
+                    "description": "返回当前用户创建的所有播放列表（含封面与条目数）",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Playlist list",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/PlaylistListResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                },
+                "post": {
+                    "summary": "Create a playlist",
+                    "operationId": "createPlaylist",
+                    "description": "创建播放列表，名称需为 1-200 字符",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CreatePlaylistRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Playlist created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/PlaylistResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/playlists/{id}": {
+                "get": {
+                    "summary": "Get a playlist",
+                    "operationId": "getPlaylist",
+                    "description": "获取播放列表详情（本人、管理员或公开列表）。非公开的他人列表返回 404 避免泄露存在性",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Playlist details",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/PlaylistResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                },
+                "put": {
+                    "summary": "Update a playlist",
+                    "operationId": "updatePlaylist",
+                    "description": "修改播放列表名称、描述或公开状态（仅所有者）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/UpdatePlaylistRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Playlist updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                },
+                "delete": {
+                    "summary": "Delete a playlist",
+                    "operationId": "deletePlaylist",
+                    "description": "删除播放列表及其全部条目（仅所有者）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Playlist deleted",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
+            "/playlists/{id}/videos": {
+                "get": {
+                    "summary": "List videos in a playlist",
+                    "operationId": "listPlaylistVideos",
+                    "description": "按播放列表顺序返回其中的视频",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Playlist videos",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/PlaylistVideoItem" }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                },
+                "post": {
+                    "summary": "Add a video to a playlist",
+                    "operationId": "addVideoToPlaylist",
+                    "description": "向播放列表添加视频（仅所有者）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AddVideoToPlaylistRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Video added",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
+            "/playlists/{id}/videos/{video_id}": {
+                "delete": {
+                    "summary": "Remove a video from a playlist",
+                    "operationId": "removeVideoFromPlaylist",
+                    "description": "从播放列表中移除指定视频（仅所有者）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "播放列表 ID", "schema": { "type": "integer" } },
+                        { "name": "video_id", "in": "path", "required": true, "description": "视频 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Video removed",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
+            "/videos/{id}/comments": {
+                "get": {
+                    "summary": "List comments for a video",
+                    "operationId": "listComments",
+                    "description": "分页返回视频的顶级评论",
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        },
+                        {
+                            "name": "page",
+                            "in": "query",
+                            "description": "Page number (0-indexed)",
+                            "schema": { "type": "integer", "default": 0 }
+                        },
+                        {
+                            "name": "size",
+                            "in": "query",
+                            "description": "Page size (max 100)",
+                            "schema": { "type": "integer", "default": 20, "maximum": 100 }
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Comment list",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/CommentListResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "post": {
+                    "summary": "Create a comment",
+                    "operationId": "createComment",
+                    "description": "发表评论（可指定 parent_id 回复某条评论）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CreateCommentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Comment created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/CommentResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/comments/{id}/replies": {
+                "get": {
+                    "summary": "List replies to a comment",
+                    "operationId": "listReplies",
+                    "description": "返回某条评论的全部回复",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "评论 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Reply list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/CommentResponse" }
+                                    }
+                                }
+                            }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/comments/{id}": {
+                "delete": {
+                    "summary": "Delete a comment",
+                    "operationId": "deleteComment",
+                    "description": "删除评论（作者本人或管理员）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "评论 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Comment deleted",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
+            "/videos/{id}/share": {
+                "post": {
+                    "summary": "Create a share link for a video",
+                    "operationId": "createShareLink",
+                    "description": "为视频创建分享链接，返回一次性展示的分享令牌（token 仅创建时返回）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        }
+                    ],
+                    "requestBody": {
+                        "required": false,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CreateShareRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Share link created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/CreateShareResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/videos/{id}/share/{share_id}": {
+                "delete": {
+                    "summary": "Delete a share link",
+                    "operationId": "deleteShareLink",
+                    "description": "删除指定分享链接（创建者本人或管理员）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        },
+                        { "name": "share_id", "in": "path", "required": true, "description": "分享链接 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Share link deleted",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" }
+                    }
+                }
+            },
             "/playback/history": {
                 "get": {
                     "summary": "List playback history for current user",
@@ -461,6 +1176,69 @@ pub fn spec() -> serde_json::Value {
                                 }
                             }
                         },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/playback/session/start": {
+                "post": {
+                    "summary": "Start a playback session",
+                    "operationId": "startPlaybackSession",
+                    "description": "记录一次播放会话的开始，用于在线用户统计",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "204": { "description": "Session started" },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/playback/session/heartbeat": {
+                "post": {
+                    "summary": "Refresh a playback session",
+                    "operationId": "playbackSessionHeartbeat",
+                    "description": "刷新播放会话的心跳，避免会话过期",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "204": { "description": "Heartbeat recorded" },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/playback/session/stop": {
+                "post": {
+                    "summary": "Stop a playback session",
+                    "operationId": "stopPlaybackSession",
+                    "description": "结束一次播放会话",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "204": { "description": "Session stopped" },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
                         "401": { "$ref": "#/components/responses/Unauthorized" }
                     }
                 }
@@ -901,6 +1679,350 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/admin/users": {
+                "get": {
+                    "summary": "List users",
+                    "operationId": "listUsers",
+                    "description": "返回当前租户的用户列表（含审批状态、角色、活跃令牌等）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "User list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": { "$ref": "#/components/schemas/UserWithStatus" }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/users/{id}": {
+                "delete": {
+                    "summary": "Delete a user",
+                    "operationId": "deleteUser",
+                    "description": "删除用户及其关联数据（不能删除自己）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "用户 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Delete result",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/users/{id}/password": {
+                "put": {
+                    "summary": "Reset a user's password",
+                    "operationId": "resetUserPassword",
+                    "description": "管理员重置指定用户密码，同时吊销该用户全部令牌",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "用户 ID", "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AdminPasswordRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Password reset",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/users/{id}/admin": {
+                "put": {
+                    "summary": "Toggle a user's admin status",
+                    "operationId": "toggleUserAdmin",
+                    "description": "切换用户的管理员权限（不能操作自己）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "用户 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Admin status toggled",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/users/{id}/approve": {
+                "put": {
+                    "summary": "Approve or reject a user",
+                    "operationId": "approveUser",
+                    "description": "审批新用户（注册审批制下用户需审批后才能登录）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "用户 ID", "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "approved": { "type": "boolean", "description": "是否批准" }
+                                    },
+                                    "required": ["approved"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Approval updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/users/{id}/kick": {
+                "post": {
+                    "summary": "Kick a user offline",
+                    "operationId": "kickUser",
+                    "description": "强制用户下线：删除该用户全部认证令牌",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "用户 ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "User kicked",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/videos/batch-category": {
+                "put": {
+                    "summary": "Batch update video categories",
+                    "operationId": "batchUpdateCategory",
+                    "description": "批量修改视频分类（最多 1000 个，分类名最多 100 字符）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/BatchCategoryRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Categories updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/stats": {
+                "get": {
+                    "summary": "Get admin dashboard stats",
+                    "operationId": "getStats",
+                    "description": "返回视频/图片/用户数量、总播放量与观看时长、类型与分类分布等统计数据",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Dashboard stats",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/AdminStatsResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/config/registration": {
+                "get": {
+                    "summary": "Get registration toggle state",
+                    "operationId": "getRegistrationEnabled",
+                    "description": "查询注册开关的当前状态",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Registration state",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "enabled": { "type": "boolean" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                },
+                "put": {
+                    "summary": "Set registration toggle",
+                    "operationId": "setRegistrationEnabled",
+                    "description": "开启/关闭公开注册（持久化到数据库）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "enabled": { "type": "boolean" }
+                                    },
+                                    "required": ["enabled"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Registration toggle updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/system": {
+                "get": {
+                    "summary": "Get system monitoring info",
+                    "operationId": "systemInfo",
+                    "description": "返回媒体目录磁盘占用与数据库连接数等系统监控信息",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "System info",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "mediaSizeBytes": { "type": "integer", "description": "媒体目录磁盘占用（字节）" },
+                                            "mediaSizeHuman": { "type": "string", "description": "媒体目录磁盘占用（人类可读）" },
+                                            "dbConnections": { "type": "integer", "description": "数据库活跃连接数" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/logs": {
+                "get": {
+                    "summary": "Read server logs",
+                    "operationId": "getLogs",
+                    "description": "从最新日志文件尾部读取日志条目，支持 level/search 过滤与分页",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "level", "in": "query", "description": "按日志级别过滤（INFO/WARN/ERROR…）", "schema": { "type": "string" } },
+                        { "name": "search", "in": "query", "description": "按消息/路径/用户等关键字过滤", "schema": { "type": "string" } },
+                        { "name": "limit", "in": "query", "description": "返回条数（默认 200，最大 1000）", "schema": { "type": "integer", "default": 200, "maximum": 1000 } },
+                        { "name": "offset", "in": "query", "description": "跳过条数（从最新往旧）", "schema": { "type": "integer", "default": 0 } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Log entries",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/LogListResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "delete": {
+                    "summary": "Clear server logs",
+                    "operationId": "clearLogs",
+                    "description": "清空当前日志文件内容",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Logs cleared",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
             "/admin/videos/{id}/transcode": {
                 "post": {
                     "summary": "Start video transcoding",
@@ -927,11 +2049,13 @@ pub fn spec() -> serde_json::Value {
                         "403": { "$ref": "#/components/responses/Forbidden" },
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
-                },
+                }
+            },
+            "/admin/videos/{id}/transcode/status": {
                 "get": {
                     "summary": "Get transcode status",
                     "operationId": "getTranscodeStatus",
-                    "description": "Get transcoding status and available variants for a video",
+                    "description": "获取视频的转码状态与可用转码分片列表",
                     "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
                     "parameters": [
                         { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
@@ -1122,6 +2246,37 @@ pub fn spec() -> serde_json::Value {
                         "403": { "$ref": "#/components/responses/Forbidden" },
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
+                },
+                "delete": {
+                    "summary": "Remove tags from a video",
+                    "operationId": "removeVideoTags",
+                    "description": "按标签 ID 数组从视频上移除标签",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": { "type": "integer" },
+                                    "description": "要移除的标签 ID 数组"
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Tags removed",
+                            "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" } } } } }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
                 }
             },
             "/videos/{id}/tags/{tag_id}": {
@@ -1248,6 +2403,7 @@ pub fn spec() -> serde_json::Value {
                     "summary": "Server metrics (JSON)",
                     "operationId": "metrics",
                     "description": "Returns server metrics in JSON format",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
                     "responses": {
                         "200": {
                             "description": "Server metrics",
@@ -1261,11 +2417,30 @@ pub fn spec() -> serde_json::Value {
                     "summary": "Prometheus metrics",
                     "operationId": "metricsPrometheus",
                     "description": "Returns server metrics in Prometheus text exposition format",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
                     "responses": {
                         "200": {
                             "description": "Prometheus metrics text",
                             "content": { "text/plain": { "schema": { "type": "string" } } }
                         }
+                    }
+                }
+            },
+            "/share/{token}": {
+                "get": {
+                    "summary": "Resolve a shared video",
+                    "operationId": "getShareVideo",
+                    "description": "Resolve a share token to the shared video. Public — no auth required, but rate-limited per IP to prevent token enumeration. On success a share_token HttpOnly cookie is set so media requests authenticate.",
+                    "parameters": [
+                        { "name": "token", "in": "path", "required": true, "description": "Un-guessable share token", "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Shared video details",
+                            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VideoItem" } } }
+                        },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "429": { "$ref": "#/components/responses/RateLimited" }
                     }
                 }
             }
@@ -1275,12 +2450,12 @@ pub fn spec() -> serde_json::Value {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "JWT or opaque token returned by /auth/login or /auth/register"
+                    "description": "Opaque 256-bit alphanumeric token returned by /auth/login or /auth/register"
                 },
                 "adminAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "Requires admin privileges (first registered user is admin)"
+                    "description": "Requires admin privileges (role >= 3). First-user auto-admin only with ALLOW_FIRST_USER_ADMIN=true"
                 }
             },
             "responses": {
@@ -1375,11 +2550,14 @@ pub fn spec() -> serde_json::Value {
                 "UserInfoResponse": {
                     "type": "object",
                     "properties": {
+                        "id": { "type": "integer" },
                         "username": { "type": "string" },
                         "isAdmin": { "type": "boolean" },
-                        "createdAt": { "type": "string", "description": "Account creation timestamp (YYYY-MM-DD HH:MM:SS)" }
+                        "createdAt": { "type": "string", "description": "Account creation timestamp (YYYY-MM-DD HH:MM:SS)" },
+                        "email": { "type": "string", "nullable": true, "description": "用户邮箱" },
+                        "emailVerified": { "type": "boolean", "description": "邮箱是否已验证" }
                     },
-                    "required": ["username", "isAdmin", "createdAt"]
+                    "required": ["id", "username", "isAdmin", "createdAt", "emailVerified"]
                 },
                 "UserProfileResponse": {
                     "type": "object",
@@ -1409,7 +2587,8 @@ pub fn spec() -> serde_json::Value {
                         "category": { "type": "string" },
                         "views": { "type": "integer" },
                         "duration": { "type": "integer", "description": "Duration in seconds" },
-                        "watchPosition": { "type": "integer", "nullable": true, "description": "Current user's watch position in ms" }
+                        "watchPosition": { "type": "integer", "nullable": true, "description": "Current user's watch position in ms" },
+                        "createdAt": { "type": "string", "description": "Creation time (UTC, format %Y-%m-%d %H:%M:%S)" }
                     },
                     "required": ["id", "title", "streamUrl"]
                 },
@@ -1678,6 +2857,286 @@ pub fn spec() -> serde_json::Value {
                         "reason": { "type": "string", "description": "Human-readable reason for recommendation" }
                     },
                     "required": ["id", "title", "score", "reason"]
+                },
+                "EmailRequest": {
+                    "type": "object",
+                    "properties": {
+                        "email": { "type": "string", "description": "邮箱地址" }
+                    },
+                    "required": ["email"]
+                },
+                "MessageResponse": {
+                    "type": "object",
+                    "properties": {
+                        "ok": { "type": "boolean" },
+                        "message": { "type": "string" }
+                    },
+                    "required": ["ok", "message"]
+                },
+                "ResetPasswordRequest": {
+                    "type": "object",
+                    "properties": {
+                        "token": { "type": "string", "description": "重置令牌（邮件中的链接参数）" },
+                        "password": { "type": "string", "minLength": 8, "maxLength": 128, "description": "新密码" }
+                    },
+                    "required": ["token", "password"]
+                },
+                "VerifyEmailRequest": {
+                    "type": "object",
+                    "properties": {
+                        "token": { "type": "string", "description": "邮箱验证令牌" }
+                    },
+                    "required": ["token"]
+                },
+                "TrackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "description": "用户操作名称" },
+                        "target": { "type": "string", "nullable": true, "description": "操作目标" },
+                        "page": { "type": "string", "nullable": true, "description": "来源页面" }
+                    },
+                    "required": ["action"]
+                },
+                "ShareListItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "expiresAt": { "type": "string", "nullable": true, "description": "过期时间 (YYYY-MM-DD HH:MM:SS)，null 表示永不过期" },
+                        "createdAt": { "type": "string", "description": "创建时间 (YYYY-MM-DD HH:MM:SS)" },
+                        "active": { "type": "boolean", "description": "是否仍有效" }
+                    },
+                    "required": ["id", "createdAt", "active"]
+                },
+                "PlaybackSessionRequest": {
+                    "type": "object",
+                    "properties": {
+                        "video_id": { "type": "integer", "description": "视频 ID" }
+                    },
+                    "required": ["video_id"]
+                },
+                "VideoVariantResponse": {
+                    "type": "object",
+                    "properties": {
+                        "resolution": { "type": "string", "description": "分辨率标签（如 1080p）" },
+                        "url": { "type": "string", "description": "分片播放地址" },
+                        "fileSize": { "type": "integer", "description": "文件大小（字节）" },
+                        "bitrate": { "type": "integer", "nullable": true, "description": "码率（bps）" },
+                        "codec": { "type": "string", "nullable": true, "description": "视频编码" }
+                    },
+                    "required": ["resolution", "url", "fileSize"]
+                },
+                "PlaylistResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "name": { "type": "string" },
+                        "description": { "type": "string", "nullable": true },
+                        "isPublic": { "type": "boolean" },
+                        "coverUrl": { "type": "string", "nullable": true },
+                        "itemCount": { "type": "integer", "description": "条目数量" },
+                        "createdAt": { "type": "string", "description": "创建时间 (YYYY-MM-DD HH:MM:SS)" },
+                        "updatedAt": { "type": "string", "description": "更新时间 (YYYY-MM-DD HH:MM:SS)" }
+                    },
+                    "required": ["id", "name", "isPublic", "itemCount", "createdAt", "updatedAt"]
+                },
+                "PlaylistListResponse": {
+                    "type": "object",
+                    "properties": {
+                        "playlists": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/PlaylistResponse" }
+                        }
+                    },
+                    "required": ["playlists"]
+                },
+                "CreatePlaylistRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "minLength": 1, "maxLength": 200, "description": "播放列表名称" },
+                        "description": { "type": "string", "nullable": true, "description": "描述" },
+                        "isPublic": { "type": "boolean", "nullable": true, "default": false, "description": "是否公开" }
+                    },
+                    "required": ["name"]
+                },
+                "UpdatePlaylistRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "nullable": true, "description": "新名称" },
+                        "description": { "type": "string", "nullable": true, "description": "新描述" },
+                        "isPublic": { "type": "boolean", "nullable": true, "description": "是否公开" }
+                    }
+                },
+                "AddVideoToPlaylistRequest": {
+                    "type": "object",
+                    "properties": {
+                        "video_id": { "type": "integer", "description": "要添加的视频 ID" }
+                    },
+                    "required": ["video_id"]
+                },
+                "PlaylistVideoItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "title": { "type": "string" },
+                        "description": { "type": "string" },
+                        "sourceType": { "type": "string" },
+                        "coverUrl": { "type": "string", "nullable": true },
+                        "streamUrl": { "type": "string" },
+                        "category": { "type": "string" },
+                        "views": { "type": "integer" },
+                        "duration": { "type": "integer", "description": "时长（秒）" }
+                    },
+                    "required": ["id", "title", "sourceType", "streamUrl", "category", "views", "duration"]
+                },
+                "CommentResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "videoId": { "type": "integer" },
+                        "userId": { "type": "integer" },
+                        "username": { "type": "string" },
+                        "avatarUrl": { "type": "string", "nullable": true },
+                        "content": { "type": "string" },
+                        "parentId": { "type": "integer", "nullable": true, "description": "父评论 ID（回复时存在）" },
+                        "createdAt": { "type": "string", "description": "创建时间 (YYYY-MM-DD HH:MM:SS)" }
+                    },
+                    "required": ["id", "videoId", "userId", "username", "content", "createdAt"]
+                },
+                "CommentListResponse": {
+                    "type": "object",
+                    "properties": {
+                        "comments": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/CommentResponse" }
+                        },
+                        "total": { "type": "integer" }
+                    },
+                    "required": ["comments", "total"]
+                },
+                "CreateCommentRequest": {
+                    "type": "object",
+                    "properties": {
+                        "content": { "type": "string", "description": "评论内容" },
+                        "parent_id": { "type": "integer", "nullable": true, "description": "父评论 ID（回复）" }
+                    },
+                    "required": ["content"]
+                },
+                "CreateShareRequest": {
+                    "type": "object",
+                    "properties": {
+                        "expires_in_days": { "type": "integer", "nullable": true, "description": "有效天数（缺省为永不过期）" }
+                    }
+                },
+                "CreateShareResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "videoId": { "type": "integer" },
+                        "token": { "type": "string", "description": "分享令牌（仅创建时返回一次）" },
+                        "shareUrl": { "type": "string", "description": "分享页面地址" },
+                        "expiresAt": { "type": "string", "nullable": true },
+                        "createdAt": { "type": "string" }
+                    },
+                    "required": ["id", "videoId", "token", "shareUrl", "createdAt"]
+                },
+                "UserWithStatus": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "username": { "type": "string" },
+                        "approved": { "type": "boolean", "description": "是否已通过审批" },
+                        "isAdmin": { "type": "boolean" },
+                        "role": { "type": "integer", "description": "角色等级（1 viewer, 3 admin）" },
+                        "avatarUrl": { "type": "string", "nullable": true },
+                        "createdAt": { "type": "string", "description": "创建时间 (ISO 8601)" },
+                        "hasActiveToken": { "type": "boolean", "description": "是否存在未过期的有效令牌" }
+                    },
+                    "required": ["id", "username", "approved", "isAdmin", "role", "createdAt", "hasActiveToken"]
+                },
+                "AdminPasswordRequest": {
+                    "type": "object",
+                    "properties": {
+                        "password": { "type": "string", "minLength": 8, "maxLength": 128, "description": "新密码" }
+                    },
+                    "required": ["password"]
+                },
+                "BatchCategoryRequest": {
+                    "type": "object",
+                    "properties": {
+                        "ids": {
+                            "type": "array",
+                            "items": { "type": "integer" },
+                            "maxItems": 1000,
+                            "description": "视频 ID 列表"
+                        },
+                        "category": { "type": "string", "maxLength": 100, "description": "新的分类名称" }
+                    },
+                    "required": ["ids", "category"]
+                },
+                "AdminStatsResponse": {
+                    "type": "object",
+                    "properties": {
+                        "totalVideos": { "type": "integer" },
+                        "videoCount": { "type": "integer" },
+                        "imageCount": { "type": "integer" },
+                        "userCount": { "type": "integer" },
+                        "pendingCount": { "type": "integer", "description": "待审批用户数" },
+                        "totalViews": { "type": "integer" },
+                        "totalDurationSecs": { "type": "integer" },
+                        "byType": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string" },
+                                    "count": { "type": "integer" }
+                                }
+                            }
+                        },
+                        "byCategory": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "category": { "type": "string" },
+                                    "count": { "type": "integer" }
+                                }
+                            }
+                        }
+                    },
+                    "required": ["totalVideos", "videoCount", "imageCount", "userCount", "pendingCount", "totalViews", "totalDurationSecs", "byType", "byCategory"]
+                },
+                "LogListResponse": {
+                    "type": "object",
+                    "properties": {
+                        "entries": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/LogEntry" }
+                        },
+                        "total": { "type": "integer", "description": "本次读取的总条数（分页前）" },
+                        "file": { "type": "string", "description": "日志文件名" }
+                    },
+                    "required": ["entries", "total", "file"]
+                },
+                "LogEntry": {
+                    "type": "object",
+                    "properties": {
+                        "timestamp": { "type": "string" },
+                        "level": { "type": "string" },
+                        "message": { "type": "string" },
+                        "method": { "type": "string", "nullable": true },
+                        "path": { "type": "string", "nullable": true },
+                        "status": { "type": "integer", "nullable": true },
+                        "durationMs": { "type": "integer", "nullable": true },
+                        "requestId": { "type": "string", "nullable": true },
+                        "user": { "type": "string", "nullable": true },
+                        "videoId": { "type": "integer", "nullable": true },
+                        "error": { "type": "string", "nullable": true },
+                        "action": { "type": "string", "nullable": true },
+                        "target": { "type": "string", "nullable": true },
+                        "page": { "type": "string", "nullable": true }
+                    },
+                    "required": ["timestamp", "level", "message"]
                 }
             }
         }

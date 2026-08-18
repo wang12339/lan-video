@@ -1,11 +1,50 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLogs, clearLogs, type LogEntry } from '../../api/logs'
+import type { TFunction } from 'i18next'
+import { clearLogs, type LogEntry, type LogsResponse } from '../../api/logs'
+import { request } from '../../api/client'
 import { ConfirmDialog } from './components'
 import './LogsTab.css'
 
+const PAGE_SIZE = 200
+// 2 秒轮询：/admin/logs 无后端限流，且页签隐藏/失焦时已暂停，频率合理
+const POLL_INTERVAL_MS = 2000
+const LEVELS = ['INFO', 'WARN', 'ERROR', 'DEBUG']
+
+// 路由 → i18n key（路径是数据，文案走 t 翻译）
+const ROUTE_KEYS: Record<string, string> = {
+  '/auth/login': 'admin.logs.routes.authLogin',
+  '/auth/logout': 'admin.logs.routes.authLogout',
+  '/auth/register': 'admin.logs.routes.authRegister',
+  '/auth/user': 'admin.logs.routes.authUser',
+  '/auth/user/profile': 'admin.logs.routes.authProfile',
+  '/auth/refresh': 'admin.logs.routes.authRefresh',
+  '/videos': 'admin.logs.routes.videosList',
+  '/videos/favorites': 'admin.logs.routes.videosFavorites',
+  '/playback/history': 'admin.logs.routes.playbackHistory',
+  '/playback/session/start': 'admin.logs.routes.sessionStart',
+  '/playback/session/stop': 'admin.logs.routes.sessionStop',
+  '/playback/session/heartbeat': 'admin.logs.routes.sessionHeartbeat',
+  '/server/info': 'admin.logs.routes.serverInfo',
+  '/health': 'admin.logs.routes.health',
+  '/admin/logs': 'admin.logs.routes.adminLogs',
+  '/admin/stats': 'admin.logs.routes.adminStats',
+  '/admin/system': 'admin.logs.routes.adminSystem',
+  '/admin/users': 'admin.logs.routes.adminUsers',
+  '/admin/config/registration': 'admin.logs.routes.regConfig',
+  '/admin/videos/scan': 'admin.logs.routes.scanMedia',
+  '/admin/videos/upload': 'admin.logs.routes.uploadVideo',
+  '/admin/videos/upload-resume': 'admin.logs.routes.uploadResume',
+  '/admin/videos/upload-status': 'admin.logs.routes.uploadStatus',
+  '/admin/videos/backfill-thumbnails': 'admin.logs.routes.backfillThumbs',
+  '/admin/videos/check-hashes': 'admin.logs.routes.checkHashes',
+  '/admin/videos/check-files': 'admin.logs.routes.checkFiles',
+  '/admin/videos/batch-category': 'admin.logs.routes.batchCategory',
+  '/admin/track': 'admin.logs.routes.track',
+}
+
 // 中文日志翻译
-function formatLog(entry: LogEntry): { desc: string; type: string } {
+function formatLog(entry: LogEntry, t: TFunction): { desc: string; type: string } {
   const msg = entry.message || ''
   const vid = entry.video_id
 
@@ -13,53 +52,34 @@ function formatLog(entry: LogEntry): { desc: string; type: string } {
     const s = entry.status || 0
     const ms = entry.duration_ms || 0
 
-    const routes: Record<string, string> = {
-      '/auth/login': '登录', '/auth/logout': '退出', '/auth/register': '注册',
-      '/auth/user': '获取用户信息', '/auth/user/profile': '获取用户资料',
-      '/auth/refresh': '刷新令牌',
-      '/videos': '浏览列表', '/videos/favorites': '查看收藏',
-      '/playback/history': '播放历史',
-      '/playback/session/start': '开始播放', '/playback/session/stop': '停止播放',
-      '/playback/session/heartbeat': '播放心跳',
-      '/server/info': '服务器信息', '/health': '健康检查',
-      '/admin/logs': '查看日志', '/admin/stats': '查看统计',
-      '/admin/system': '系统状态', '/admin/users': '用户列表',
-      '/admin/config/registration': '修改注册配置',
-      '/admin/videos/scan': '扫描媒体', '/admin/videos/upload': '上传视频',
-      '/admin/videos/upload-resume': '续传视频', '/admin/videos/upload-status': '上传状态',
-      '/admin/videos/backfill-thumbnails': '补全缩略图',
-      '/admin/videos/check-hashes': '检查哈希', '/admin/videos/check-files': '检查文件',
-      '/admin/videos/batch-category': '批量分类',
-      '/admin/track': '追踪操作',
-    }
-
-    let action = routes[entry.path] || ''
+    const routeKey = ROUTE_KEYS[entry.path]
+    let action = routeKey ? t(routeKey) : ''
     let type = 'view'
 
     if (!action) {
-      if (entry.path.match(/\/videos\/\d+\/like/)) { action = '点赞'; type = 'like' }
-      else if (entry.path.match(/\/videos\/\d+\/favorite/)) { action = '收藏'; type = 'fav' }
-      else if (entry.path.match(/\/videos\/\d+\/play$/)) { action = '播放'; type = 'play' }
-      else if (entry.path.match(/\/videos\/\d+\/view/)) { action = '查看视频'; type = 'view' }
-      else if (entry.path.match(/\/videos\/\d+\/stop/)) { action = '停止'; type = 'stop' }
-      else if (entry.path.match(/\/videos\/\d+\/heartbeat/)) { action = '播放心跳'; type = 'play' }
-      else if (entry.path.match(/\/videos\/\d+$/)) { action = '查看视频详情' }
-      else if (entry.path.match(/\/playback\/history\/\d+$/)) { action = '获取播放历史' }
-      else if (entry.path.match(/\/admin\/videos\/\d+\/cover/)) { action = '上传封面' }
+      if (entry.path.match(/\/videos\/\d+\/like/)) { action = t('admin.logs.actions.like'); type = 'like' }
+      else if (entry.path.match(/\/videos\/\d+\/favorite/)) { action = t('admin.logs.actions.favorite'); type = 'fav' }
+      else if (entry.path.match(/\/videos\/\d+\/play$/)) { action = t('admin.logs.actions.play'); type = 'play' }
+      else if (entry.path.match(/\/videos\/\d+\/view/)) { action = t('admin.logs.actions.viewVideo'); type = 'view' }
+      else if (entry.path.match(/\/videos\/\d+\/stop/)) { action = t('admin.logs.actions.stop'); type = 'stop' }
+      else if (entry.path.match(/\/videos\/\d+\/heartbeat/)) { action = t('admin.logs.actions.play'); type = 'play' }
+      else if (entry.path.match(/\/videos\/\d+$/)) { action = t('admin.logs.actions.viewDetail') }
+      else if (entry.path.match(/\/playback\/history\/\d+$/)) { action = t('admin.logs.actions.getHistory') }
+      else if (entry.path.match(/\/admin\/videos\/\d+\/cover/)) { action = t('admin.logs.actions.uploadCover') }
       else if (entry.path.match(/\/admin\/videos\/\d+$/)) {
-        action = entry.method === 'PUT' ? '编辑视频' : '删除视频'
+        action = entry.method === 'PUT' ? t('admin.logs.actions.editVideo') : t('admin.logs.actions.deleteVideo')
         type = entry.method === 'DELETE' ? 'danger' : 'view'
       }
-      else if (entry.path === '/admin/videos/external') { action = '添加外部视频' }
-      else if (entry.path === '/admin/videos/batch') { action = '批量删除'; type = 'danger' }
-      else if (entry.path.match(/\/admin\/videos\/batch-category/)) { action = '批量分类' }
-      else if (entry.path.match(/\/admin\/users\/\d+\/password/)) { action = '重置密码' }
+      else if (entry.path === '/admin/videos/external') { action = t('admin.logs.actions.addExternal') }
+      else if (entry.path === '/admin/videos/batch') { action = t('admin.logs.actions.batchDelete'); type = 'danger' }
+      else if (entry.path.match(/\/admin\/videos\/batch-category/)) { action = t('admin.logs.routes.batchCategory') }
+      else if (entry.path.match(/\/admin\/users\/\d+\/password/)) { action = t('admin.logs.actions.resetPassword') }
       else if (entry.path.match(/\/admin\/users\/\d+\/approve/)) {
-        action = '审批用户'; type = 'admin'
+        action = t('admin.logs.actions.approveUser'); type = 'admin'
       }
-      else if (entry.path.match(/\/admin\/users\/\d+\/admin/)) { action = '切换管理员' }
+      else if (entry.path.match(/\/admin\/users\/\d+\/admin/)) { action = t('admin.logs.actions.toggleAdmin') }
       else if (entry.path.match(/\/admin\/users\/\d+$/)) {
-        action = '删除用户'; type = 'danger'
+        action = t('admin.logs.actions.deleteUser'); type = 'danger'
       }
       else { action = entry.path }
     }
@@ -67,29 +87,29 @@ function formatLog(entry: LogEntry): { desc: string; type: string } {
     if (s >= 500) type = 'error'
     else if (s >= 400) type = 'warn'
 
-    const timeStr = ms > 0 ? ` ${ms}毫秒` : ''
+    const timeStr = ms > 0 ? t('admin.logs.ms', { ms }) : ''
     return { desc: `${action}${timeStr}`, type }
   }
 
-  if (msg.includes('server starting')) return { desc: '服务启动', type: 'system' }
-  if (msg.includes('shutdown')) return { desc: '服务关闭', type: 'system' }
-  if (msg.includes('Database connection')) return { desc: '数据库连接', type: 'system' }
-  if (msg.includes('expired tokens')) return { desc: '清理令牌', type: 'system' }
-  if (msg.includes('开始播放')) return { desc: `播放视频 #${vid}`, type: 'play' }
-  if (msg.includes('停止播放')) return { desc: `停止播放 #${vid}`, type: 'stop' }
-  if (msg.includes('toggle like')) return { desc: msg.includes('liked: true') ? '点赞' : '取消点赞', type: 'like' }
-  if (msg.includes('toggle favorite')) return { desc: msg.includes('favorited: true') ? '收藏' : '取消收藏', type: 'fav' }
-  if (msg.includes('user logged in')) return { desc: '登录成功', type: 'login' }
-  if (msg.includes('failed login')) return { desc: '登录失败', type: 'error' }
-  if (msg.includes('rate limit')) return { desc: '请求限制', type: 'danger' }
-  if (msg.includes('Path traversal')) return { desc: '路径遍历警告', type: 'danger' }
-  if (msg.includes('invalid file')) return { desc: '无效文件警告', type: 'danger' }
-  if (msg.includes('admin deleted')) return { desc: '管理员删除操作', type: 'danger' }
-  if (msg.includes('admin approved')) return { desc: '管理员审批操作', type: 'admin' }
-  if (msg.includes('registration toggle')) return { desc: '修改注册配置', type: 'system' }
-  if (msg.includes('media scan')) return { desc: '扫描媒体文件', type: 'system' }
-  if (msg.includes('thumbnail backfill')) return { desc: '补全缩略图', type: 'system' }
-  if (msg.includes('rate limiter cleanup')) return { desc: '清理限流记录', type: 'system' }
+  if (msg.includes('server starting')) return { desc: t('admin.logs.system.serverStart'), type: 'system' }
+  if (msg.includes('shutdown')) return { desc: t('admin.logs.system.serverShutdown'), type: 'system' }
+  if (msg.includes('Database connection')) return { desc: t('admin.logs.system.dbConnection'), type: 'system' }
+  if (msg.includes('expired tokens')) return { desc: t('admin.logs.system.clearTokens'), type: 'system' }
+  if (msg.includes('开始播放')) return { desc: t('admin.logs.system.playVideo', { id: vid }), type: 'play' }
+  if (msg.includes('停止播放')) return { desc: t('admin.logs.system.stopVideo', { id: vid }), type: 'stop' }
+  if (msg.includes('toggle like')) return { desc: msg.includes('liked: true') ? t('admin.logs.system.liked') : t('admin.logs.system.unliked'), type: 'like' }
+  if (msg.includes('toggle favorite')) return { desc: msg.includes('favorited: true') ? t('admin.logs.system.favorited') : t('admin.logs.system.unfavorited'), type: 'fav' }
+  if (msg.includes('user logged in')) return { desc: t('admin.logs.system.loginSuccess'), type: 'login' }
+  if (msg.includes('failed login')) return { desc: t('admin.logs.system.loginFailed'), type: 'error' }
+  if (msg.includes('rate limit')) return { desc: t('admin.logs.system.rateLimit'), type: 'danger' }
+  if (msg.includes('Path traversal')) return { desc: t('admin.logs.system.pathTraversal'), type: 'danger' }
+  if (msg.includes('invalid file')) return { desc: t('admin.logs.system.invalidFile'), type: 'danger' }
+  if (msg.includes('admin deleted')) return { desc: t('admin.logs.system.adminDeleted'), type: 'danger' }
+  if (msg.includes('admin approved')) return { desc: t('admin.logs.system.adminApproved'), type: 'admin' }
+  if (msg.includes('registration toggle')) return { desc: t('admin.logs.system.regToggle'), type: 'system' }
+  if (msg.includes('media scan')) return { desc: t('admin.logs.system.mediaScan'), type: 'system' }
+  if (msg.includes('thumbnail backfill')) return { desc: t('admin.logs.system.thumbBackfill'), type: 'system' }
+  if (msg.includes('rate limiter cleanup')) return { desc: t('admin.logs.system.rateLimitCleanup'), type: 'system' }
 
   // 用户操作追踪
   if (msg.includes('用户操作') && entry.action) {
@@ -103,19 +123,19 @@ function formatLog(entry: LogEntry): { desc: string; type: string } {
   return { desc: displayMsg, type: 'default' }
 }
 
-const TYPE_STYLES: Record<string, { color: string; label: string }> = {
-  play: { color: '#8b5cf6', label: '播放' },
-  stop: { color: '#6b7280', label: '停止' },
-  like: { color: '#ec4899', label: '点赞' },
-  fav: { color: '#f59e0b', label: '收藏' },
-  login: { color: '#3b82f6', label: '登录' },
-  view: { color: '#10b981', label: '浏览' },
-  admin: { color: '#f97316', label: '管理' },
-  danger: { color: '#ef4444', label: '危险' },
-  error: { color: '#ef4444', label: '错误' },
-  warn: { color: '#f59e0b', label: '警告' },
-  system: { color: '#6b7280', label: '系统' },
-  default: { color: '#9ca3af', label: '其他' },
+const TYPE_STYLES: Record<string, { color: string; labelKey: string }> = {
+  play: { color: '#8b5cf6', labelKey: 'admin.logs.types.play' },
+  stop: { color: '#6b7280', labelKey: 'admin.logs.types.stop' },
+  like: { color: '#ec4899', labelKey: 'admin.logs.types.like' },
+  fav: { color: '#f59e0b', labelKey: 'admin.logs.types.fav' },
+  login: { color: '#3b82f6', labelKey: 'admin.logs.types.login' },
+  view: { color: '#10b981', labelKey: 'admin.logs.types.view' },
+  admin: { color: '#f97316', labelKey: 'admin.logs.types.admin' },
+  danger: { color: '#ef4444', labelKey: 'admin.logs.types.danger' },
+  error: { color: '#ef4444', labelKey: 'admin.logs.types.error' },
+  warn: { color: '#f59e0b', labelKey: 'admin.logs.types.warn' },
+  system: { color: '#6b7280', labelKey: 'admin.logs.types.system' },
+  default: { color: '#9ca3af', labelKey: 'admin.logs.types.default' },
 }
 
 const TYPE_ICONS: Record<string, string> = {
@@ -128,42 +148,116 @@ export default function LogsTab() {
   const { t } = useTranslation()
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [pollError, setPollError] = useState(false)
+  // 请求序号：翻页/改筛选时丢弃过期响应，避免旧页数据覆盖当前页
+  const reqSeqRef = useRef(0)
+
+  // 级别 / 搜索 / 时间范围 / 分页
+  const [level, setLevel] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [timeFrom, setTimeFrom] = useState('')
+  const [timeTo, setTimeTo] = useState('')
+  const [page, setPage] = useState(0)
+
   const [selectedUser, setSelectedUser] = useState<string | null>(null)
   const [expandedIndex, setExpandedIndex] = useState<string | null>(null)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
 
-  const fetchLogs = useCallback(async () => {
+  // silent：轮询静默请求——失败只显示页内小提示，不触发全局 toast（request 的 silent 跳过 onErrorCb）
+  const loadLogs = useCallback(async (p: number, opts?: { silent?: boolean }) => {
+    const silent = !!opts?.silent
+    const seq = ++reqSeqRef.current
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
     try {
-      const res = await getLogs({ limit: 500 })
+      const query = new URLSearchParams()
+      if (level) query.set('level', level)
+      if (search) query.set('search', search)
+      query.set('limit', String(PAGE_SIZE))
+      query.set('offset', String(p * PAGE_SIZE))
+      const res = await request<LogsResponse>(`/admin/logs?${query}`, { silent })
+      if (seq !== reqSeqRef.current) return // 过期响应（页码/筛选已变），丢弃
       setEntries(res.entries)
       setTotal(res.total)
-    } catch (e) {
-      console.error('Failed to fetch logs:', e)
+      setError('')
+      setPollError(false)
+    } catch {
+      if (seq !== reqSeqRef.current) return
+      if (silent) setPollError(true)
+      else setError(t('admin.logs.readFailed'))
+    } finally {
+      if (!silent && seq === reqSeqRef.current) setLoading(false)
     }
-  }, [])
+  }, [level, search, t])
+
+  const fetchLogs = useCallback((opts?: { silent?: boolean }) => loadLogs(page, opts), [loadLogs, page])
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
+  // 筛选条件变化时回到第一页
+  useEffect(() => { setPage(0) }, [level, search])
+
+  // 自动刷新轮询：页签隐藏或窗口失焦时暂停，恢复后立即刷新一次再继续
   useEffect(() => {
     if (!autoRefresh) return
-    let timer: ReturnType<typeof setInterval>
-    const startPolling = () => { timer = setInterval(fetchLogs, 2000) }
-    const stopPolling = () => { clearInterval(timer) }
-    
+    let timer: ReturnType<typeof setInterval> | undefined
+    const isInactive = () => document.hidden || !document.hasFocus()
+    const tick = () => loadLogs(page, { silent: true })
+    const stopPolling = () => {
+      if (timer) { clearInterval(timer); timer = undefined }
+    }
+    const startPolling = () => {
+      stopPolling()
+      if (!isInactive()) timer = setInterval(tick, POLL_INTERVAL_MS)
+    }
     const handleVisibility = () => {
       if (document.hidden) stopPolling()
-      else startPolling()
+      else { tick(); startPolling() }
     }
-    
+    const handleFocus = () => {
+      if (document.hasFocus()) { tick(); startPolling() }
+      else stopPolling()
+    }
+
     startPolling()
     document.addEventListener('visibilitychange', handleVisibility)
-    return () => { stopPolling(); document.removeEventListener('visibilitychange', handleVisibility) }
-  }, [autoRefresh, fetchLogs])
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleFocus)
+    return () => {
+      stopPolling()
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('blur', handleFocus)
+    }
+  }, [autoRefresh, loadLogs, page])
 
   const handleClear = async () => {
-    try { await clearLogs(); fetchLogs() } catch { /* noop */ }
+    try {
+      await clearLogs()
+      setPage(0)
+      setEntries([])
+      setTotal(0)
+      setSelectedUser(null)
+      loadLogs(0)
+    } catch { setError(t('admin.logs.clearFailed')) }
   }
+
+  // 时间范围过滤（客户端）
+  const visibleEntries = useMemo(() => {
+    if (!timeFrom && !timeTo) return entries
+    return entries.filter(e => {
+      const k = (e.timestamp || '').slice(0, 16)
+      if (timeFrom && k < timeFrom) return false
+      if (timeTo && k > timeTo) return false
+      return true
+    })
+  }, [entries, timeFrom, timeTo])
 
   const fmtTime = (ts: string) => {
     if (!ts) return ''
@@ -172,7 +266,7 @@ export default function LogsTab() {
   }
 
   const fmtTimeFull = (ts: string) => {
-    if (!ts) return ''
+    if (!ts) return '--'
     try { return new Date(ts).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
     catch { return ts }
   }
@@ -188,13 +282,13 @@ export default function LogsTab() {
       videos: Set<number>
     }> = {}
 
-    entries.forEach(e => {
+    visibleEntries.forEach(e => {
       if (!e.user) return
       if (!map[e.user]) map[e.user] = { logs: [], count: 0, types: {}, lastActive: '', firstActive: '', videos: new Set() }
       const u = map[e.user]!
       u.logs.push(e)
       u.count++
-      const { type } = formatLog(e)
+      const { type } = formatLog(e, t)
       u.types[type] = (u.types[type] || 0) + 1
       if (e.video_id) u.videos.add(e.video_id)
       if (!u.lastActive || e.timestamp > u.lastActive) u.lastActive = e.timestamp
@@ -209,7 +303,7 @@ export default function LogsTab() {
         logs: data.logs.slice().reverse(),
       }))
       .sort((a, b) => b.count - a.count)
-  }, [entries])
+  }, [visibleEntries, t])
 
   // 选中用户的路线数据
   const userRoute = useMemo(() => {
@@ -223,16 +317,19 @@ export default function LogsTab() {
 
     u.logs.forEach(entry => {
       const ts = entry.timestamp || ''
-      const t = ts.slice(0, 16) // YYYY-MM-DDTHH:MM
-      if (t !== lastGroup) {
-        lastGroup = t
+      const tk = ts.slice(0, 16) // YYYY-MM-DDTHH:MM
+      if (tk !== lastGroup) {
+        lastGroup = tk
         groups.push({ time: ts, entries: [] })
       }
-      groups[groups.length - 1]!.entries.push({ entry, formatted: formatLog(entry) })
+      groups[groups.length - 1]!.entries.push({ entry, formatted: formatLog(entry, t) })
     })
 
     return { ...u, groups }
-  }, [userData, selectedUser])
+  }, [userData, selectedUser, t])
+
+  const errorCount = visibleEntries.filter(e => e.level === 'ERROR').length
+  const hasMore = entries.length >= PAGE_SIZE
 
   return (
     <div className="analysis">
@@ -248,19 +345,52 @@ export default function LogsTab() {
             <span className="a-stat-label">{t('admin.logs.activeUsers')}</span>
           </div>
           <div className="a-stat">
-            <span className="a-stat-num">{entries.filter(e => e.level === 'ERROR').length}</span>
+            <span className="a-stat-num">{errorCount}</span>
             <span className="a-stat-label">{t('admin.logs.errors')}</span>
           </div>
         </div>
         <div className="a-actions">
           <label className="a-toggle">
-            <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
+            <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} aria-label={t('admin.logs.autoRefreshAria')} />
             <span className="a-toggle-track"></span>
           </label>
           <span className="a-toggle-text">{autoRefresh ? t('admin.logs.autoRefresh') : t('admin.logs.paused')}</span>
+          <button className="a-refresh" onClick={() => fetchLogs()} disabled={loading}>{loading ? t('common.loading') : t('admin.logs.refresh')}</button>
           <button className="a-clear" onClick={() => setShowClearConfirm(true)}>{t('admin.logs.clear')}</button>
         </div>
       </div>
+
+      {/* 过滤栏 */}
+      <div className="a-filter-bar">
+        <span className="a-filter-label">{t('admin.logs.level')}</span>
+        <select className="a-filter" value={level} onChange={e => setLevel(e.target.value)} aria-label={t('admin.logs.levelAria')}>
+          <option value="">{t('admin.logs.all')}</option>
+          {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+        <div className="a-search">
+          <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setSearch(searchInput.trim())} placeholder={t('admin.logs.searchPlaceholder')} aria-label={t('admin.logs.searchAria')} />
+          <button onClick={() => setSearch(searchInput.trim())}>{t('common.search')}</button>
+          {search && <button onClick={() => { setSearch(''); setSearchInput('') }} title={t('admin.media.clearSearch')}>×</button>}
+        </div>
+        <span className="a-filter-label">{t('admin.logs.from')}</span>
+        <input type="datetime-local" className="a-filter" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} aria-label={t('admin.logs.startTimeAria')} />
+        <span className="a-filter-label">{t('admin.logs.to')}</span>
+        <input type="datetime-local" className="a-filter" value={timeTo} onChange={e => setTimeTo(e.target.value)} aria-label={t('admin.logs.endTimeAria')} />
+      </div>
+
+      {error && (
+        <div className="a-error">
+          <span>{error}</span>
+          <button onClick={() => fetchLogs()}>{t('common.retry')}</button>
+        </div>
+      )}
+
+      {pollError && !error && (
+        <div className="a-poll-error" role="status">
+          <span>{t('admin.logs.pollFailed')}</span>
+          <button onClick={() => fetchLogs()}>{t('admin.logs.retryNow')}</button>
+        </div>
+      )}
 
       {/* 账号路线视图 */}
       <div className="a-content">
@@ -286,7 +416,7 @@ export default function LogsTab() {
                 <div className="a-user-tags">
                   {Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([type, n]) => (
                     <span key={type} className="a-tag" style={{ color: TYPE_STYLES[type]?.color || '#6b7280' }}>
-                      {TYPE_ICONS[type] || '·'} {TYPE_STYLES[type]?.label || type} {n}
+                      {TYPE_ICONS[type] || '·'} {TYPE_STYLES[type] ? t(TYPE_STYLES[type].labelKey) : type} {n}
                     </span>
                   ))}
                 </div>
@@ -296,6 +426,9 @@ export default function LogsTab() {
                 </div>
               </div>
             ))}
+            {userData.length === 0 && !loading && (
+              <div className="a-empty-text" style={{ padding: 12 }}>{t('admin.logs.noLogs')}</div>
+            )}
           </div>
         </div>
 
@@ -330,7 +463,7 @@ export default function LogsTab() {
                       width: `${(n / userRoute.count) * 100}%`,
                       background: TYPE_STYLES[type]?.color || '#6b7280',
                     }}
-                    title={`${TYPE_STYLES[type]?.label || type}: ${n} 次`}
+                    title={t('admin.logs.typeCount', { label: TYPE_STYLES[type] ? t(TYPE_STYLES[type].labelKey) : type, count: n })}
                   />
                 ))}
               </div>
@@ -346,12 +479,12 @@ export default function LogsTab() {
                     </div>
                     <div className="a-route-line">
                       {group.entries.map(({ entry, formatted }) => {
-                        const style = TYPE_STYLES[formatted.type] || { color: '#6b7280', label: '其他' }
-                        const nodeKey = entry.timestamp + entry.method + entry.path
+                        const style = TYPE_STYLES[formatted.type] || { color: '#6b7280', labelKey: 'admin.logs.types.default' }
+                        const nodeKey = entry.timestamp + entry.method + entry.path + String(entry.video_id ?? '') + (entry.user ?? '')
                         const isExpanded = expandedIndex === nodeKey
                         return (
                           <div
-                            key={entry.timestamp + entry.method + entry.path}
+                            key={nodeKey}
                             className={`a-route-node ${isExpanded ? 'expanded' : ''}`}
                             style={{ '--node-color': style.color } as React.CSSProperties}
                             onClick={() => setExpandedIndex(isExpanded ? null : nodeKey)}
@@ -363,11 +496,11 @@ export default function LogsTab() {
                             </div>
                             {isExpanded && (
                               <div className="a-node-details">
-                                {entry.path && <div className="a-node-detail"><span className="a-detail-key">路径</span><span className="a-detail-value">{entry.method} {entry.path}</span></div>}
-                                {entry.status && <div className="a-node-detail"><span className="a-detail-key">状态</span><span className="a-detail-value">{entry.status}</span></div>}
-                                {entry.duration_ms && <div className="a-node-detail"><span className="a-detail-key">耗时</span><span className="a-detail-value">{entry.duration_ms}ms</span></div>}
-                                {entry.request_id && <div className="a-node-detail"><span className="a-detail-key">请求ID</span><span className="a-detail-value">{entry.request_id.slice(0, 8)}</span></div>}
-                                {entry.error && <div className="a-node-detail a-detail-error"><span className="a-detail-key">错误</span><span className="a-detail-value">{entry.error}</span></div>}
+                                {entry.path && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.path')}</span><span className="a-detail-value">{entry.method} {entry.path}</span></div>}
+                                {entry.status && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.status')}</span><span className="a-detail-value">{entry.status}</span></div>}
+                                {entry.duration_ms && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.duration')}</span><span className="a-detail-value">{entry.duration_ms}ms</span></div>}
+                                {entry.request_id && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.requestId')}</span><span className="a-detail-value">{entry.request_id.slice(0, 8)}</span></div>}
+                                {entry.error && <div className="a-node-detail a-detail-error"><span className="a-detail-key">{t('admin.logs.error')}</span><span className="a-detail-value">{entry.error}</span></div>}
                               </div>
                             )}
                             <svg className="a-node-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none' }}>
@@ -388,6 +521,13 @@ export default function LogsTab() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* 分页 */}
+      <div className="a-pagination">
+        <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>{t('admin.media.prevPage')}</button>
+        <span>{t('admin.logs.pageInfo', { page: page + 1, size: PAGE_SIZE })}</span>
+        <button disabled={!hasMore} onClick={() => setPage(p => p + 1)}>{t('admin.media.nextPage')}</button>
       </div>
 
       <ConfirmDialog

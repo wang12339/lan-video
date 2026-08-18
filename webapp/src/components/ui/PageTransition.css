@@ -1,0 +1,81 @@
+/* ── Page route transition ── */
+
+.page-transition {
+  --page-transition-duration: 300ms;
+  --page-transition-slide: 12px;
+  will-change: opacity, transform;
+}
+
+/* entering: fade in + slide up */
+.page-transition--entering {
+  animation: page-enter var(--page-transition-duration) ease-out forwards;
+}
+
+/* entered: fully visible (default) */
+.page-transition--entered {
+  opacity: 1;
+  transform: none;
+}
+
+/* exiting: fade out + slide down slightly */
+.page-transition--exiting {
+  animation: page-exit 200ms ease-in forwards;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--page-transition-slide));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes page-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--page-transition-slide) * -0.5));
+  }
+}
+
+/* ── Loading spinner for Suspense fallback ── */
+
+.page-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  gap: 16px;
+  color: var(--text3);
+}
+
+.page-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: page-loading-spin 0.7s linear infinite;
+}
+
+@keyframes page-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .page-transition--entering,
+  .page-transition--exiting {
+    animation: none;
+  }
+  .page-loading-spinner {
+    animation: none;
+  }
+}

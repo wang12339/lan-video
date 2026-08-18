@@ -1,0 +1,31 @@
+.theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.theme-toggle:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.theme-toggle-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* 移动端 */
+@media (max-width: 768px) {
+  .theme-toggle {
+    width: 44px;
+    height: 44px;
+  }
+}

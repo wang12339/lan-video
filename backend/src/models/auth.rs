@@ -17,12 +17,17 @@ pub struct AuthResponse {
 
 #[derive(Debug, Serialize)]
 pub struct UserInfoResponse {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
     pub username: String,
     #[serde(rename = "isAdmin")]
     pub is_admin: bool,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(rename = "emailVerified")]
+    pub email_verified: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -28,14 +28,14 @@ impl VideoService {
         category: Option<&str>,
         username: Option<&str>,
         uploader_id: Option<i64>,
+        sort: Option<&str>,
     ) -> Result<(Vec<VideoItem>, i64), sqlx::Error> {
-        let total = self
-            .repo
-            .count_all(query, source_type, category, uploader_id)
-            .await?;
-        let rows = self
-            .repo
-            .find_all_paged(
+        // Run the count and the page query concurrently instead of serially —
+        // both hit the pool, so this roughly halves list latency.
+        let (total, rows) = tokio::try_join!(
+            self.repo
+                .count_all(query, source_type, category, uploader_id),
+            self.repo.find_all_paged(
                 page,
                 size,
                 query,
@@ -43,8 +43,9 @@ impl VideoService {
                 category,
                 username,
                 uploader_id,
-            )
-            .await?;
+                sort,
+            ),
+        )?;
         let items: Vec<VideoItem> = rows.into_iter().map(VideoItem::from).collect();
         Ok((items, total))
     }
@@ -177,6 +178,11 @@ impl VideoService {
                     file_hash,
                     file_size,
                 });
+                // Stop hashing as soon as we've reached the insert cap —
+                // otherwise a huge directory gets fully hashed for nothing.
+                if out.len() >= MAX_SCAN_FILES {
+                    break;
+                }
             }
             out
         })
@@ -231,66 +237,48 @@ impl VideoService {
 
     pub async fn delete_video(&self, id: i64) -> Result<bool, String> {
         let video = self.repo.find_by_id(id).await.map_err(|e| e.to_string())?;
-        if let Some(v) = video {
-            // Delete physical file if it's a local file
-            if let Some(file_path) = crate::services::media_service::safe_media_path(
-                &v.stream_url,
-                &self.config.media_root,
-            ) {
-                let fp = file_path.clone();
-                let deleted = tokio::task::spawn_blocking(move || {
-                    if fp.exists() {
-                        std::fs::remove_file(&fp).map(|_| true)
-                    } else {
-                        Ok(false)
+        let Some(v) = video else {
+            return Ok(false);
+        };
+        // The DB cascade is the source of truth; only touch the filesystem if
+        // it succeeds (otherwise we'd orphan a DB row pointing at a deleted
+        // file).
+        let deleted = self
+            .repo
+            .delete_video_cascade(id)
+            .await
+            .map_err(|e| e.to_string())?;
+        // Best-effort physical cleanup for stream/cover/thumb files in a
+        // single blocking task (previously three sequential spawn_blocking
+        // calls plus sync canonicalize() calls on the async runtime).
+        let media_root = self.config.media_root.clone();
+        let urls = vec![
+            v.stream_url,
+            v.cover_url.unwrap_or_default(),
+            v.thumb_url.unwrap_or_default(),
+        ];
+        let cleanup = tokio::task::spawn_blocking(move || {
+            for url in &urls {
+                if let Some(path) =
+                    crate::services::media_service::safe_media_path(url, &media_root)
+                {
+                    if path.exists() {
+                        match std::fs::remove_file(&path) {
+                            Ok(_) => info!(file = %path.display(), "deleted media file"),
+                            Err(e) => tracing::warn!(
+                                file = %path.display(),
+                                error = %e,
+                                "failed to delete media file"
+                            ),
+                        }
                     }
-                })
-                .await
-                .map_err(|e| format!("delete thread panicked: {}", e))?
-                .map_err(|e| format!("删除文件失败: {}", e))?;
-                if deleted {
-                    info!("Deleted media file: {:?}", file_path);
                 }
             }
-            // Delete cover image if it exists
-            if let Some(ref cover_url) = v.cover_url {
-                if let Some(cover_path) = crate::services::media_service::safe_media_path(
-                    cover_url,
-                    &self.config.media_root,
-                ) {
-                    let cp = cover_path.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if cp.exists() {
-                            let _ = std::fs::remove_file(&cp);
-                        }
-                    })
-                    .await;
-                }
-            }
-            // Delete thumbnail if it exists
-            if let Some(ref thumb_url) = v.thumb_url {
-                if let Some(thumb_path) = crate::services::media_service::safe_media_path(
-                    thumb_url,
-                    &self.config.media_root,
-                ) {
-                    let tp = thumb_path.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if tp.exists() {
-                            let _ = std::fs::remove_file(&tp);
-                        }
-                    })
-                    .await;
-                }
-            }
-            // Delete video and related records in a transaction
-            self.repo
-                .delete_video_cascade(id)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(true)
-        } else {
-            Ok(false)
+        });
+        if let Err(e) = cleanup.await {
+            tracing::warn!("media cleanup task panicked: {}", e);
         }
+        Ok(deleted)
     }
 
     pub async fn delete_videos(&self, ids: &[i64]) -> Result<u64, String> {
@@ -301,31 +289,44 @@ impl VideoService {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Delete physical files (best-effort, in background)
-        for v in &videos {
-            for url in [
-                &v.stream_url,
-                v.cover_url.as_deref().unwrap_or(""),
-                v.thumb_url.as_deref().unwrap_or(""),
-            ] {
-                if let Some(path) =
-                    crate::services::media_service::safe_media_path(url, &self.config.media_root)
-                {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if path.exists() {
-                            let _ = std::fs::remove_file(path);
-                        }
-                    })
-                    .await;
-                }
-            }
-        }
-
-        // Batch delete from DB in a single transaction
-        self.repo
+        // Batch delete from DB in a single transaction (source of truth)
+        let deleted = self
+            .repo
             .batch_delete_videos(ids)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        // Best-effort physical file cleanup in ONE blocking task instead of
+        // up to 3×500 sequential spawn_blocking calls with per-file await.
+        let media_root = self.config.media_root.clone();
+        let cleanup = tokio::task::spawn_blocking(move || {
+            for v in &videos {
+                for url in [
+                    v.stream_url.as_str(),
+                    v.cover_url.as_deref().unwrap_or(""),
+                    v.thumb_url.as_deref().unwrap_or(""),
+                ] {
+                    if let Some(path) =
+                        crate::services::media_service::safe_media_path(url, &media_root)
+                    {
+                        if path.exists() {
+                            match std::fs::remove_file(&path) {
+                                Ok(_) => info!(file = %path.display(), "deleted media file"),
+                                Err(e) => tracing::warn!(
+                                    file = %path.display(),
+                                    error = %e,
+                                    "failed to delete media file"
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        if let Err(e) = cleanup.await {
+            tracing::warn!("media cleanup task panicked: {}", e);
+        }
+        Ok(deleted)
     }
 
     pub async fn update_video(

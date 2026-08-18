@@ -13,6 +13,11 @@
   will-change: transform;
 }
 
+.card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .thumb-wrap {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -30,6 +35,30 @@
 
 .card-img.loaded {
   opacity: 1;
+}
+
+.thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg3);
+  font-size: 40px;
+}
+
+.progress-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
 }
 
 .thumb-overlay {
@@ -69,6 +98,13 @@
   font-size: 20px;
   color: white;
   backdrop-filter: blur(8px);
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.play-btn:hover {
+  transform: scale(1.15);
+  background: var(--accent, rgba(99, 102, 241, 0.9));
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
 }
 
 .dur {
@@ -94,12 +130,13 @@
 }
 
 .cat-badge {
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
   background: var(--cat-color, var(--text3));
   color: white;
   font-weight: 500;
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.35);
 }
 
 .views {
@@ -158,4 +195,110 @@
   font-size: 12px;
   color: white;
   z-index: 10;
+}
+
+/* 骨架屏（作用域限定在 .card-skeleton 下，避免与 SkeletonLoader 的全局样式冲突） */
+.card-skeleton {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.card-skeleton .skeleton-thumb {
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(90deg, var(--bg3) 25%, var(--bg2) 50%, var(--bg3) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.card-skeleton .skeleton-info {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-skeleton .skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg3) 25%, var(--bg2) 50%, var(--bg3) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.card-skeleton .skeleton-line:first-child {
+  height: 10px;
+}
+
+.card-skeleton .skeleton-line:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.card-skeleton .skeleton-line:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 分类标签颜色标识 */
+.card[data-cat="科技"] .cat-badge { background: #3b82f6; }
+.card[data-cat="设计"] .cat-badge { background: #ec4899; }
+.card[data-cat="音乐"] .cat-badge { background: #8b5cf6; }
+.card[data-cat="教程"] .cat-badge { background: #f59e0b; }
+.card[data-cat="娱乐"] .cat-badge { background: #10b981; }
+.card[data-cat="运动"] .cat-badge { background: #ef4444; }
+.card[data-cat="记录"] .cat-badge { background: #06b6d4; }
+.card[data-cat="外部"] .cat-badge { background: #64748b; }
+
+/* ── Mobile / Touch optimizations ── */
+@media (max-width: 640px) {
+  .card.list-mode {
+    flex-direction: column;
+  }
+
+  .card.list-mode .thumb-wrap {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .card.list-mode .info {
+    padding: 10px;
+  }
+
+  .info {
+    padding: 10px;
+  }
+
+  .title {
+    font-size: 13px;
+    -webkit-line-clamp: 2;
+  }
+
+  .play-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 16px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Always show play overlay on touch (no hover) */
+  .card .play-over {
+    opacity: 0.7;
+  }
+
+  /* Disable card lift animation */
+  .card {
+    transition: none;
+  }
+
+  /* Make duration badge larger for tap */
+  .dur {
+    padding: 3px 8px;
+    font-size: 13px;
+  }
 }

@@ -1,7 +1,20 @@
 use crate::db::log_slow_query;
 use crate::models::video::VideoItem;
+use moka::sync::Cache;
 use sqlx::PgPool;
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// stream_url → video_id 小缓存（media_auth 热路径）。
+///
+/// 旧格式媒体路径（`/media/{timestamp}_{rand}.mp4`）不含视频 ID，media_auth
+/// 需要按 stream_url 反查 videos 表；浏览器 <video> 会发大量 Range 请求，
+/// 每次命中此分支都会打一次 DB。缓存只存命中的 (stream_url, video_id)，
+/// 30 秒 TTL —— 授权边界不受影响（media_auth 在拿到 video_id 后仍要求
+/// 活跃播放会话或绑定该视频的 share token）。
+const STREAM_URL_CACHE_TTL: Duration = Duration::from_secs(30);
+const STREAM_URL_CACHE_MAX: u64 = 5_000;
 
 /// Tuple type for batch inserting local videos:
 /// (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name)
@@ -22,7 +35,60 @@ pub type LocalVideoValues<'a> = (
 const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id";
 const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id";
 
-#[derive(Debug, sqlx::FromRow)]
+/// Shared WHERE-clause builder for video list/count queries so the filters
+/// can't drift between the two. Values are always bound (never interpolated),
+/// so this stays injection-safe.
+fn push_video_filters(
+    builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    query: Option<String>,
+    source_type: Option<String>,
+    category: Option<String>,
+    uploader_id: Option<i64>,
+) {
+    if let Some(q) = query {
+        builder.push(" AND v.search_vector @@ plainto_tsquery('chinese', ");
+        builder.push_bind(q);
+        builder.push(")");
+    }
+    if let Some(t) = source_type {
+        if let Some(stripped) = t.strip_prefix('!') {
+            builder.push(" AND v.source_type != ");
+            builder.push_bind(stripped.to_owned());
+        } else {
+            builder.push(" AND v.source_type = ");
+            builder.push_bind(t);
+        }
+    }
+    if let Some(c) = category {
+        builder.push(" AND v.category = ");
+        builder.push_bind(c);
+    }
+    if let Some(uid) = uploader_id {
+        builder.push(" AND v.uploader_id = ");
+        builder.push_bind(uid);
+    }
+}
+
+/// Whitelisted ORDER BY clause (leading space included, `ORDER BY` handled by
+/// the caller). Unknown sort values fall back to the default ranking — the
+/// caller-supplied string is never interpolated into the SQL.
+fn push_video_sort_clause(
+    builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    sort: Option<&str>,
+) {
+    match sort {
+        Some("views_asc") => builder.push(" v.views ASC, v.id ASC"),
+        Some("id") | Some("id_desc") => builder.push(" v.id DESC"),
+        Some("id_asc") => builder.push(" v.id ASC"),
+        Some("duration") | Some("duration_desc") => builder.push(" v.duration DESC, v.id DESC"),
+        Some("duration_asc") => builder.push(" v.duration ASC, v.id ASC"),
+        Some("title") | Some("title_asc") => builder.push(" v.title ASC, v.id ASC"),
+        Some("title_desc") => builder.push(" v.title DESC, v.id DESC"),
+        _ => builder.push(" v.views DESC, v.id DESC"),
+    };
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct VideoRow {
     pub id: i64,
     pub title: String,
@@ -66,6 +132,7 @@ impl From<VideoRow> for VideoItem {
             watch_position: r.watch_position,
             has_variants: r.has_variants,
             uploader_id: r.uploader_id,
+            created_at: r.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         }
     }
 }
@@ -78,11 +145,22 @@ pub struct FileHashRow {
 #[derive(Debug, Clone)]
 pub struct VideoRepository {
     pool: PgPool,
+    /// stream_url → VideoRow 缓存（见 `find_by_stream_url` 注释）。
+    /// 缓存随 `VideoRepository` 单例共享（AppState 只构造一次）。
+    stream_url_cache: Arc<Cache<String, VideoRow>>,
 }
 
 impl VideoRepository {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            stream_url_cache: Arc::new(
+                Cache::builder()
+                    .time_to_live(STREAM_URL_CACHE_TTL)
+                    .max_capacity(STREAM_URL_CACHE_MAX)
+                    .build(),
+            ),
+        }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -90,28 +168,6 @@ impl VideoRepository {
     }
 
     // ── Videos ──
-
-    pub async fn find_all(&self, query: Option<&str>) -> Result<Vec<VideoRow>, sqlx::Error> {
-        match query {
-            Some(q) => {
-                let pattern = format!("%{}%", q);
-                sqlx::query_as::<_, VideoRow>(
-                    &format!("SELECT {} FROM videos WHERE title ILIKE $1 OR category ILIKE $1 ORDER BY id DESC", VIDEO_COLUMNS)
-                )
-                .bind(&pattern)
-                .fetch_all(&self.pool)
-                .await
-            }
-            None => {
-                sqlx::query_as::<_, VideoRow>(&format!(
-                    "SELECT {} FROM videos ORDER BY id DESC",
-                    VIDEO_COLUMNS
-                ))
-                .fetch_all(&self.pool)
-                .await
-            }
-        }
-    }
 
     pub async fn count_all(
         &self,
@@ -122,33 +178,13 @@ impl VideoRepository {
     ) -> Result<i64, sqlx::Error> {
         let mut builder =
             sqlx::QueryBuilder::new("SELECT COUNT(*) as count FROM videos v WHERE 1=1");
-
-        if let Some(q) = query {
-            let pattern = format!("%{}%", q);
-            builder.push(" AND (v.title ILIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR v.category ILIKE ");
-            builder.push_bind(pattern);
-            builder.push(")");
-        }
-        if let Some(t) = source_type {
-            if let Some(stripped) = t.strip_prefix('!') {
-                builder.push(" AND v.source_type != ");
-                builder.push_bind(stripped.to_string());
-            } else {
-                builder.push(" AND v.source_type = ");
-                builder.push_bind(t.to_string());
-            }
-        }
-        if let Some(c) = category {
-            builder.push(" AND v.category = ");
-            builder.push_bind(c);
-        }
-        if let Some(uid) = uploader_id {
-            builder.push(" AND v.uploader_id = ");
-            builder.push_bind(uid);
-        }
-
+        push_video_filters(
+            &mut builder,
+            query.map(str::to_owned),
+            source_type.map(str::to_owned),
+            category.map(str::to_owned),
+            uploader_id,
+        );
         builder.build_query_scalar().fetch_one(&self.pool).await
     }
 
@@ -162,8 +198,11 @@ impl VideoRepository {
         category: Option<&str>,
         username: Option<&str>,
         uploader_id: Option<i64>,
+        sort: Option<&str>,
     ) -> Result<Vec<VideoRow>, sqlx::Error> {
-        let offset = page * size;
+        // Defense in depth: handlers already clamp `page`, but saturating
+        // multiplication guarantees `OFFSET` can never overflow/wrap.
+        let offset = page.saturating_mul(size);
         let mut builder = sqlx::QueryBuilder::default();
 
         if let Some(uname) = username {
@@ -180,37 +219,27 @@ impl VideoRepository {
             ));
         }
         builder.push(" WHERE 1=1");
+        push_video_filters(
+            &mut builder,
+            query.map(str::to_owned),
+            source_type.map(str::to_owned),
+            category.map(str::to_owned),
+            uploader_id,
+        );
 
-        if let Some(q) = query {
-            let pattern = format!("%{}%", q);
-            builder.push(" AND (v.title ILIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR v.category ILIKE ");
-            builder.push_bind(pattern);
-            builder.push(")");
-        }
-        if let Some(t) = source_type {
-            if let Some(stripped) = t.strip_prefix('!') {
-                builder.push(" AND v.source_type != ");
-                builder.push_bind(stripped.to_string());
-            } else {
-                builder.push(" AND v.source_type = ");
-                builder.push_bind(t.to_string());
+        match username {
+            Some(_uname) => {
+                // Watched videos first (most recently watched first), then the
+                // caller's chosen sort for everything else.
+                builder.push(
+                    " ORDER BY CASE WHEN h.id IS NOT NULL THEN 1 ELSE 0 END, h.updated_at DESC NULLS LAST",
+                );
+                push_video_sort_clause(&mut builder, sort);
             }
-        }
-        if let Some(c) = category {
-            builder.push(" AND v.category = ");
-            builder.push_bind(c);
-        }
-        if let Some(uid) = uploader_id {
-            builder.push(" AND v.uploader_id = ");
-            builder.push_bind(uid);
-        }
-
-        if username.is_some() {
-            builder.push(" ORDER BY CASE WHEN h.id IS NOT NULL THEN 1 ELSE 0 END, h.updated_at ASC NULLS LAST, v.id DESC");
-        } else {
-            builder.push(" ORDER BY v.views DESC, v.id DESC");
+            None => {
+                builder.push(" ORDER BY");
+                push_video_sort_clause(&mut builder, sort);
+            }
         }
 
         builder.push(" LIMIT ");
@@ -225,14 +254,13 @@ impl VideoRepository {
     }
 
     pub async fn find_by_id(&self, id: i64) -> Result<Option<VideoRow>, sqlx::Error> {
-        let pool = self.pool.clone();
         log_slow_query("video_repo::find_by_id", || async {
             sqlx::query_as::<_, VideoRow>(&format!(
                 "SELECT {} FROM videos WHERE id = $1",
                 VIDEO_COLUMNS
             ))
             .bind(id)
-            .fetch_optional(&pool)
+            .fetch_optional(&self.pool)
             .await
         })
         .await
@@ -333,6 +361,33 @@ impl VideoRepository {
         .await
     }
 
+    /// Find a video by its stream_url path (e.g. "/media/1783103442300_1_5019736047878146210.mp4")
+    /// SECURITY: Used by media_auth to resolve video_id from legacy path format
+    ///
+    /// 结果按 stream_url 缓存 30 秒（media_auth 的 Range 请求风暴下避免
+    /// 重复 DB 查询）。只缓存命中项：未注册路径每次仍查库（此类路径本就
+    /// 稀少，且缓存 None 会让"上传后立即可播"出现 30 秒假阴性）。
+    pub async fn find_by_stream_url(
+        &self,
+        stream_url: &str,
+    ) -> Result<Option<VideoRow>, sqlx::Error> {
+        if let Some(row) = self.stream_url_cache.get(stream_url) {
+            return Ok(Some(row));
+        }
+        let row = sqlx::query_as::<_, VideoRow>(&format!(
+            "SELECT {} FROM videos WHERE stream_url = $1",
+            VIDEO_COLUMNS
+        ))
+        .bind(stream_url)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(v) = &row {
+            self.stream_url_cache
+                .insert(stream_url.to_string(), v.clone());
+        }
+        Ok(row)
+    }
+
     pub async fn find_existing_hashes(
         &self,
         hashes: &[String],
@@ -398,12 +453,14 @@ impl VideoRepository {
             .collect())
     }
 
-    /// Batch delete videos and their related data in a single transaction
+    /// Batch delete videos and their related data in a single transaction.
+    /// Also decrements the storage quota for each affected uploader.
     pub async fn batch_delete_videos(&self, ids: &[i64]) -> Result<u64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
         let mut tx = self.pool.begin().await?;
+
         sqlx::query("DELETE FROM playback_history WHERE video_id = ANY($1)")
             .bind(ids)
             .execute(&mut *tx)
@@ -416,10 +473,32 @@ impl VideoRepository {
             .bind(ids)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM comments WHERE video_id = ANY($1)")
+            .bind(ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM video_tags WHERE video_id = ANY($1)")
+            .bind(ids)
+            .execute(&mut *tx)
+            .await?;
         let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
             .bind(ids)
             .execute(&mut *tx)
             .await?;
+
+        // Decrement storage quota for all affected uploaders in one statement
+        // instead of one UPDATE per uploader inside the transaction.
+        sqlx::query(
+            "UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - sub.total_bytes) \
+             FROM (SELECT uploader_id, SUM(file_size) AS total_bytes \
+                   FROM videos WHERE id = ANY($1) AND uploader_id IS NOT NULL \
+                   GROUP BY uploader_id) AS sub \
+             WHERE users.id = sub.uploader_id",
+        )
+        .bind(ids)
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
         Ok(result.rows_affected())
     }
@@ -507,29 +586,21 @@ impl VideoRepository {
 
         if let Some(t) = title {
             sep.push("title = ");
-            sep.push_bind(t);
+            sep.push_bind_unseparated(t);
         }
         if let Some(d) = description {
             sep.push("description = ");
-            sep.push_bind(d);
+            sep.push_bind_unseparated(d);
         }
         if let Some(c) = category {
             sep.push("category = ");
-            sep.push_bind(c);
+            sep.push_bind_unseparated(c);
         }
 
         builder.push(" WHERE id = ");
         builder.push_bind(id);
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
-    }
-
-    pub async fn delete_video(&self, id: i64) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM videos WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
     }
 
     pub async fn increment_views(&self, id: i64) -> Result<(), sqlx::Error> {
@@ -636,4 +707,70 @@ impl VideoRepository {
         .await?;
         Ok(rows.into_iter().map(|r| r.stream_url).collect())
     }
+
+    // ── Variant / transcode helpers ──
+
+    pub async fn delete_variant_record(
+        &self,
+        video_id: i64,
+        resolution: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM video_variants WHERE video_id = $1 AND resolution = $2")
+            .bind(video_id)
+            .bind(resolution)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn count_variants(&self, video_id: i64) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM video_variants WHERE video_id = $1")
+                .bind(video_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(count)
+    }
+
+    pub async fn clear_has_variants(&self, video_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE videos SET has_variants = false WHERE id = $1")
+            .bind(video_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_variants(&self, video_id: i64) -> Result<Vec<VideoVariantRow>, sqlx::Error> {
+        sqlx::query_as::<_, VideoVariantRow>(
+            r#"SELECT resolution, file_path, file_size, bitrate, codec
+               FROM video_variants
+               WHERE video_id = $1
+               ORDER BY CASE resolution
+                   WHEN '2160p' THEN 1 WHEN '1080p' THEN 2 WHEN '720p' THEN 3
+                   WHEN '480p' THEN 4 WHEN '360p' THEN 5 ELSE 6 END"#,
+        )
+        .bind(video_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn cancel_transcode_jobs(&self, video_id: i64) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE transcoding_jobs SET status = 'failed', error_message = 'Cancelled by admin' \
+             WHERE video_id = $1 AND status IN ('pending', 'processing')",
+        )
+        .bind(video_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct VideoVariantRow {
+    pub resolution: String,
+    pub file_path: String,
+    pub file_size: i64,
+    pub bitrate: Option<i32>,
+    pub codec: Option<String>,
 }

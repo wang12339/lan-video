@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect};
 use axum::Json;
 use serde::Serialize;
@@ -40,13 +40,22 @@ pub async fn server_info() -> Json<ServerInfo> {
 ///
 /// Minimal health endpoint for load balancer / k8s probes.
 /// Returns 200 on success, 503 on failure. No sensitive info leaked.
+/// Returns X-Public-Url header so clients can discover the server's public address.
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let db_ok = state.user_repo.count_users().await.is_ok();
+    let db_ok = state.repos.user.count_users(1).await.is_ok();
+
+    let mut headers = HeaderMap::new();
+    if !state.config.public_url.is_empty() {
+        headers.insert(
+            "X-Public-Url",
+            HeaderValue::try_from(state.config.public_url.as_str()).unwrap(),
+        );
+    }
 
     if db_ok {
-        (StatusCode::OK, "ok").into_response()
+        (StatusCode::OK, headers, "ok").into_response()
     } else {
-        (StatusCode::SERVICE_UNAVAILABLE, "unavailable").into_response()
+        (StatusCode::SERVICE_UNAVAILABLE, headers, "unavailable").into_response()
     }
 }
 

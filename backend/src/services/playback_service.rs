@@ -1,13 +1,34 @@
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
+
 use crate::repositories::playback_repo::PlaybackRepository;
+
+/// 同一用户对同一视频的进度写入节流窗口。
+/// 客户端每次心跳/进度变化都会上报 POST /playback/history，
+/// 服务端在此窗口内合并写库，避免高频 UPSERT。
+const WRITE_THROTTLE: Duration = Duration::from_secs(10);
+
+/// 节流表条目在超过该时长后视为过期（对应会话超时 120s）。
+const ENTRY_TTL: Duration = Duration::from_secs(120);
+
+/// 节流表条目上限，超过后惰性清理过期条目，防止内存无限增长。
+const MAX_TRACKED_WRITES: usize = 20_000;
 
 #[derive(Clone)]
 pub struct PlaybackService {
     repo: PlaybackRepository,
+    /// username:video_id -> 最近一次实际写库时间
+    last_writes: Arc<DashMap<String, Instant>>,
 }
 
 impl PlaybackService {
     pub fn new(repo: PlaybackRepository) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            last_writes: Arc::new(DashMap::new()),
+        }
     }
 
     pub async fn get_playback_data(
@@ -21,9 +42,10 @@ impl PlaybackService {
     pub async fn get_playback_history(
         &self,
         username: &str,
+        limit: i64,
     ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
         self.repo
-            .find_playback_history_by_username(username, None)
+            .find_playback_history_by_username(username, Some(limit))
             .await
     }
 
@@ -34,6 +56,9 @@ impl PlaybackService {
         position_ms: i64,
         duration_ms: i64,
     ) -> Result<(), sqlx::Error> {
+        if !self.should_write(username, video_id) {
+            return Ok(());
+        }
         self.repo
             .upsert_playback(username, video_id, position_ms, duration_ms)
             .await
@@ -77,5 +102,32 @@ impl PlaybackService {
         username: &str,
     ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
         self.repo.find_favorites_by_username(username).await
+    }
+}
+
+impl PlaybackService {
+    /// 返回 true 表示应写入数据库：该 key 在节流窗口内没有写过。
+    /// 原子地更新记录时间（DashMap::entry 持写锁），锁在 await 前释放。
+    fn should_write(&self, username: &str, video_id: i64) -> bool {
+        let key = format!("{}:{}", username, video_id);
+        let now = Instant::now();
+        // 新条目首次出现时立即放行（or_insert 的时间戳回溯到窗口外），
+        // 否则第一笔进度写入会被节流窗口吞掉。
+        let backdated = now
+            .checked_sub(WRITE_THROTTLE + Duration::from_millis(1))
+            .unwrap_or(now);
+        {
+            let mut last = self.last_writes.entry(key).or_insert(backdated);
+            if now.duration_since(*last) < WRITE_THROTTLE {
+                return false;
+            }
+            *last = now;
+        }
+        // 惰性清理：条目数超限时回收过期条目，防止内存无限增长
+        if self.last_writes.len() > MAX_TRACKED_WRITES {
+            self.last_writes
+                .retain(|_, last| last.elapsed() < ENTRY_TTL);
+        }
+        true
     }
 }

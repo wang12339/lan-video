@@ -123,14 +123,14 @@ start_backend() {
     fi
 
     # 构建
-    local binary="$SCRIPT_DIR/target/release/lan-video-backend"
-    if [[ ! -x "$binary" ]] || [[ "$binary" -ot "$SCRIPT_DIR/src" ]]; then
+    local binary="$SCRIPT_DIR/target/release/atmos-video-backend"
+    if [[ ! -x "$binary" ]] || find "$SCRIPT_DIR/src" -name "*.rs" -newer "$binary" -print -quit | grep -q .; then
         echo "正在构建..."
         cargo build --release 2>&1 | tail -3
     fi
 
     # 设置环境变量（已在 .env 中定义，此处为后备默认值）
-    export DATABASE_URL="${DATABASE_URL:-postgres://kuaile@localhost:5432/lan_video}"
+    export DATABASE_URL="${DATABASE_URL:-postgres://kuaile@localhost:5432/atmos_video}"
     export MEDIA_ROOT="${MEDIA_ROOT:-$SCRIPT_DIR/media}"
     export RUST_LOG="${RUST_LOG:-info}"
     export SERVER_PORT="${SERVER_PORT:-$PORT}"

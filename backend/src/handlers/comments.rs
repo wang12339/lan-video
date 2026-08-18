@@ -5,13 +5,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::services::comment_service::CommentError;
 use crate::state::AppState;
-use crate::util::response::{error_response, ErrorResponse};
+use crate::util::error::ServiceError;
+use crate::util::hashid;
+use crate::util::response::{error_response, ErrorResponse, SafeJson};
 
 #[derive(Deserialize)]
 pub struct CreateCommentRequest {
     pub content: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::util::hashid_serde::deserialize_option_id"
+    )]
     pub parent_id: Option<i64>,
 }
 
@@ -24,12 +29,16 @@ pub struct CommentQuery {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentResponse {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub video_id: i64,
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub user_id: i64,
     pub username: String,
     pub avatar_url: Option<String>,
     pub content: String,
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_option_id")]
     pub parent_id: Option<i64>,
     pub created_at: String,
 }
@@ -57,23 +66,19 @@ fn map_comment(c: crate::repositories::comment_repo::CommentRow) -> CommentRespo
 /// GET /videos/{id}/comments
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
+    Path(video_id): Path<String>,
     Query(q): Query<CommentQuery>,
 ) -> Result<Json<CommentListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     let page = q.page.unwrap_or(0);
     let size = q.size.unwrap_or(20).min(100);
     let (comments, total) = state
-        .comment_service
+        .services
+        .comment
         .list_comments(video_id, page, size)
         .await
-        .map_err(|e| {
-            if let CommentError::Internal(msg) = &e {
-                tracing::error!("list_comments error: {}", msg);
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("服务器内部错误: {}", msg))
-            } else {
-                e.into_response()
-            }
-        })?;
+        .map_err(ServiceError::into_tuple)?;
     Ok(Json(CommentListResponse {
         comments: comments.into_iter().map(map_comment).collect(),
         total,
@@ -83,18 +88,16 @@ pub async fn list_comments(
 /// GET /comments/{id}/replies
 pub async fn list_replies(
     State(state): State<Arc<AppState>>,
-    Path(comment_id): Path<i64>,
+    Path(comment_id): Path<String>,
 ) -> Result<Json<Vec<CommentResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let comment_id = hashid::decode_id_or_numeric(&comment_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的评论ID"))?;
     let replies = state
-        .comment_service
+        .services
+        .comment
         .list_replies(comment_id)
         .await
-        .map_err(|e| match e {
-            CommentError::Internal(_) => {
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-            }
-            other => other.into_response(),
-        })?;
+        .map_err(ServiceError::into_tuple)?;
     Ok(Json(replies.into_iter().map(map_comment).collect()))
 }
 
@@ -102,18 +105,23 @@ pub async fn list_replies(
 pub async fn create_comment(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Path(video_id): Path<i64>,
-    Json(req): Json<CreateCommentRequest>,
+    Path(video_id): Path<String>,
+    SafeJson(req): SafeJson<CreateCommentRequest>,
 ) -> Result<(StatusCode, Json<CommentResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     let comment = state
-        .comment_service
-        .create_comment(video_id, auth_user.id, &req.content, req.parent_id)
+        .services
+        .comment
+        .create_comment(
+            video_id,
+            auth_user.id,
+            &req.content,
+            req.parent_id,
+            auth_user.is_admin,
+        )
         .await
-        .map_err(|e| match e {
-            CommentError::Invalid(msg) => error_response(StatusCode::BAD_REQUEST, msg),
-            CommentError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            other => other.into_response(),
-        })?;
+        .map_err(ServiceError::into_tuple)?;
     Ok((StatusCode::CREATED, Json(map_comment(comment))))
 }
 
@@ -121,18 +129,20 @@ pub async fn create_comment(
 pub async fn delete_comment(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Path(comment_id): Path<i64>,
+    Path(comment_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let comment_id = hashid::decode_id_or_numeric(&comment_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的评论ID"))?;
     state
-        .comment_service
+        .services
+        .comment
         .delete_comment(comment_id, auth_user.id, auth_user.is_admin)
         .await
         .map_err(|e| match e {
-            CommentError::NotFound => {
+            ServiceError::NotFound(_) => {
                 error_response(StatusCode::NOT_FOUND, "评论不存在或无权删除")
             }
-            CommentError::Internal(msg) => error_response(StatusCode::INTERNAL_SERVER_ERROR, msg),
-            other => other.into_response(),
+            other => other.into_tuple(),
         })?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

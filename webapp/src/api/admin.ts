@@ -1,9 +1,14 @@
 // 管理员 API
 
-import { BASE, getToken, request } from './client';
+import { request, cacheClear, APIError } from './client';
+
+/** 判断是否为权限类错误（403），供页面统一给出中文提示 */
+export function isForbidden(err: unknown): boolean {
+  return err instanceof APIError && err.status === 403;
+}
 
 export interface AdminUser {
-  id: number;
+  id: string;
   username: string;
   isAdmin: boolean;
   approved: boolean;
@@ -12,7 +17,7 @@ export interface AdminUser {
 }
 
 export interface AdminVideo {
-  id: number;
+  id: string;
   title: string;
   description: string;
   sourceType: string;
@@ -22,7 +27,8 @@ export interface AdminVideo {
   category: string;
   views: number;
   duration: number;
-  createdAt: string;
+  /** 后端可能不返回（旧版契约），排序代码需容忍 undefined */
+  createdAt?: string;
 }
 
 export interface VideoListResponse {
@@ -38,7 +44,7 @@ export async function listUsers(): Promise<AdminUser[]> {
   return request<AdminUser[]>('/admin/users');
 }
 
-export async function deleteUser(id: number): Promise<void> {
+export async function deleteUser(id: string): Promise<void> {
   await request(`/admin/users/${id}`, { method: 'DELETE' });
 }
 
@@ -61,17 +67,17 @@ export async function listAdminVideos(params: {
 }
 
 export async function updateVideo(
-  id: number,
+  id: string,
   data: { title?: string; description?: string; category?: string }
 ): Promise<{ ok: boolean; error?: string }> {
   return request(`/admin/videos/${id}`, { method: 'PUT', body: data });
 }
 
-export async function deleteVideo(id: number): Promise<{ ok: boolean; error?: string }> {
+export async function deleteVideo(id: string): Promise<{ ok: boolean; error?: string }> {
   return request(`/admin/videos/${id}`, { method: 'DELETE' });
 }
 
-export async function deleteVideos(ids: number[]): Promise<{ ok: boolean; deleted?: number }> {
+export async function deleteVideos(ids: string[]): Promise<{ ok: boolean; deleted?: number }> {
   return request('/admin/videos/batch', { method: 'DELETE', body: ids });
 }
 
@@ -83,47 +89,39 @@ export async function addExternalVideo(data: {
   category?: string;
   stream_url: string;
   cover_url?: string;
-}): Promise<{ id: number }> {
+}): Promise<{ id: string }> {
   return request('/admin/videos/external', { method: 'POST', body: data });
 }
 
 // ── 上传封面 ──
 
-export async function uploadCover(id: number, file: File): Promise<void> {
-  const token = getToken();
+export async function uploadCover(id: string, file: File): Promise<void> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${BASE}/admin/videos/${id}/cover`, {
+  // multipart 统一走 request()（自带超时/错误本地化/401/CSRF 头）；
+  // silent：错误由后台媒体页自行展示
+  await request(`/admin/videos/${id}/cover`, {
     method: 'POST',
-    headers: token ? { Authorization: 'Bearer ' + token } : {},
     body: form,
+    silent: true,
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
 }
 
 // ── 系统操作 ──
 
 export async function scanMedia(category?: string): Promise<{ added: number }> {
-  if (category) {
-    const form = new FormData();
-    form.append('category', category);
-    const token = getToken();
-    const res = await fetch(`${BASE}/admin/videos/scan`, {
-      method: 'POST',
-      headers: token ? { Authorization: 'Bearer ' + token } : {},
-      body: form,
-      signal: AbortSignal.timeout(600000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  }
-  return request<{ added: number }>('/admin/videos/scan', {
+  const form = new FormData();
+  if (category) form.append('category', category);
+  // 后端接受空 body 或 multipart；长超时（10 分钟扫描）；silent：错误由系统页展示
+  const data = await request<{ added: number }>('/admin/videos/scan', {
     method: 'POST',
+    body: form,
     timeout: 600000,
+    silent: true,
   });
+  // 扫描会新增媒体文件，清掉前端响应缓存避免短时间 TTL 内看到旧列表
+  cacheClear();
+  return data;
 }
 
 export async function backfillThumbnails(): Promise<{ ok: boolean; generated: number; errors: string[] }> {
@@ -153,25 +151,25 @@ export async function getStats(): Promise<AdminStats> {
 
 // ── 批量改分类 ──
 
-export async function batchUpdateCategory(ids: number[], category: string): Promise<{ ok: boolean; deleted?: number }> {
+export async function batchUpdateCategory(ids: string[], category: string): Promise<{ ok: boolean; deleted?: number }> {
   return request('/admin/videos/batch-category', { method: 'PUT', body: { ids, category } });
 }
 
 // ── 用户管理增强 ──
 
-export async function resetUserPassword(id: number, password: string): Promise<{ ok: boolean; error?: string }> {
+export async function resetUserPassword(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
   return request(`/admin/users/${id}/password`, { method: 'PUT', body: { password } });
 }
 
-export async function toggleUserAdmin(id: number): Promise<{ ok: boolean; error?: string }> {
+export async function toggleUserAdmin(id: string): Promise<{ ok: boolean; error?: string }> {
   return request(`/admin/users/${id}/admin`, { method: 'PUT' });
 }
 
-export async function approveUser(id: number, approved: boolean): Promise<{ ok: boolean; error?: string }> {
+export async function approveUser(id: string, approved: boolean): Promise<{ ok: boolean; error?: string }> {
   return request(`/admin/users/${id}/approve`, { method: 'PUT', body: { approved } });
 }
 
-export async function kickUser(id: number): Promise<{ ok: boolean; deleted?: number }> {
+export async function kickUser(id: string): Promise<{ ok: boolean; deleted?: number }> {
   return request(`/admin/users/${id}/kick`, { method: 'POST' });
 }
 

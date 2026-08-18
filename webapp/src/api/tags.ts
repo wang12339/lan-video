@@ -34,10 +34,6 @@ export async function getPopularTags(): Promise<Tag[]> {
   return res.tags;
 }
 
-export async function getTag(id: number): Promise<Tag> {
-  return request<Tag>(`/tags/${id}`);
-}
-
 // Admin
 export async function createTag(data: TagCreateRequest): Promise<Tag> {
   return request<Tag>('/admin/tags', { method: 'POST', body: data });

@@ -24,6 +24,40 @@
   font-size: 14px;
   color: var(--text2);
   max-width: 400px;
+  word-break: break-word;
+}
+
+.eb-details {
+  margin-bottom: 24px;
+  max-width: 100%;
+  text-align: left;
+}
+
+.eb-details summary {
+  cursor: pointer;
+  color: var(--text3);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.eb-stack {
+  background: var(--bg3);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text2);
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.eb-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .eb-retry-btn {
@@ -40,4 +74,36 @@
 
 .eb-retry-btn:hover {
   filter: brightness(1.1);
+}
+
+.eb-reload-btn {
+  padding: 10px 24px;
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.eb-reload-btn:hover {
+  background: var(--surface);
+}
+
+@media (max-width: 480px) {
+  .eb-error {
+    padding: 40px 16px;
+  }
+  
+  .eb-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .eb-retry-btn,
+  .eb-reload-btn {
+    width: 100%;
+  }
 }

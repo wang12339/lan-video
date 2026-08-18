@@ -2,40 +2,66 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { getStats, getSystemInfo } from '../../api/admin'
 import type { AdminStats, SystemInfo } from '../../api/admin'
-import { formatDuration } from '../../api/utils'
+import { formatDuration, formatViews } from '../../api/utils'
 import { SkeletonLoader } from '../../components/ui'
+
+const STATS_REFETCH_MS = 60_000
 
 export default function DashboardTab() {
   const { t } = useTranslation()
-  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery<AdminStats>({
+  const { data: stats, isLoading: statsLoading, isFetching: statsFetching, error: statsError, refetch: refetchStats } = useQuery<AdminStats>({
     queryKey: ['admin-stats'],
     queryFn: getStats,
+    refetchInterval: STATS_REFETCH_MS,
   })
-  const { data: sys } = useQuery<SystemInfo>({
+  const { data: sys, refetch: refetchSys } = useQuery<SystemInfo>({
     queryKey: ['admin-system-info'],
     queryFn: getSystemInfo,
+    refetchInterval: STATS_REFETCH_MS,
   })
 
+  const handleRefresh = () => {
+    void refetchStats()
+    void refetchSys()
+  }
+
   if (statsLoading) return <SkeletonLoader type="stats" />
-  if (statsError || !stats) return <div className="admin-error">{t('admin.stats.loadFailed')}</div>
+  if (statsError || !stats) {
+    return (
+      <div className="admin-tab-content">
+        <div className="admin-error">
+          <p>{t('admin.stats.loadFailed')}</p>
+          <button type="button" className="admin-btn" onClick={() => void refetchStats()}>{t('common.retry')}</button>
+        </div>
+      </div>
+    )
+  }
+
+  const total = stats.totalVideos > 0 ? stats.totalVideos : 1
 
   return (
     <div className="admin-tab-content">
+      <div className="admin-toolbar admin-toolbar-right">
+        <button type="button" className="admin-btn" onClick={handleRefresh} disabled={statsFetching}>
+          {t('admin.users.refresh')}
+        </button>
+      </div>
+
       <div className="admin-stats-grid">
         <div className="admin-stat-card">
-          <div className="admin-stat-value">{stats.videoCount}</div>
+          <div className="admin-stat-value">{stats.videoCount.toLocaleString()}</div>
           <div className="admin-stat-label">{t('admin.stats.videos')}</div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-value">{stats.imageCount}</div>
+          <div className="admin-stat-value">{stats.imageCount.toLocaleString()}</div>
           <div className="admin-stat-label">{t('admin.stats.images')}</div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-value">{stats.totalViews.toLocaleString()}</div>
+          <div className="admin-stat-value">{formatViews(stats.totalViews)}</div>
           <div className="admin-stat-label">{t('admin.stats.totalViews')}</div>
         </div>
         <div className="admin-stat-card">
-          <div className="admin-stat-value">{stats.userCount}</div>
+          <div className="admin-stat-value">{stats.userCount.toLocaleString()}</div>
           <div className="admin-stat-label">{t('admin.stats.users')}</div>
         </div>
         {stats.pendingCount > 0 && (
@@ -64,7 +90,7 @@ export default function DashboardTab() {
                 <div className="admin-bar-track">
                   <div
                     className="admin-bar-fill"
-                    style={{ width: `${(count / stats.totalVideos) * 100}%` }}
+                    style={{ width: `${(count / total) * 100}%` }}
                   />
                 </div>
                 <span className="admin-bar-count">{count}</span>

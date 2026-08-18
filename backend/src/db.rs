@@ -1,4 +1,5 @@
 use sqlx::postgres::PgPoolOptions;
+use sqlx::Acquire;
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -29,7 +30,9 @@ where
     if elapsed > SLOW_QUERY_THRESHOLD {
         match &result {
             Ok(_) => warn!(query = %label, duration_ms = %elapsed.as_millis(), "slow query"),
-            Err(e) => warn!(query = %label, duration_ms = %elapsed.as_millis(), error = %e, "slow query failed"),
+            Err(e) => {
+                warn!(query = %label, duration_ms = %elapsed.as_millis(), error = %e, "slow query failed")
+            }
         }
     }
     result
@@ -68,10 +71,16 @@ fn discover_migrations() -> Vec<(String, String)> {
 }
 
 pub async fn init_pool(database_url: &str) -> PgPool {
-    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
+    let max_connections: u32 = match std::env::var("DB_MAX_CONNECTIONS") {
+        Ok(v) => match v.parse() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                warn!("DB_MAX_CONNECTIONS '{}' invalid, defaulting to 100", v);
+                100
+            }
+        },
+        Err(_) => 100,
+    };
 
     let max_retries = 5;
     let mut attempt = 0u32;
@@ -114,6 +123,24 @@ pub async fn init_pool(database_url: &str) -> PgPool {
 }
 
 async fn run_migrations(pool: &PgPool) {
+    // Use a dedicated connection for the whole migration run:
+    // 1. A session-level advisory lock serializes concurrent server instances
+    //    so two processes can't apply migrations at the same time (the lock is
+    //    released automatically when the connection is dropped).
+    // 2. The migration bookkeeping (check + apply + record) stays on one
+    //    connection, avoiding read-your-own-writes races with other pool slots.
+    let mut conn = pool
+        .acquire()
+        .await
+        .unwrap_or_else(|e| panic!("Failed to acquire connection for migrations: {}", e));
+
+    const MIGRATION_LOCK_KEY: i64 = 0x_4154_4D4F_5320_0001; // "ATMOS " marker
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut *conn)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to acquire migration advisory lock: {}", e));
+
     // Ensure the migration tracking table exists
     sqlx::raw_sql(
         "CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -121,7 +148,7 @@ async fn run_migrations(pool: &PgPool) {
             applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )",
     )
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .unwrap_or_else(|e| panic!("Failed to create _schema_migrations table: {}", e));
 
@@ -132,36 +159,57 @@ async fn run_migrations(pool: &PgPool) {
             "SELECT EXISTS(SELECT 1 FROM _schema_migrations WHERE version = $1)",
         )
         .bind(&name)
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
-        .unwrap_or(false);
+        .unwrap_or_else(|e| panic!("Failed to check migration status of '{}': {}", name, e));
 
         if already_applied {
             continue;
         }
 
-        // Run each migration in a transaction for safe rollback on failure
-        let mut tx = pool.begin().await.unwrap_or_else(|e| {
-            panic!("Failed to begin transaction for migration {}: {}", name, e)
+        // Run each migration in a transaction so a failure rolls back fully
+        // (PostgreSQL DDL is transactional). On failure we abort the server
+        // start instead of marking the migration as applied — a half-applied
+        // schema is worse than a loud crash, and the transaction guarantees
+        // there is no partial state to recover from.
+        let mut tx = (&mut *conn).begin().await.unwrap_or_else(|e| {
+            panic!(
+                "Failed to begin transaction for migration '{}': {}",
+                name, e
+            )
         });
 
-        sqlx::raw_sql(&sql)
-            .execute(&mut *tx)
-            .await
-            .unwrap_or_else(|e| panic!("Failed to run migration {}: {}", name, e));
+        if let Err(e) = sqlx::raw_sql(&sql).execute(&mut *tx).await {
+            let _ = tx.rollback().await;
+            panic!(
+                "Migration '{}' FAILED. Rolling back. Fix the migration file or \
+                 manually mark it as applied (INSERT INTO _schema_migrations (version) \
+                 VALUES ('{}')) if it was already applied out-of-band. Error: {}",
+                name, name, e
+            );
+        }
 
         sqlx::query("INSERT INTO _schema_migrations (version) VALUES ($1)")
             .bind(&name)
             .execute(&mut *tx)
             .await
-            .unwrap_or_else(|e| panic!("Failed to record migration {}: {}", name, e));
+            .unwrap_or_else(|e| panic!("Failed to record migration '{}': {}", name, e));
 
         tx.commit()
             .await
-            .unwrap_or_else(|e| panic!("Failed to commit migration {}: {}", name, e));
+            .unwrap_or_else(|e| panic!("Failed to commit migration '{}': {}", name, e));
 
         info!("Migration '{}' applied successfully", name);
     }
+
+    // Release the advisory lock (best-effort — the session lock dies with the
+    // connection anyway, and the pool returns it on the next acquire).
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| warn!("Failed to release migration advisory lock: {}", e))
+        .ok();
 }
 
 #[cfg(test)]
@@ -177,8 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn log_slow_query_passes_through_error() {
-        let result: Result<i32, &str> =
-            log_slow_query("test", || async { Err("boom") }).await;
+        let result: Result<i32, &str> = log_slow_query("test", || async { Err("boom") }).await;
         assert!(result.is_err());
     }
 

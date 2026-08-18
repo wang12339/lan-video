@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
 import { listVideos, mapVideo, getTrendingVideos } from '../../api'
 import type { MappedVideo } from '../../api/types'
-import VideoCard from '../../components/VideoCard/VideoCard'
-import { SkeletonLoader } from '../../components/ui'
+import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
 import AuthDialog from '../../components/AuthDialog/AuthDialog'
 import { useAuth } from '../../context/AuthContext'
 import { trackClick } from '../../utils/track'
@@ -14,189 +13,192 @@ import './Home.css'
 const CATEGORIES = ['全部', '科技', '设计', '音乐', '教程', '娱乐', '运动', '记录', '外部']
 const PAGE_SIZE = 20
 
-interface HomeCache {
-  videos: MappedVideo[]
-  total: number
+// 离开首页时记住滚动位置，返回时恢复（模块级变量，跨组件卸载保留）
+let homeScrollY = 0
+
+interface VideoListParams {
+  query?: string
+  type: string
+  category?: string
   page: number
-  category: string
-  hasMore: boolean
+  size: number
+}
+
+function buildParams(category: string, query: string, page: number): VideoListParams {
+  const params: VideoListParams = {
+    type: category === '外部' ? 'external' : 'local_video',
+    page,
+    size: PAGE_SIZE,
+  }
+  if (query) params.query = query
+  if (category !== '全部' && category !== '外部') params.category = category
+  return params
 }
 
 export default function Home() {
   const { t } = useTranslation()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const [videos, setVideos] = useState<MappedVideo[]>([])
-  const [trending, setTrending] = useState<MappedVideo[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [hasMore, setHasMore] = useState(true)
   const [category, setCategory] = useState(() => searchParams.get('cat') || '全部')
-  const [showAuth, setShowAuth] = useState(false)
-
-  const pageRef = useRef(0)
-  const loadingRef = useRef(false)
-  const hasMoreRef = useRef(true)
-  const categoryRef = useRef(category)
-  categoryRef.current = category
-  const cachedDataRef = useRef<HomeCache | null>(null)
-  const cachedScrollRef = useRef(0)
+  const [emailVerified, setEmailVerified] = useState<boolean | null>(() => {
+    const param = searchParams.get('email_verified')
+    if (param === 'true') return true
+    if (param === 'false') return false
+    return null
+  })
   const query = searchParams.get('q') || ''
-  const queryRef = useRef(query)
-  queryRef.current = query
-  const videosRef = useRef<MappedVideo[]>([])
-  const totalRef = useRef(0)
-  const scrollYRef = useRef(0)
 
-  const loadInitial = useCallback(async (cat: string, restore?: boolean) => {
-    if (restore && cachedDataRef.current) {
-      if (cachedDataRef.current.category !== cat) {
-        cachedDataRef.current = null
-        cachedScrollRef.current = 0
-        restore = false
-      }
-    }
-    if (restore && cachedDataRef.current) {
-      videosRef.current = cachedDataRef.current.videos
-      totalRef.current = cachedDataRef.current.total
-      setVideos(cachedDataRef.current.videos)
-      setTotal(cachedDataRef.current.total)
-      pageRef.current = cachedDataRef.current.page
-      hasMoreRef.current = cachedDataRef.current.hasMore
-      setHasMore(cachedDataRef.current.hasMore)
-      const scrollY = cachedScrollRef.current
-      cachedDataRef.current = null
-      cachedScrollRef.current = 0
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          window.scrollTo({ top: scrollY, behavior: 'instant' })
-        })
-      })
-      return
-    }
-
-    loadingRef.current = true
-    setLoading(true)
-    pageRef.current = 0
-    try {
-      const params: Record<string, unknown> = {
-        page: 0,
-        size: PAGE_SIZE,
-      }
-      if (queryRef.current) params.query = queryRef.current
-      if (cat === '外部') {
-        params.type = 'external'
-      } else {
-        params.type = 'local_video'
-        if (cat !== '全部') params.category = cat
-      }
-
-      const res = await listVideos(params)
-      const mapped = res.items.map(mapVideo).filter(Boolean) as MappedVideo[]
-      const more = mapped.length >= PAGE_SIZE
-
-      videosRef.current = mapped
-      totalRef.current = res.total
-      setVideos(mapped)
-      setTotal(res.total)
-      hasMoreRef.current = more
-      setHasMore(more)
-      pageRef.current = 1
-    } catch (err) {
-      console.error('加载视频失败:', err)
-    } finally {
-      loadingRef.current = false
-      setLoading(false)
-    }
-  }, [])
-
+  // URL 分类与 state 同步（支持浏览器前进/后退）
   useEffect(() => {
-    if (!user) return
-    const restore = !!cachedDataRef.current
-    loadInitial(category, restore)
-  }, [user, category, loadInitial])
+    const urlCat = searchParams.get('cat') || '全部'
+    setCategory((prev) => (prev === urlCat ? prev : urlCat))
+  }, [searchParams])
 
-  // Load trending videos when no search query (TanStack Query handles caching/dedup)
+  // Clean up email_verified query parameter after capturing it
+  useEffect(() => {
+    if (emailVerified === null) return
+    const timer = setTimeout(() => {
+      setEmailVerified(null)
+      const next = new URLSearchParams(searchParams)
+      next.delete('email_verified')
+      setSearchParams(next, { replace: true })
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [emailVerified, searchParams, setSearchParams])
+
+  // 视频列表：分页 + 加载更多 + 错误重试（TanStack Query 管理缓存/去重）
+  const {
+    data,
+    isPending,
+    isError,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ['home-videos', category, query],
+    queryFn: ({ pageParam }) => listVideos(buildParams(category, query, pageParam)),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.items.length, 0)
+      return loaded < lastPage.total ? allPages.length : undefined
+    },
+    enabled: !!user,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+
+  // 热门推荐（登录后、无搜索关键词时展示）
   const { data: trendingData } = useQuery({
     queryKey: ['trending-videos'],
     queryFn: getTrendingVideos,
     enabled: !!user && !query,
     staleTime: 60_000,
   })
-  useEffect(() => {
-    if (trendingData) {
-      setTrending(trendingData.filter(v => v.id !== 0).slice(0, 6))
-    }
-  }, [trendingData])
 
+  const trending = useMemo(
+    () => (trendingData ?? []).filter((v) => v.id).slice(0, 6),
+    [trendingData]
+  )
+  const trendingIds = useMemo(() => new Set(trending.map((v) => v.id)), [trending])
+
+  // 展平所有分页，并按 id 去重（热门推荐不重复出现在下方列表）
+  const videos = useMemo(() => {
+    const pages = data?.pages ?? []
+    const seen = new Set<string>()
+    const list: MappedVideo[] = []
+    for (const page of pages) {
+      for (const raw of page.items) {
+        const v = mapVideo(raw)
+        if (!v || seen.has(v.id) || trendingIds.has(v.id)) continue
+        seen.add(v.id)
+        list.push(v)
+      }
+    }
+    return list
+  }, [data, trendingIds])
+
+  const total = data?.pages[0]?.total ?? 0
+
+  // 返回首页时恢复滚动位置（数据命中缓存时生效）
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current || !data) return
+    restoredRef.current = true
+    const y = homeScrollY
+    if (y > 0) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, behavior: 'instant' })
+      })
+    }
+  }, [data])
+
+  // 分类/关键词变化时回到顶部
+  useEffect(() => {
+    restoredRef.current = false
+    homeScrollY = 0
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [category, query])
+
+  // 记录滚动位置
   useEffect(() => {
     const onScroll = () => {
-      scrollYRef.current = window.scrollY
-
-      if (loadingRef.current || !hasMoreRef.current) return
-      const doc = document.documentElement
-      const body = document.body
-      const scrollTop = window.pageYOffset || doc.scrollTop || body.scrollTop || 0
-      const scrollHeight = Math.max(doc.scrollHeight, body.scrollHeight)
-      const clientHeight = window.innerHeight || doc.clientHeight
-      if (scrollTop + clientHeight >= scrollHeight - 300) {
-        loadingRef.current = true
-        const params: Record<string, unknown> = {
-          page: pageRef.current,
-          size: PAGE_SIZE,
-        }
-        if (queryRef.current) params.query = queryRef.current
-        if (categoryRef.current === '外部') {
-          params.type = 'external'
-        } else {
-          params.type = 'local_video'
-          if (categoryRef.current !== '全部') params.category = categoryRef.current
-        }
-
-        listVideos(params).then((res) => {
-          const mapped = res.items.map(mapVideo).filter(Boolean) as MappedVideo[]
-          const more = mapped.length >= PAGE_SIZE
-          setVideos((prev) => {
-            const next = [...prev, ...mapped]
-            videosRef.current = next
-            return next
-          })
-          totalRef.current = res.total
-          setTotal(res.total)
-          hasMoreRef.current = more
-          setHasMore(more)
-          pageRef.current += 1
-        }).catch(() => {}).finally(() => {
-          loadingRef.current = false
-        })
-      }
+      homeScrollY = window.scrollY
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // 底部哨兵：滚动接近末尾时加载下一页
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const hasVideosRef = useRef(false)
+  hasVideosRef.current = videos.length > 0
   useEffect(() => {
-    return () => {
-      if (videosRef.current.length > 0) {
-        cachedDataRef.current = {
-          videos: videosRef.current,
-          total: totalRef.current,
-          page: pageRef.current,
-          category: categoryRef.current,
-          hasMore: hasMoreRef.current,
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (hasVideosRef.current && entries.some((e) => e.isIntersecting)) {
+          fetchNextPage()
         }
-        cachedScrollRef.current = scrollYRef.current
-      }
-    }
-  }, [])
+      },
+      { rootMargin: '300px 0px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [fetchNextPage])
+
+  const handleCategoryClick = useCallback((cat: string) => {
+    if (cat === category) return
+    setCategory(cat)
+    const next = new URLSearchParams(searchParams)
+    if (cat === '全部') next.delete('cat')
+    else next.set('cat', cat)
+    navigate(`?${next.toString()}`)
+    trackClick('切换分类', cat)
+  }, [category, navigate, searchParams])
+
+  const showInitialError = isError && videos.length === 0 && !isPending
+  const showEmpty = !isPending && !isError && videos.length === 0
 
   return (
     <div className="home">
+      {emailVerified !== null && (
+        <div className={`email-verify-banner ${emailVerified ? 'success' : 'error'}`}>
+          {emailVerified ? t('home.emailVerified') : t('home.emailVerifyFailed')}
+        </div>
+      )}
+
       {!user && (
         <div className="hero">
           <h1 className="hero-title">{t('home.heroTitle')}</h1>
           <p className="hero-sub">{t('home.heroSub')}</p>
+          <div className="hero-decoration" aria-hidden="true">
+            <span className="hero-dot hero-dot--1" />
+            <span className="hero-dot hero-dot--2" />
+            <span className="hero-dot hero-dot--3" />
+          </div>
         </div>
       )}
 
@@ -207,14 +209,7 @@ export default function Home() {
               <button
                 key={cat}
                 className={`cat-tag ${category === cat ? 'active' : ''}`}
-                onClick={() => {
-                  setCategory(cat)
-                  const next = new URLSearchParams(searchParams)
-                  if (cat === '全部') next.delete('cat')
-                  else next.set('cat', cat)
-                  navigate(`?${next.toString()}`)
-                  trackClick('切换分类', cat)
-                }}
+                onClick={() => handleCategoryClick(cat)}
               >
                 {cat}
               </button>
@@ -224,46 +219,70 @@ export default function Home() {
           {total > 0 && <div className="home-count">{t('home.totalCount', { count: total })}</div>}
 
           {!query && trending.length > 0 && (
-            <div className="trending-section">
+            <section className="trending-section" aria-label={t('home.trending')}>
               <h2 className="trending-title">{t('home.trending')}</h2>
               <div className="video-grid">
-                {trending.map((video) => (
-                  <VideoCard key={`trend-${video.id}`} video={video} />
+                {trending.map((video, i) => (
+                  <div key={`trend-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
+                    <VideoCard video={video} />
+                  </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
           {videos.length > 0 ? (
             <div className="video-grid">
-              {videos.map((video) => (
-                <VideoCard key={video.id} video={video} />
+              {videos.map((video, i) => (
+                <div key={video.id} style={{ '--card-index': i } as React.CSSProperties}>
+                  <VideoCard video={video} />
+                </div>
               ))}
             </div>
-          ) : !loading ? (
+          ) : isPending ? (
+            <div className="video-grid">
+              <VideoCardSkeleton count={6} />
+            </div>
+          ) : showInitialError ? (
+            <div className="empty-state">
+              <div className="empty-icon">⚠️</div>
+              <div className="empty-text">{t('errors.network')}</div>
+              <button className="retry-btn" onClick={() => refetch()}>
+                {t('common.retry')}
+              </button>
+            </div>
+          ) : showEmpty ? (
             <div className="empty-state">
               <div className="empty-icon">🎬</div>
-              <div className="empty-text">{t('home.empty')}</div>
+              <div className="empty-text">
+                {query ? t('home.searchEmpty', { query }) : t('home.empty')}
+              </div>
             </div>
           ) : null}
 
-          {loading && (
-            <div className="video-grid" style={{ marginTop: 16 }}>
-              {Array.from({ length: 6 }).map((_, i) => (
-                <SkeletonLoader key={i} type="card" lines={1} />
-              ))}
+          {isError && videos.length > 0 && (
+            <div className="load-more-error">
+              <span>{t('errors.network')}</span>
+              <button className="retry-btn" onClick={() => refetch()}>
+                {t('common.retry')}
+              </button>
             </div>
           )}
 
-          {!loading && !hasMore && videos.length > 0 && (
+          {!isError && isFetchingNextPage && (
+            <div className="loading-more" role="status">{t('common.loading')}</div>
+          )}
+
+          {!isError && !isFetchingNextPage && !hasNextPage && videos.length > 0 && (
             <div className="no-more">{t('common.noMore')}</div>
           )}
         </>
       )}
 
-      {showAuth && <AuthDialog onClose={() => setShowAuth(false)} />}
+      {/* 哨兵始终渲染，避免登录状态切换后 observer 失效 */}
+      <div ref={sentinelRef} className="load-sentinel" aria-hidden="true" />
 
-      {!user && !loading && <AuthDialog closable={false} />}
+      {!user && <AuthDialog closable={false} />}
     </div>
   )
 }

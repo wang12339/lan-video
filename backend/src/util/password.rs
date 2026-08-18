@@ -2,18 +2,36 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use std::fmt;
 
-pub fn hash(password: &str) -> Result<String, String> {
+#[derive(Debug)]
+pub enum PasswordError {
+    Hash(argon2::password_hash::Error),
+    Parse(argon2::password_hash::Error),
+}
+
+impl fmt::Display for PasswordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PasswordError::Hash(e) => write!(f, "password hashing failed: {}", e),
+            PasswordError::Parse(e) => write!(f, "password hash parse failed: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PasswordError {}
+
+pub fn hash(password: &str) -> Result<String, PasswordError> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| format!("hashing error: {}", e))?;
+        .map_err(PasswordError::Hash)?;
     Ok(hash.to_string())
 }
 
-pub fn verify(password: &str, hash: &str) -> Result<bool, String> {
-    let parsed_hash = PasswordHash::new(hash).map_err(|e| format!("parse error: {}", e))?;
+pub fn verify(password: &str, hash: &str) -> Result<bool, PasswordError> {
+    let parsed_hash = PasswordHash::new(hash).map_err(PasswordError::Parse)?;
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())

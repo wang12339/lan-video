@@ -1,4 +1,4 @@
-use lan_video_backend::app;
+use atmos_video_backend::app;
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use tracing_subscriber::prelude::*;
 
 use crate::app::build_router;
-use lan_video_backend::config::AppConfig;
+use atmos_video_backend::config::AppConfig;
 
 /// Initialize Sentry crash reporting from SENTRY_DSN env var (optional)
 fn init_sentry() {
@@ -64,11 +64,15 @@ fn shutdown_signal() -> impl Future<Output = ()> {
 async fn main() {
     dotenvy::dotenv().ok();
 
-    init_sentry();
-
     let config = AppConfig::from_env();
 
-    std::fs::create_dir_all(&config.log_dir).ok();
+    std::fs::create_dir_all(&config.log_dir).unwrap_or_else(|e| {
+        tracing::warn!(
+            "Failed to create log directory {}: {}",
+            config.log_dir.display(),
+            e
+        )
+    });
 
     let file_appender = tracing_appender::rolling::daily(&config.log_dir, "atmos.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -89,6 +93,10 @@ async fn main() {
         .with(file_layer)
         .init();
 
+    // Must run after the tracing subscriber is initialized, otherwise
+    // init_sentry's own log lines are silently dropped.
+    init_sentry();
+
     // Initialize data and media directories
     tokio::fs::create_dir_all(&config.data_dir)
         .await
@@ -105,11 +113,10 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("failed to bind TCP listener on {}: {}", addr, e));
 
-    // SECURITY (A02-01): unless we're in explicit development mode, refuse
-    // plain-HTTP requests on any non-/health path and redirect to HTTPS.
-    // This runs in the app itself so it works even when Cloudflare "Always
-    // Use HTTPS" is off. /health is exempt so k8s liveness probes keep
+    // SECURITY: refuse plain-HTTP requests on any non-/health path and
+    // redirect to HTTPS. /health is exempt so k8s liveness probes keep
     // working while the TLS edge is being rolled out.
+    // Disabled in development mode for local testing.
     let is_dev = matches!(
         std::env::var("APP_ENV")
             .ok()
@@ -126,6 +133,7 @@ async fn main() {
                 async move {
                     use axum::response::Response;
                     let path = req.uri().path().to_string();
+
                     let is_https = req
                         .headers()
                         .get("x-forwarded-proto")
@@ -133,32 +141,25 @@ async fn main() {
                         .map(|v| v.eq_ignore_ascii_case("https"))
                         .unwrap_or(false);
                     if !is_https && path != "/health" && !path.starts_with("/health/") {
-                        // Build the redirect target. Prefer PUBLIC_URL when
-                        // configured; otherwise reconstruct from Host.
-                        let host = req
-                            .headers()
-                            .get("host")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("localhost");
-                        let base = if !cfg.public_url.is_empty() {
-                            cfg.public_url.clone()
-                        } else {
-                            format!("https://{}", host)
-                        };
                         let target = format!(
                             "{}{}{}",
-                            base.trim_end_matches('/'),
+                            cfg.public_url.trim_end_matches('/'),
                             path,
                             req.uri()
                                 .query()
                                 .map(|q| format!("?{}", q))
                                 .unwrap_or_default()
                         );
-                        return Response::builder()
-                            .status(axum::http::StatusCode::PERMANENT_REDIRECT)
-                            .header(axum::http::header::LOCATION, target)
-                            .body(axum::body::Body::empty())
-                            .unwrap();
+                        // Skip the redirect if the target is not a valid header
+                        // value (e.g. an attacker-supplied path with control
+                        // characters) — better to serve the request than to panic.
+                        if let Ok(header) = axum::http::HeaderValue::from_str(&target) {
+                            return Response::builder()
+                                .status(axum::http::StatusCode::PERMANENT_REDIRECT)
+                                .header(axum::http::header::LOCATION, header)
+                                .body(axum::body::Body::empty())
+                                .unwrap();
+                        }
                     }
                     next.run(req).await
                 }
@@ -177,7 +178,10 @@ async fn main() {
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
-    .unwrap_or_else(|e| tracing::error!("server exited with error: {}", e));
+    .unwrap_or_else(|e| {
+        tracing::error!("server exited with error: {}", e);
+        std::process::exit(1);
+    });
 
     tracing::info!("Server shutdown complete");
 }

@@ -5,4 +5,5 @@ pub mod request_id;
 pub mod request_log;
 pub mod security;
 pub mod share_rate_limit;
+pub mod tenant;
 pub mod upload_bandwidth;
