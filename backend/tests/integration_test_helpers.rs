@@ -106,7 +106,9 @@ pub async fn test_app_state() -> Arc<AppState> {
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
     let email_service = EmailService::new(config.clone());
-    let playlist_service = atmos_video_backend::services::playlist_service::PlaylistService::new(playlist_repo.clone());
+    let playlist_service = atmos_video_backend::services::playlist_service::PlaylistService::new(
+        playlist_repo.clone(),
+    );
 
     let video_cache = VideoListCache::builder()
         .time_to_live(Duration::from_secs(10))

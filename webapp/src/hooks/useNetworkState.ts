@@ -106,11 +106,12 @@ export function useNetworkState(): NetworkState {
     }
 
     window.addEventListener('online', updateOnlineState)
-    window.addEventListener('offline', () => {
+    const handleOffline = () => {
       updateOnlineState()
       // Start auto-reconnect when going offline
       setTimeout(attemptReconnect, 1000)
-    })
+    }
+    window.addEventListener('offline', handleOffline)
 
     const connection = (navigator as unknown as { connection?: { addEventListener: (event: string, handler: () => void) => void; removeEventListener: (event: string, handler: () => void) => void } }).connection
     if (connection) {
@@ -120,7 +121,7 @@ export function useNetworkState(): NetworkState {
 
     return () => {
       window.removeEventListener('online', updateOnlineState)
-      window.removeEventListener('offline', updateOnlineState)
+      window.removeEventListener('offline', handleOffline)
       if (connection) {
         connection.removeEventListener('change', updateConnectionInfo)
       }

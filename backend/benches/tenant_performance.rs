@@ -13,16 +13,16 @@ fn benchmark_tenant_operations(c: &mut Criterion) {
 
     c.bench_function("normalize_host", |b| {
         b.iter(|| {
-            black_box(atmos_video_backend::repositories::tenant_repo::normalize_host(
-                "test.example.com:8080",
-            ))
+            black_box(
+                atmos_video_backend::repositories::tenant_repo::normalize_host(
+                    "test.example.com:8080",
+                ),
+            )
         })
     });
 
     c.bench_function("cache_stats", |b| {
-        b.iter(|| {
-            black_box(atmos_video_backend::repositories::tenant_repo::cache_stats())
-        })
+        b.iter(|| black_box(atmos_video_backend::repositories::tenant_repo::cache_stats()))
     });
 }
 

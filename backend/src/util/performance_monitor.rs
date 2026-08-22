@@ -158,6 +158,7 @@ pub fn get_performance_monitor() -> &'static PerformanceMonitor {
 }
 
 /// 性能监控包装器
+#[allow(dead_code)]
 pub struct MonitoredQuery<F> {
     query_fn: F,
     label: String,

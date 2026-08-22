@@ -173,7 +173,9 @@ impl TenantService {
     /// - `custom_theme` 如果存在，长度不超过 64 字符
     fn validate_settings(&self, settings: &TenantSettings) -> Result<(), ServiceError> {
         if settings.max_upload_size_mb == 0 || settings.max_upload_size_mb > 10240 {
-            return Err(ServiceError::validation("上传文件大小限制须在 1-10240 MB 之间"));
+            return Err(ServiceError::validation(
+                "上传文件大小限制须在 1-10240 MB 之间",
+            ));
         }
 
         if settings.max_videos_per_user == 0 {
@@ -186,7 +188,9 @@ impl TenantService {
 
         if let Some(ref theme) = settings.custom_theme {
             if theme.len() > 64 {
-                return Err(ServiceError::validation("自定义主题标识长度不能超过 64 个字符"));
+                return Err(ServiceError::validation(
+                    "自定义主题标识长度不能超过 64 个字符",
+                ));
             }
         }
 

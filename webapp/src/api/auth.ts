@@ -74,7 +74,7 @@ export async function logout(): Promise<void> {
  * @throws {APIError} 未登录或 token 过期时抛出 401
  */
 export async function getUserInfo(): Promise<UserInfo> {
-  return request<UserInfo>('/auth/user');
+  return request<UserInfo>('/auth/user', { silent: true });
 }
 
 /**

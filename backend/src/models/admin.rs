@@ -65,7 +65,7 @@ pub struct TranscodeRequest {
 pub struct TranscodeResponse {
     pub success: bool,
     pub message: String,
-    pub job_id: Option<i32>,
+    pub job_id: Option<i64>,
 }
 
 #[derive(Serialize)]

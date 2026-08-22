@@ -168,11 +168,9 @@ impl Metrics {
 
         // ── 数据库连接池指标 ────────────────────────────────────────
 
-        let database_pool_size = Gauge::new(
-            "database_pool_size",
-            "Database connection pool total size",
-        )
-        .expect("metrics: database_pool_size name collision");
+        let database_pool_size =
+            Gauge::new("database_pool_size", "Database connection pool total size")
+                .expect("metrics: database_pool_size name collision");
 
         let database_pool_active = Gauge::new(
             "database_pool_active",
@@ -225,7 +223,11 @@ impl Metrics {
             });
         }
 
-        register_metric(&registry, http_requests_total.clone(), "http_requests_total");
+        register_metric(
+            &registry,
+            http_requests_total.clone(),
+            "http_requests_total",
+        );
         register_metric(
             &registry,
             http_request_duration_seconds.clone(),
@@ -243,26 +245,58 @@ impl Metrics {
         );
         register_metric(&registry, http_errors_total.clone(), "http_errors_total");
         register_metric(&registry, video_views_total.clone(), "video_views_total");
-        register_metric(&registry, video_uploads_total.clone(), "video_uploads_total");
-        register_metric(&registry, video_deletes_total.clone(), "video_deletes_total");
+        register_metric(
+            &registry,
+            video_uploads_total.clone(),
+            "video_uploads_total",
+        );
+        register_metric(
+            &registry,
+            video_deletes_total.clone(),
+            "video_deletes_total",
+        );
         register_metric(&registry, auth_login_total.clone(), "auth_login_total");
-        register_metric(&registry, auth_login_failed_total.clone(), "auth_login_failed_total");
-        register_metric(&registry, auth_register_total.clone(), "auth_register_total");
+        register_metric(
+            &registry,
+            auth_login_failed_total.clone(),
+            "auth_login_failed_total",
+        );
+        register_metric(
+            &registry,
+            auth_register_total.clone(),
+            "auth_register_total",
+        );
         register_metric(&registry, cache_hits_total.clone(), "cache_hits_total");
         register_metric(&registry, cache_misses_total.clone(), "cache_misses_total");
         register_metric(&registry, active_connections.clone(), "active_connections");
-        register_metric(&registry, active_connections_total.clone(), "active_connections_total");
+        register_metric(
+            &registry,
+            active_connections_total.clone(),
+            "active_connections_total",
+        );
         register_metric(&registry, idle_connections.clone(), "idle_connections");
         register_metric(&registry, database_pool_size.clone(), "database_pool_size");
-        register_metric(&registry, database_pool_active.clone(), "database_pool_active");
+        register_metric(
+            &registry,
+            database_pool_active.clone(),
+            "database_pool_active",
+        );
         register_metric(&registry, database_pool_idle.clone(), "database_pool_idle");
-        register_metric(&registry, database_pool_waiting.clone(), "database_pool_waiting");
+        register_metric(
+            &registry,
+            database_pool_waiting.clone(),
+            "database_pool_waiting",
+        );
         register_metric(
             &registry,
             database_query_duration_seconds.clone(),
             "database_query_duration_seconds",
         );
-        register_metric(&registry, database_errors_total.clone(), "database_errors_total");
+        register_metric(
+            &registry,
+            database_errors_total.clone(),
+            "database_errors_total",
+        );
 
         Metrics {
             registry,
@@ -311,7 +345,12 @@ impl Metrics {
     }
 
     /// 记录按 method/status 细分的请求延迟
-    pub fn record_request_with_labels(&self, method: &str, status: u16, duration: std::time::Duration) {
+    pub fn record_request_with_labels(
+        &self,
+        method: &str,
+        status: u16,
+        duration: std::time::Duration,
+    ) {
         let status_str = status.to_string();
         self.http_request_duration_by_route
             .with_label_values(&[method, &status_str])
@@ -461,7 +500,10 @@ mod tests {
     fn test_normalize_path() {
         // 纯数字 ID
         assert_eq!(normalize_path("/videos/123"), "/videos/:id");
-        assert_eq!(normalize_path("/videos/123/comments/456"), "/videos/:id/comments/:id");
+        assert_eq!(
+            normalize_path("/videos/123/comments/456"),
+            "/videos/:id/comments/:id"
+        );
 
         // UUID 格式
         assert_eq!(

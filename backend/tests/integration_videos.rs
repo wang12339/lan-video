@@ -1602,7 +1602,11 @@ async fn test_upload_video_duplicate_hash_rejected() {
         .upload_video_file(&fname, &tmp2, "local", user_id)
         .await;
     let err = res.expect_err("相同文件重复上传应被拒绝");
-    assert!(format!("{}", err).contains("重复"), "错误信息应指明重复: {}", err);
+    assert!(
+        format!("{}", err).contains("重复"),
+        "错误信息应指明重复: {}",
+        err
+    );
     assert!(!tmp2.exists(), "重复上传的临时文件应被清理");
 
     // 清理：视频行 + media_root 中新出现的文件

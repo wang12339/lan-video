@@ -10,12 +10,13 @@ interface TrackData {
 
 // 发送追踪事件
 export async function track(data: TrackData) {
+  if (!getToken()) return // 未登录用户不上报
   try {
     await request('/admin/track', {
       method: 'POST',
       body: data,
-      // 无内存 token 时走 cookie 认证；未登录用户的 401 不触发全局"会话失效"流程
-      auth: getToken() !== null,
+      auth: true,
+      silent: true,
     })
   } catch {
     // 静默失败，不影响用户体验

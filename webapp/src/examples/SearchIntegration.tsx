@@ -4,7 +4,7 @@
  * 本示例展示如何在现有项目中集成优化后的搜索历史功能
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import SearchWithHistory from '../components/ui/SearchWithHistory'
 import { addToSearchHistory, getRecentSearches } from '../utils/searchHistory'
 
@@ -184,13 +184,13 @@ export function ResponsiveSearchLayout() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
   // 监听窗口大小变化
-  useState(() => {
+  useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768)
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  })
+  }, [])
 
   const handleSearch = useCallback((query: string) => {
     console.log('搜索:', query)

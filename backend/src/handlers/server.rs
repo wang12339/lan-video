@@ -129,12 +129,16 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     let mut headers = HeaderMap::new();
     if !state.config.public_url.is_empty() {
-        headers.insert(
-            "X-Public-Url",
-            HeaderValue::try_from(state.config.public_url.as_str()).unwrap(),
-        );
+        if let Ok(val) = HeaderValue::try_from(state.config.public_url.as_str()) {
+            headers.insert("X-Public-Url", val);
+        } else {
+            tracing::warn!("Invalid PUBLIC_URL value, skipping X-Public-Url header");
+        }
     }
-    headers.insert("X-Response-Time", HeaderValue::from(start.elapsed().as_millis() as u64));
+    headers.insert(
+        "X-Response-Time",
+        HeaderValue::from(start.elapsed().as_millis() as u64),
+    );
 
     if all_ok {
         (StatusCode::OK, headers, Json(response)).into_response()
@@ -151,9 +155,10 @@ fn check_disk_space(path: &std::path::Path) -> Result<DiskUsage, String> {
     let path_str = path.to_str().unwrap_or("/");
 
     // Find the disk that contains the path
-    let disk = disks.iter().find(|d| {
-        path_str.starts_with(d.mount_point().to_str().unwrap_or(""))
-    }).ok_or_else(|| "Could not find disk for path".to_string())?;
+    let disk = disks
+        .iter()
+        .find(|d| path_str.starts_with(d.mount_point().to_str().unwrap_or("")))
+        .ok_or_else(|| "Could not find disk for path".to_string())?;
 
     let total = disk.total_space();
     let available = disk.available_space();

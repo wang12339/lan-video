@@ -72,10 +72,7 @@ mod sql_injection_tests {
         // 从而被正确转义，不会被解释为 SQL 代码
         for input in &malicious_inputs {
             // 验证输入被正确处理（不会改变长度，表示没有被"智能"解析）
-            assert!(
-                input.len() > 0,
-                "恶意输入应保持原样，由参数化查询处理"
-            );
+            assert!(input.len() > 0, "恶意输入应保持原样，由参数化查询处理");
         }
     }
 
@@ -109,7 +106,9 @@ mod sql_injection_tests {
             // 如果清理后非空，应该只包含纯文本
             if !sanitized.is_empty() {
                 assert!(
-                    sanitized.chars().all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t'),
+                    sanitized
+                        .chars()
+                        .all(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t'),
                     "清理后内容应为纯文本"
                 );
             }
@@ -129,10 +128,7 @@ mod sql_injection_tests {
         for query in &malicious_queries {
             // 在实际应用中，搜索查询会通过 SQLx 参数化查询
             // 这里验证输入不会被意外"解析"
-            assert!(
-                !query.is_empty(),
-                "搜索查询应保持原样"
-            );
+            assert!(!query.is_empty(), "搜索查询应保持原样");
         }
     }
 
@@ -157,11 +153,7 @@ mod sql_injection_tests {
 
             // 包含 SQL 注入字符的用户名应该被拒绝
             if username.contains('\'') || username.contains('"') || username.contains(';') {
-                assert!(
-                    !is_valid,
-                    "包含 SQL 注入字符的用户名应被拒绝: {}",
-                    username
-                );
+                assert!(!is_valid, "包含 SQL 注入字符的用户名应被拒绝: {}", username);
             }
         }
     }
@@ -232,28 +224,21 @@ mod csrf_tests {
         ];
 
         for (attr, expected) in &cookie_attributes {
-            assert!(
-                !expected.is_empty(),
-                "Cookie 属性 {} 应有值",
-                attr
-            );
+            assert!(!expected.is_empty(), "Cookie 属性 {} 应有值", attr);
         }
     }
 
     #[test]
     fn origin_header_validation() {
         // 验证 Origin 头的处理逻辑
-        let allowed_origins = vec![
-            "https://example.com",
-            "https://app.example.com",
-        ];
+        let allowed_origins = vec!["https://example.com", "https://app.example.com"];
 
         let test_cases = vec![
             ("https://example.com", true),
             ("https://evil.com", false),
             ("http://example.com", false), // HTTP 不应被允许（如果配置为 HTTPS）
-            ("", false),                    // 空 Origin
-            ("null", false),                // null Origin（隐私模式）
+            ("", false),                   // 空 Origin
+            ("null", false),               // null Origin（隐私模式）
         ];
 
         for (origin, should_allow) in &test_cases {
@@ -284,10 +269,7 @@ mod csrf_tests {
             }
         }
 
-        assert!(
-            has_all_required,
-            "预检请求应包含所有必需的 CORS 头"
-        );
+        assert!(has_all_required, "预检请求应包含所有必需的 CORS 头");
     }
 }
 
@@ -305,9 +287,9 @@ mod path_traversal_tests {
         // sanitize_filename 使用 Path::file_name() 提取最后一部分
         // 然后替换控制字符和路径分隔符
         let malicious_names = vec![
-            "../../etc/passwd",           // -> "passwd"
-            "../../../etc/shadow",        // -> "shadow"
-            "....//....//etc/passwd",     // -> "passwd"
+            "../../etc/passwd",       // -> "passwd"
+            "../../../etc/shadow",    // -> "shadow"
+            "....//....//etc/passwd", // -> "passwd"
         ];
 
         for name in &malicious_names {
@@ -322,9 +304,7 @@ mod path_traversal_tests {
         }
 
         // Windows 路径分隔符会被替换为下划线
-        let windows_names = vec![
-            "..\\..\\windows\\system32\\config\\sam",
-        ];
+        let windows_names = vec!["..\\..\\windows\\system32\\config\\sam"];
 
         for name in &windows_names {
             let result = media_service::sanitize_filename(name);
@@ -368,9 +348,9 @@ mod path_traversal_tests {
         // 注意：sanitize_filename 不解码 URL 编码，它只处理原始字符串
         // URL 解码应该在上层处理
         let malicious_names = vec![
-            "%2e%2e/%2e%2e/etc/passwd",  // -> "passwd" (Path::file_name)
-            "..%00/etc/passwd",          // -> "passwd" (null byte stripped)
-            "file.txt%00.jpg",           // -> "file.txt_.jpg"
+            "%2e%2e/%2e%2e/etc/passwd", // -> "passwd" (Path::file_name)
+            "..%00/etc/passwd",         // -> "passwd" (null byte stripped)
+            "file.txt%00.jpg",          // -> "file.txt_.jpg"
         ];
 
         for name in &malicious_names {
@@ -440,7 +420,9 @@ mod path_traversal_tests {
             let result = media_service::sanitize_filename(name);
             // 控制字符应被替换为下划线
             assert!(
-                result.chars().all(|c| !c.is_control() || c == '_' || c == ' '),
+                result
+                    .chars()
+                    .all(|c| !c.is_control() || c == '_' || c == ' '),
                 "控制字符应被清理: '{}' -> '{}'",
                 name,
                 result
@@ -468,10 +450,7 @@ mod path_traversal_tests {
 
         let result2 = media_service::sanitize_filename("...");
         // "..." 被 Path::file_name() 处理后可能为空
-        assert!(
-            !result2.is_empty(),
-            "特殊文件名应有有效输出"
-        );
+        assert!(!result2.is_empty(), "特殊文件名应有有效输出");
     }
 
     #[test]
@@ -481,7 +460,7 @@ mod path_traversal_tests {
             "video.mp4",
             "my_video_2023.mp4",
             "video (1).mp4",
-            "视频.mp4", // 中文文件名
+            "视频.mp4",  // 中文文件名
             "vídéo.mp4", // 带重音符号
         ];
 
@@ -515,11 +494,7 @@ mod path_traversal_tests {
                 .unwrap_or_default();
 
             if !expected.is_empty() {
-                assert_eq!(
-                    result, *expected,
-                    "文件名提取不正确: '{}'",
-                    input
-                );
+                assert_eq!(result, *expected, "文件名提取不正确: '{}'", input);
             }
         }
     }
@@ -532,10 +507,7 @@ mod path_traversal_tests {
         let media_root = std::path::Path::new("/var/media");
 
         // 测试相对路径遍历
-        let relative_attacks = vec![
-            "../../../etc/passwd",
-            "../../etc/shadow",
-        ];
+        let relative_attacks = vec!["../../../etc/passwd", "../../etc/shadow"];
 
         for attack_path in &relative_attacks {
             // 模拟路径拼接
@@ -566,10 +538,7 @@ mod path_traversal_tests {
         }
 
         // 测试绝对路径
-        let absolute_attacks = vec![
-            "/etc/passwd",
-            "/etc/shadow",
-        ];
+        let absolute_attacks = vec!["/etc/passwd", "/etc/shadow"];
 
         for attack_path in &absolute_attacks {
             // 使用 sanitize_filename 处理文件名
@@ -609,17 +578,16 @@ mod security_headers_tests {
             ("x-content-type-options", "nosniff"),
             ("x-frame-options", "DENY"),
             ("referrer-policy", "no-referrer"),
-            ("permissions-policy", "geolocation=(), microphone=(), camera=()"),
+            (
+                "permissions-policy",
+                "geolocation=(), microphone=(), camera=()",
+            ),
             ("cross-origin-opener-policy", "same-origin"),
             ("cross-origin-resource-policy", "same-origin"),
         ];
 
         for (header_name, expected_value) in &expected_headers {
-            assert!(
-                !expected_value.is_empty(),
-                "安全头 {} 应有值",
-                header_name
-            );
+            assert!(!expected_value.is_empty(), "安全头 {} 应有值", header_name);
         }
     }
 
@@ -627,18 +595,12 @@ mod security_headers_tests {
     fn hsts_header_configuration() {
         // HSTS 头应正确配置
         let hsts_value = "max-age=31536000; includeSubDomains; preload";
-        assert!(
-            hsts_value.contains("max-age="),
-            "HSTS 应包含 max-age"
-        );
+        assert!(hsts_value.contains("max-age="), "HSTS 应包含 max-age");
         assert!(
             hsts_value.contains("includeSubDomains"),
             "HSTS 应包含 includeSubDomains"
         );
-        assert!(
-            hsts_value.contains("preload"),
-            "HSTS 应包含 preload"
-        );
+        assert!(hsts_value.contains("preload"), "HSTS 应包含 preload");
     }
 
     #[test]
@@ -671,14 +633,8 @@ mod security_headers_tests {
             permissions_value.contains("geolocation=()"),
             "应禁用地理位置"
         );
-        assert!(
-            permissions_value.contains("microphone=()"),
-            "应禁用麦克风"
-        );
-        assert!(
-            permissions_value.contains("camera=()"),
-            "应禁用摄像头"
-        );
+        assert!(permissions_value.contains("microphone=()"), "应禁用麦克风");
+        assert!(permissions_value.contains("camera=()"), "应禁用摄像头");
     }
 }
 
@@ -693,10 +649,10 @@ mod input_validation_tests {
     fn username_length_validation() {
         // 用户名应限制在 2-64 字符
         let test_cases: Vec<(String, bool)> = vec![
-            ("ab".to_string(), true),      // 最小长度
-            ("a".to_string(), false),      // 太短
-            ("a".repeat(64), true),  // 最大长度
-            ("a".repeat(65), false), // 太长
+            ("ab".to_string(), true), // 最小长度
+            ("a".to_string(), false), // 太短
+            ("a".repeat(64), true),   // 最大长度
+            ("a".repeat(65), false),  // 太长
         ];
 
         for (username, should_pass) in &test_cases {
@@ -713,18 +669,15 @@ mod input_validation_tests {
     fn password_length_validation() {
         // 密码应限制在 6-128 字符
         let test_cases: Vec<(String, bool)> = vec![
-            ("123456".to_string(), true),      // 最小长度
-            ("12345".to_string(), false),      // 太短
-            ("a".repeat(128), true),  // 最大长度
-            ("a".repeat(129), false), // 太长
+            ("123456".to_string(), true), // 最小长度
+            ("12345".to_string(), false), // 太短
+            ("a".repeat(128), true),      // 最大长度
+            ("a".repeat(129), false),     // 太长
         ];
 
         for (password, should_pass) in &test_cases {
             let is_valid = password.len() >= 6 && password.len() <= 128;
-            assert_eq!(
-                is_valid, *should_pass,
-                "密码长度验证不符合预期"
-            );
+            assert_eq!(is_valid, *should_pass, "密码长度验证不符合预期");
         }
     }
 
@@ -732,17 +685,14 @@ mod input_validation_tests {
     fn video_title_length_validation() {
         // 视频标题应限制在 500 字符
         let test_cases: Vec<(String, bool)> = vec![
-            ("A".to_string(), true),           // 有效
+            ("A".to_string(), true),  // 有效
             ("a".repeat(500), true),  // 最大长度
             ("a".repeat(501), false), // 太长
         ];
 
         for (title, should_pass) in &test_cases {
             let is_valid = title.len() <= 500;
-            assert_eq!(
-                is_valid, *should_pass,
-                "视频标题长度验证不符合预期"
-            );
+            assert_eq!(is_valid, *should_pass, "视频标题长度验证不符合预期");
         }
     }
 
@@ -750,28 +700,21 @@ mod input_validation_tests {
     fn comment_length_validation() {
         // 评论应限制在 2000 字符
         let test_cases: Vec<(String, bool)> = vec![
-            ("A".to_string(), true),           // 有效
+            ("A".to_string(), true),   // 有效
             ("a".repeat(2000), true),  // 最大长度
             ("a".repeat(2001), false), // 太长
         ];
 
         for (comment, should_pass) in &test_cases {
             let is_valid = comment.len() <= 2000;
-            assert_eq!(
-                is_valid, *should_pass,
-                "评论长度验证不符合预期"
-            );
+            assert_eq!(is_valid, *should_pass, "评论长度验证不符合预期");
         }
     }
 
     #[test]
     fn batch_operation_limit() {
         // 批量操作应限制在 1000 个
-        let test_cases = vec![
-            (1, true),
-            (1000, true),
-            (1001, false),
-        ];
+        let test_cases = vec![(1, true), (1000, true), (1001, false)];
 
         for (count, should_pass) in &test_cases {
             let is_valid = *count <= 1000;
@@ -816,17 +759,13 @@ mod input_validation_tests {
                 && !email.starts_with('@')
                 && !email.ends_with('@')
                 && !email.contains(' ');
-            assert!(
-                !is_valid,
-                "无效邮箱应被拒绝: {}",
-                email
-            );
+            assert!(!is_valid, "无效邮箱应被拒绝: {}", email);
         }
 
         // 边界情况：这些可能被认为是有效或无效，取决于验证规则
         let edge_cases = vec![
-            "user@.com",   // 点开头的域名
-            "user@com.",   // 点结尾的域名
+            "user@.com", // 点开头的域名
+            "user@com.", // 点结尾的域名
         ];
 
         for email in &edge_cases {
@@ -839,7 +778,10 @@ mod input_validation_tests {
                 && !email.contains(' ');
 
             // 记录这些边界情况
-            println!("边界邮箱 '{}': 简单验证结果 = {}", email, is_valid_by_simple_check);
+            println!(
+                "边界邮箱 '{}': 简单验证结果 = {}",
+                email, is_valid_by_simple_check
+            );
         }
     }
 }
@@ -855,9 +797,9 @@ mod rate_limit_tests {
     fn rate_limit_config_values() {
         // 验证速率限制配置合理
         let config = vec![
-            ("login_attempts", 5, 300),      // 5 次尝试，300 秒窗口
-            ("api_requests", 100, 60),       // 100 请求，60 秒窗口
-            ("upload_requests", 10, 3600),   // 10 次上传，3600 秒窗口
+            ("login_attempts", 5, 300),    // 5 次尝试，300 秒窗口
+            ("api_requests", 100, 60),     // 100 请求，60 秒窗口
+            ("upload_requests", 10, 3600), // 10 次上传，3600 秒窗口
         ];
 
         for (name, max_attempts, window_seconds) in &config {
@@ -885,10 +827,7 @@ mod rate_limit_tests {
         for _ in 0..10 {
             attempt_count += 1;
             if attempt_count > max_attempts {
-                assert!(
-                    true,
-                    "超过阈值后应阻止请求"
-                );
+                assert!(true, "超过阈值后应阻止请求");
             }
         }
     }
@@ -920,11 +859,7 @@ mod auth_security_tests {
 
         for token in &invalid_tokens {
             let is_valid = token.len() == 32 && token.chars().all(|c| c.is_alphanumeric());
-            assert!(
-                !is_valid,
-                "无效 token 应被拒绝: '{}'",
-                token
-            );
+            assert!(!is_valid, "无效 token 应被拒绝: '{}'", token);
         }
     }
 
@@ -947,10 +882,7 @@ mod auth_security_tests {
         // 这里验证配置意图
         let min_cost_factor = 10; // bcrypt 最小 cost factor
 
-        assert!(
-            min_cost_factor >= 10,
-            "密码哈希 cost factor 应足够高"
-        );
+        assert!(min_cost_factor >= 10, "密码哈希 cost factor 应足够高");
     }
 
     #[test]
@@ -961,10 +893,7 @@ mod auth_security_tests {
         let old_token = "old_token_value";
         let new_token = "new_token_value";
 
-        assert_ne!(
-            old_token, new_token,
-            "登录后 token 应更新"
-        );
+        assert_ne!(old_token, new_token, "登录后 token 应更新");
     }
 }
 
@@ -978,12 +907,8 @@ mod error_handling_tests {
     #[test]
     fn error_messages_not_leak_info() {
         // 错误消息不应泄露敏感信息
-        let safe_error_messages = vec![
-            "用户名或密码错误",
-            "请求参数无效",
-            "资源不存在",
-            "权限不足",
-        ];
+        let safe_error_messages =
+            vec!["用户名或密码错误", "请求参数无效", "资源不存在", "权限不足"];
 
         let unsafe_patterns = vec![
             "stack trace",

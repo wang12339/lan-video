@@ -1,5 +1,5 @@
 //! TenantRepository 性能优化演示
-//! 
+//!
 //! 本示例展示了如何使用优化后的 TenantRepository 进行租户查询操作，
 //! 包括连接池优化、查询超时、重试机制和 SQL 查询优化。
 
@@ -50,17 +50,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let tenants = tenant_repo.find_by_slugs(&slugs).await;
     let duration = start.elapsed();
-    println!("   批量查询 {} 个 slug，找到 {} 个租户，耗时: {:?}", 
-             slugs.len(), tenants.len(), duration);
+    println!(
+        "   批量查询 {} 个 slug，找到 {} 个租户，耗时: {:?}",
+        slugs.len(),
+        tenants.len(),
+        duration
+    );
 
     // 6. 测试单个查询（带重试和超时）
     println!("\n4. 测试单个查询（带重试和超时）...");
     let start = Instant::now();
     let tenant = tenant_repo.find_by_slug("default").await;
     let duration = start.elapsed();
-    
+
     if let Some(tenant) = tenant {
-        println!("   找到租户: {} (ID: {}, 计划: {})", tenant.name, tenant.id, tenant.plan);
+        println!(
+            "   找到租户: {} (ID: {}, 计划: {})",
+            tenant.name, tenant.id, tenant.plan
+        );
     } else {
         println!("   未找到租户");
     }
@@ -71,9 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let tenant = tenant_repo.find_by_domain("atmos.whanghui.top").await;
     let duration = start.elapsed();
-    
+
     if let Some(tenant) = tenant {
-        println!("   通过域名找到租户: {} (ID: {}, 计划: {})", tenant.name, tenant.id, tenant.plan);
+        println!(
+            "   通过域名找到租户: {} (ID: {}, 计划: {})",
+            tenant.name, tenant.id, tenant.plan
+        );
     } else {
         println!("   未通过域名找到租户");
     }
@@ -81,20 +91,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 8. 测试主机解析
     println!("\n6. 测试主机解析（带缓存）...");
-    let hosts = vec![
-        "localhost",
-        "atmos.whanghui.top",
-        "test.atmos.whanghui.top",
-    ];
+    let hosts = vec!["localhost", "atmos.whanghui.top", "test.atmos.whanghui.top"];
 
     for host in hosts {
         let start = Instant::now();
         let context = tenant_repo.resolve_from_host(host).await;
         let duration = start.elapsed();
-        
+
         if let Some(context) = context {
-            println!("   主机 '{}' -> 租户 ID: {}, slug: '{}'", 
-                     host, context.tenant_id, context.slug);
+            println!(
+                "   主机 '{}' -> 租户 ID: {}, slug: '{}'",
+                host, context.tenant_id, context.slug
+            );
         } else {
             println!("   主机 '{}' -> 未解析", host);
         }

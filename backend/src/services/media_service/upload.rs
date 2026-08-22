@@ -34,15 +34,16 @@ pub async fn stream_multipart_to_file(
     file_path: &Path,
     max_size: u64,
 ) -> Result<u64, ServiceError> {
-    let mut f = tokio::fs::File::create(file_path).await.map_err(|e| {
-        ServiceError::Internal(format!("创建临时文件失败: {}", e))
-    })?;
+    let mut f = tokio::fs::File::create(file_path)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("创建临时文件失败: {}", e)))?;
 
     let mut total: u64 = 0;
     loop {
-        let chunk = field.chunk().await.map_err(|e| {
-            ServiceError::BadRequest(format!("读取文件数据失败: {}", e))
-        })?;
+        let chunk = field
+            .chunk()
+            .await
+            .map_err(|e| ServiceError::BadRequest(format!("读取文件数据失败: {}", e)))?;
         match chunk {
             Some(data) => {
                 total += data.len() as u64;
@@ -54,17 +55,17 @@ pub async fn stream_multipart_to_file(
                         format_size(max_size),
                     )));
                 }
-                f.write_all(&data).await.map_err(|e| {
-                    ServiceError::Internal(format!("写入文件失败: {}", e))
-                })?;
+                f.write_all(&data)
+                    .await
+                    .map_err(|e| ServiceError::Internal(format!("写入文件失败: {}", e)))?;
             }
             None => break,
         }
     }
 
-    f.flush().await.map_err(|e| {
-        ServiceError::Internal(format!("保存文件失败: {}", e))
-    })?;
+    f.flush()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("保存文件失败: {}", e)))?;
     drop(f);
 
     if total == 0 {
@@ -122,14 +123,14 @@ pub async fn finalize_upload(temp_path: &Path, final_path: &Path) -> Result<(), 
         .await
         .map_err(|e| ServiceError::Internal(format!("打开临时文件失败: {}", e)))?;
 
-    file.sync_all().await.map_err(|e| {
-        ServiceError::Internal(format!("同步临时文件失败: {}", e))
-    })?;
+    file.sync_all()
+        .await
+        .map_err(|e| ServiceError::Internal(format!("同步临时文件失败: {}", e)))?;
     drop(file);
 
-    tokio::fs::rename(temp_path, final_path).await.map_err(|e| {
-        ServiceError::Internal(format!("移动文件失败: {}", e))
-    })?;
+    tokio::fs::rename(temp_path, final_path)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("移动文件失败: {}", e)))?;
 
     Ok(())
 }
@@ -165,11 +166,7 @@ mod tests {
 
     #[test]
     fn test_validate_content_type_with_params() {
-        assert!(validate_upload_content_type(
-            "video/mp4; charset=binary",
-            &["video/mp4"]
-        )
-        .is_ok());
+        assert!(validate_upload_content_type("video/mp4; charset=binary", &["video/mp4"]).is_ok());
     }
 
     #[test]
@@ -179,20 +176,12 @@ mod tests {
 
     #[test]
     fn test_validate_content_type_multiple_allowed() {
-        assert!(validate_upload_content_type(
-            "image/jpeg",
-            &["video/mp4", "image/jpeg"]
-        )
-        .is_ok());
+        assert!(validate_upload_content_type("image/jpeg", &["video/mp4", "image/jpeg"]).is_ok());
     }
 
     #[test]
     fn test_validate_content_type_rejected() {
-        assert!(validate_upload_content_type(
-            "application/octet-stream",
-            &["video/mp4"]
-        )
-        .is_err());
+        assert!(validate_upload_content_type("application/octet-stream", &["video/mp4"]).is_err());
     }
 
     #[test]

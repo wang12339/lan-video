@@ -4,7 +4,9 @@ use axum::{Extension, Json};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::models::comment::{CommentListResponse, CommentQuery, CommentResponse, CreateCommentRequest};
+use crate::models::comment::{
+    CommentListResponse, CommentQuery, CommentResponse, CreateCommentRequest,
+};
 use crate::state::AppState;
 use crate::util::error::ServiceError;
 use crate::util::hashid;

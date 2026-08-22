@@ -29,7 +29,7 @@ const MAX_RETRY_TRACKED: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscodeTask {
-    pub id: i32,
+    pub id: i64,
     pub video_id: i64,
     pub input_path: String,
     pub resolutions: Vec<String>,
@@ -113,7 +113,7 @@ impl TaskQueue {
         video_id: i64,
         input_path: PathBuf,
         resolutions: Vec<String>,
-    ) -> Result<Option<i32>, sqlx::Error> {
+    ) -> Result<Option<i64>, sqlx::Error> {
         // Revive rows that represent re-doable work (failed jobs, or
         // completed jobs whose variant record no longer exists).
         sqlx::query(
@@ -153,7 +153,7 @@ impl TaskQueue {
             tracing::debug!("No pending transcode work for video {}", video_id);
             return Ok(None);
         };
-        let id = min_id as i32;
+        let id = min_id;
 
         let task = TranscodeTask {
             id,
@@ -187,8 +187,8 @@ impl TaskQueue {
             // Attempt bookkeeping lives here, owned by the worker. `retries`
             // counts attempts per task id; `next_attempt_at` holds when a
             // retried task may run again (exponential backoff).
-            let mut retries: HashMap<i32, u32> = HashMap::new();
-            let mut next_attempt_at: HashMap<i32, Instant> = HashMap::new();
+            let mut retries: HashMap<i64, u32> = HashMap::new();
+            let mut next_attempt_at: HashMap<i64, Instant> = HashMap::new();
 
             // Cancellation-safe notify: `notified` is re-created from the
             // previous one, so a wake-up delivered while the queue was being
@@ -271,8 +271,8 @@ async fn run_task(
     transcoder: &Transcoder,
     queue: &Arc<Mutex<VecDeque<TranscodeTask>>>,
     task: TranscodeTask,
-    retries: &mut HashMap<i32, u32>,
-    next_attempt_at: &mut HashMap<i32, Instant>,
+    retries: &mut HashMap<i64, u32>,
+    next_attempt_at: &mut HashMap<i64, Instant>,
 ) {
     tracing::info!(
         "Processing transcode task: video_id={}, resolutions={:?}",
@@ -407,8 +407,8 @@ async fn schedule_retry(
     pool: &PgPool,
     queue: &Arc<Mutex<VecDeque<TranscodeTask>>>,
     task: TranscodeTask,
-    retries: &mut HashMap<i32, u32>,
-    next_attempt_at: &mut HashMap<i32, Instant>,
+    retries: &mut HashMap<i64, u32>,
+    next_attempt_at: &mut HashMap<i64, Instant>,
 ) {
     let attempt = retries.entry(task.id).or_insert(0);
     *attempt += 1;
@@ -618,7 +618,7 @@ async fn recover_stale_jobs(
             }
         };
         let task = TranscodeTask {
-            id: job.min_id as i32,
+            id: job.min_id,
             video_id: job.video_id,
             input_path: input_path.to_string_lossy().to_string(),
             resolutions: job.resolutions,

@@ -189,21 +189,9 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
 
     // Check native HLS support (Safari, iOS) — use strict check
     if (video.canPlayType('application/vnd.apple.mpegurl') !== '') {
-      // Safari native HLS cannot inject Authorization header via xhrSetup.
-      // Backend already supports Cookie auth (httpOnly token via credentials:same-origin),
-      // but as extra fallback we append ?token= for deployments where Cookie is not available.
-      const t = getToken()
-      if (t && !src.includes('token=')) {
-        try {
-          const url = new URL(src, window.location.href)
-          url.searchParams.set('token', t)
-          video.src = url.toString()
-        } catch {
-          video.src = src
-        }
-      } else {
-        video.src = src
-      }
+      // Safari native HLS uses Cookie auth (httpOnly token via credentials:same-origin).
+      // No need to append token to URL - cookies are automatically sent with same-origin requests.
+      video.src = src
       if (autoPlay) {
         video.play().catch(() => {})
       }
@@ -293,6 +281,5 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
 
   return {
     destroy: destroyHls,
-    hls: hlsRef.current,
   }
 }

@@ -9,9 +9,9 @@ use std::sync::Arc;
 use crate::middleware::auth::{self as auth_mw, AuthUser};
 use crate::middleware::tenant::TenantContext;
 use crate::models::auth::{
-    AuthRequest, AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse,
-    ResetPasswordRequest, ResetPasswordToken, SendVerificationEmailResponse, UpdateEmailRequest,
-    UserInfoResponse, UserProfileResponse, VerifyEmailRequest,
+    AuthRequest, AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResetPasswordRequest,
+    ResetPasswordToken, SendVerificationEmailResponse, UpdateEmailRequest, UserInfoResponse,
+    UserProfileResponse, VerifyEmailRequest,
 };
 use crate::state::AppState;
 use crate::util::net::client_ip;
@@ -29,12 +29,25 @@ fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
         let mut http_resp = Json(resp).into_response();
         http_resp.headers_mut().insert(
             axum::http::header::SET_COOKIE,
-            HeaderValue::from_str(&auth_mw::set_token_cookie(
+            match HeaderValue::from_str(&auth_mw::set_token_cookie(
                 &token,
                 crate::services::auth_service::COOKIE_MAX_AGE,
                 state.config.cookie_secure,
-            ))
-            .expect("valid cookie header"),
+            )) {
+                Ok(val) => val,
+                Err(e) => {
+                    tracing::error!("Failed to create cookie header: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(AuthResponse {
+                            ok: false,
+                            token: None,
+                            error: Some("Internal server error".to_string()),
+                        }),
+                    )
+                        .into_response();
+                }
+            },
         );
         http_resp
     } else {
@@ -65,24 +78,25 @@ fn handle_auth_result(
             )
                 .into_response()
         }
-        Err(crate::util::error::ServiceError::BadRequest(msg)) => {
+        Err(crate::util::error::ServiceError::BadRequest(msg)) => (
+            StatusCode::BAD_REQUEST,
+            Json(AuthResponse {
+                ok: false,
+                token: None,
+                error: Some(msg),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            let (status, msg) = e.into_tuple();
             (
-                StatusCode::BAD_REQUEST,
+                status,
                 Json(AuthResponse {
                     ok: false,
                     token: None,
-                    error: Some(msg),
+                    error: Some(msg.0.error),
                 }),
             )
-                .into_response()
-        }
-        Err(e) => {
-            let (status, msg) = e.into_tuple();
-            (status, Json(AuthResponse {
-                ok: false,
-                token: None,
-                error: Some(msg.0.error),
-            }))
                 .into_response()
         }
     }
@@ -99,31 +113,32 @@ pub async fn register(
     // shape. Previously, `SafeJson` rejected empty/invalid bodies with 400
     // while the toggle check returned 404, leaking both the endpoint's
     // existence and the registration state.
-    
+
     // 检查全局配置或租户设置
     let global_enabled = state.config.registration_enabled();
-    let tenant_enabled = state.repos.tenant.get_by_id(tenant.tenant_id)
+    let tenant_enabled = state
+        .repos
+        .tenant
+        .get_by_id(tenant.tenant_id)
         .await
         .ok()
         .flatten()
         .map(|c| c.settings.registration_enabled)
         .unwrap_or(false);
-    
+
     if !global_enabled && !tenant_enabled {
         return Err(error_response(StatusCode::NOT_FOUND, "Not Found"));
     }
-    
+
     // Real client IP from Cloudflare if available — falls back to socket peer.
     let ip = client_ip(&req);
 
     // Extract the body bytes from the request.
     let body = req.into_body();
-    let body = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to read request body: {}", e);
-            error_response(StatusCode::BAD_REQUEST, "invalid request body")
-        })?;
+    let body = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+        tracing::error!("Failed to read request body: {}", e);
+        error_response(StatusCode::BAD_REQUEST, "invalid request body")
+    })?;
 
     // Manually parse the JSON body so we control the error message.
     let auth_req: AuthRequest = match serde_json::from_slice(&body) {
@@ -154,12 +169,10 @@ pub async fn login(
 
     // Extract the body bytes from the request.
     let body = req.into_body();
-    let body = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to read request body: {}", e);
-            error_response(StatusCode::BAD_REQUEST, "invalid request body")
-        })?;
+    let body = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+        tracing::error!("Failed to read request body: {}", e);
+        error_response(StatusCode::BAD_REQUEST, "invalid request body")
+    })?;
 
     let auth_req: AuthRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -212,8 +225,13 @@ pub async fn logout(
     .into_response();
     resp.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        HeaderValue::from_str(&auth_mw::clear_token_cookie(state.config.cookie_secure))
-            .expect("valid cookie header"),
+        match HeaderValue::from_str(&auth_mw::clear_token_cookie(state.config.cookie_secure)) {
+            Ok(val) => val,
+            Err(e) => {
+                tracing::error!("Failed to create clear-cookie header: {}", e);
+                return resp;
+            }
+        },
     );
     resp
 }

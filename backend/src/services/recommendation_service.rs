@@ -273,7 +273,10 @@ impl RecommendationService {
         Ok(recommendations)
     }
 
-    pub async fn get_recent_videos(&self, limit: i64) -> Result<Vec<VideoRecommendation>, ServiceError> {
+    pub async fn get_recent_videos(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let pool = self.video_repo.pool();
 
         let rows = sqlx::query(

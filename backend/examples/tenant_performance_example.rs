@@ -1,5 +1,5 @@
 //! 租户性能优化示例
-//! 
+//!
 //! 本示例展示了如何使用优化后的 TenantRepository 进行租户查询操作。
 
 use atmos_video_backend::repositories::tenant_repo::TenantRepository;
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let tenant = tenant_repo.find_by_slug("default").await;
     let duration = start.elapsed();
-    
+
     if let Some(tenant) = tenant {
         println!("找到租户: {} (耗时: {:?})", tenant.name, duration);
     } else {
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let tenant = tenant_repo.find_by_domain("atmos.whanghui.top").await;
     let duration = start.elapsed();
-    
+
     if let Some(tenant) = tenant {
         println!("通过域名找到租户: {} (耗时: {:?})", tenant.name, duration);
     } else {

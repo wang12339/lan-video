@@ -578,6 +578,8 @@ export default function Player() {
     const v = videoRef.current
     if (!v || !video?.stream) return
 
+    let cancelled = false
+
     // 启动播放会话（必须在加载视频源之前）
     // 使用 async/await 确保会话启动后再加载视频
     const initVideo = async () => {
@@ -586,6 +588,8 @@ export default function Player() {
       } catch {
         // 忽略错误，继续加载视频
       }
+
+      if (cancelled) return
 
       v.src = video!.stream!
       v.poster = video!.thumb || ''
@@ -612,6 +616,10 @@ export default function Player() {
     }
 
     initVideo()
+
+    return () => {
+      cancelled = true
+    }
   }, [video, videoId])
 
   // ============================================================

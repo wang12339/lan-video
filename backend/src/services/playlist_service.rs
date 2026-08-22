@@ -201,15 +201,18 @@ impl PlaylistService {
     ) -> Result<(), ServiceError> {
         self.verify_ownership(playlist_id, user_id).await?;
 
-        self.repo.add_video(playlist_id, video_id).await.map_err(|e| {
-            if Self::check_fk_violation(&e, "playlist_items_video_id_fkey") {
-                return ServiceError::not_found("视频不存在");
-            }
-            if Self::check_fk_violation(&e, "playlist_items_playlist_id_fkey") {
-                return ServiceError::not_found("播放列表不存在");
-            }
-            ServiceError::from(e)
-        })?;
+        self.repo
+            .add_video(playlist_id, video_id)
+            .await
+            .map_err(|e| {
+                if Self::check_fk_violation(&e, "playlist_items_video_id_fkey") {
+                    return ServiceError::not_found("视频不存在");
+                }
+                if Self::check_fk_violation(&e, "playlist_items_playlist_id_fkey") {
+                    return ServiceError::not_found("播放列表不存在");
+                }
+                ServiceError::from(e)
+            })?;
 
         Ok(())
     }

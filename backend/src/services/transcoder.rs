@@ -293,7 +293,7 @@ impl Transcoder {
     }
 
     fn get_bitrate(&self, resolution: &str) -> Option<i32> {
-        resolution_params(resolution).map(|(_, _, b)| b as i32)
+        resolution_params(resolution).and_then(|(_, _, b)| i32::try_from(b).ok())
     }
 
     pub async fn get_video_info(&self, video_path: &Path) -> Result<VideoInfo> {

@@ -74,6 +74,14 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
         path_owned = format!("/media{path_raw}");
         &path_owned
     };
+
+    // Thumbnails and covers are preview images rendered in listing pages
+    // (home, gallery). <img> tags cannot send Authorization headers, so
+    // these paths must be publicly accessible without authentication.
+    if is_thumbnail_or_cover_path(path) {
+        return next.run(req).await;
+    }
+
     let path_video_id = extract_video_id_from_path(path);
 
     // Try bearer/cookie token auth first. Tokens failing the format check are
@@ -132,14 +140,6 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                         }
                     }
                 };
-
-                // Thumbnails and covers are low-sensitivity metadata rendered
-                // in listing pages (home, gallery, admin). Any authenticated
-                // user may fetch them; the playback-session requirement applies
-                // only to the video content itself.
-                if is_thumbnail_or_cover_path(path) {
-                    return next.run(req).await;
-                }
 
                 // The in-memory session tracker (with 120s heartbeat timeout) is
                 // the source of truth for active playback sessions. We no longer
@@ -398,9 +398,9 @@ fn is_public_static_media_path(path: &str) -> bool {
 }
 
 /// True for `/media/thumb_{id}.*` and `/media/cover_{id}*` paths. These are
-/// low-sensitivity preview images shown to any authenticated user (home
-/// listings, gallery, admin panel); unlike the video stream itself they do
-/// not require an active playback session or share token.
+/// low-sensitivity preview images shown on public pages (home, gallery).
+/// Since HTML `<img>` tags cannot send Authorization headers, these paths
+/// are publicly accessible without authentication.
 fn is_thumbnail_or_cover_path(path: &str) -> bool {
     let stripped = path.strip_prefix("/media/").unwrap_or(path);
     let first = stripped.split('/').next().unwrap_or("");

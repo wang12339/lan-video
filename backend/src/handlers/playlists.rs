@@ -28,10 +28,7 @@ fn to_playlist_response(p: &PlaylistRow, count: i64) -> PlaylistResponse {
 }
 
 /// Decode a hashid or numeric string to an i64, returning a BAD_REQUEST error on failure.
-fn decode_id_or_err(
-    id_str: &str,
-    label: &str,
-) -> Result<i64, (StatusCode, Json<ErrorResponse>)> {
+fn decode_id_or_err(id_str: &str, label: &str) -> Result<i64, (StatusCode, Json<ErrorResponse>)> {
     hashid::decode_id_or_numeric(id_str)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, format!("无效的{}ID", label)))
 }

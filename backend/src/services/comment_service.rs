@@ -322,9 +322,7 @@ fn sanitize_content(raw_content: &str) -> Result<String, ServiceError> {
 fn map_create_error(e: sqlx::Error) -> ServiceError {
     if db_error::is_foreign_key_violation(&e) {
         return match db_error::get_constraint_name(&e) {
-            Some("comments_video_id_fkey") => {
-                ServiceError::bad_request("视频不存在".to_string())
-            }
+            Some("comments_video_id_fkey") => ServiceError::bad_request("视频不存在".to_string()),
             Some("comments_parent_id_fkey") => {
                 ServiceError::bad_request("父评论不存在".to_string())
             }

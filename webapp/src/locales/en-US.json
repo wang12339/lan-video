@@ -103,12 +103,23 @@
   "home": {
     "heroTitle": "Atmos Video",
     "heroSub": "Video sharing & playback platform",
+    "heroDesc": "Self-hosted · HLS adaptive bitrate · Resumable uploads · Secure sharing",
+    "featureHls": "Adaptive Bitrate",
+    "featureHlsDesc": "Multi-resolution HLS transcoding for smooth playback",
+    "featureUpload": "Resumable Uploads",
+    "featureUploadDesc": "Chunked uploads that survive network interruptions",
+    "featureShare": "Secure Sharing",
+    "featureShareDesc": "Encrypted links with expiration controls",
+    "featurePrivate": "Self-Hosted",
+    "featurePrivateDesc": "Full data ownership, no third-party dependency",
     "trending": "Trending",
     "empty": "No videos yet",
     "totalCount": "{{count}} videos total",
     "emailVerified": "✓ Email verified",
     "emailVerifyFailed": "✗ Email verification failed — the link is invalid or has expired",
-    "searchEmpty": "No videos found for \"{{query}}\""
+    "searchEmpty": "No videos found for \"{{query}}\"",
+    "guestCta": "Sign in to browse all videos",
+    "guestPreview": "Preview"
   },
   "gallery": {
     "search": "Search images...",

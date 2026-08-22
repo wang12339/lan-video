@@ -63,9 +63,7 @@ pub fn deserialize_vec_ids<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<i64>, 
             serde_json::Value::Number(n) => n
                 .as_i64()
                 .ok_or_else(|| serde::de::Error::custom("number out of i64 range")),
-            _ => Err(serde::de::Error::custom(
-                "expected string or number for id",
-            )),
+            _ => Err(serde::de::Error::custom("expected string or number for id")),
         })
         .collect()
 }

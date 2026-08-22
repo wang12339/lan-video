@@ -103,12 +103,23 @@
   "home": {
     "heroTitle": "Atmos Video",
     "heroSub": "视频分享与播放平台",
+    "heroDesc": "私有部署 · HLS 自适应码率 · 断点续传 · 安全分享",
+    "featureHls": "自适应码率",
+    "featureHlsDesc": "HLS 多清晰度转码，流畅播放不卡顿",
+    "featureUpload": "断点续传",
+    "featureUploadDesc": "大文件分片上传，网络中断也不怕",
+    "featureShare": "安全分享",
+    "featureShareDesc": "链接加密 + 有效期控制，分享无忧",
+    "featurePrivate": "私有部署",
+    "featurePrivateDesc": "数据完全掌控，不经过第三方",
     "trending": "热门推荐",
     "empty": "暂无视频",
     "totalCount": "共 {{count}} 个视频",
     "emailVerified": "✓ 邮箱验证成功",
     "emailVerifyFailed": "✗ 邮箱验证失败，链接无效或已过期",
-    "searchEmpty": "未找到与「{{query}}」相关的视频"
+    "searchEmpty": "未找到与「{{query}}」相关的视频",
+    "guestCta": "登录后浏览全部视频",
+    "guestPreview": "试看"
   },
   "gallery": {
     "search": "搜索图片...",

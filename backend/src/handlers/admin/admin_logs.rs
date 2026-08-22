@@ -33,11 +33,7 @@ pub async fn get_logs(
             .unwrap_or("")
             .to_string();
         let entries = log_parser::parse_log_file(log_file, limit + offset);
-        let entries = log_parser::filter_entries(
-            entries,
-            level.as_deref(),
-            search.as_deref(),
-        );
+        let entries = log_parser::filter_entries(entries, level.as_deref(), search.as_deref());
         (file_name, entries)
     })
     .await;

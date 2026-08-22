@@ -50,10 +50,11 @@ async fn prune_upload_locks(state: &Arc<AppState>) {
     }
     let root = state.config.media_root.clone();
     let locks = state.upload_locks.clone();
-    let stale =
-        tokio::task::spawn_blocking(move || stale_upload_lock_keys_inner(&locks, &root, UPLOAD_TEMP_TTL))
-            .await
-            .unwrap_or_default();
+    let stale = tokio::task::spawn_blocking(move || {
+        stale_upload_lock_keys_inner(&locks, &root, UPLOAD_TEMP_TTL)
+    })
+    .await
+    .unwrap_or_default();
     if stale.is_empty() {
         return;
     }
@@ -123,7 +124,8 @@ mod tests {
     use super::*;
 
     fn test_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("atmos_sweeper_{}_{}", name, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("atmos_sweeper_{}_{}", name, std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

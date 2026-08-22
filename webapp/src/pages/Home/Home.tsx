@@ -7,7 +7,6 @@ import { mapVideo } from '../../api/utils'
 import { getTrendingVideos } from '../../api/recommendations'
 import type { MappedVideo } from '../../api/types'
 import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
-import AuthDialog from '../../components/AuthDialog/AuthDialog'
 import { useAuth } from '../../context/AuthContext'
 import { trackClick } from '../../utils/track'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
@@ -222,17 +221,43 @@ export default function Home() {
         <div className="hero">
           <h1 className="hero-title">{t('home.heroTitle')}</h1>
           <p className="hero-sub">{t('home.heroSub')}</p>
-          <div className="hero-decoration" aria-hidden="true">
-            <span className="hero-dot hero-dot--1" />
-            <span className="hero-dot hero-dot--2" />
-            <span className="hero-dot hero-dot--3" />
+          <p className="hero-desc">{t('home.heroDesc')}</p>
+          <div className="hero-features">
+            <div className="hero-feature">
+              <span className="hero-feature-icon">⚡</span>
+              <div className="hero-feature-text">
+                <span className="hero-feature-name">{t('home.featureHls')}</span>
+                <span className="hero-feature-desc">{t('home.featureHlsDesc')}</span>
+              </div>
+            </div>
+            <div className="hero-feature">
+              <span className="hero-feature-icon">📦</span>
+              <div className="hero-feature-text">
+                <span className="hero-feature-name">{t('home.featureUpload')}</span>
+                <span className="hero-feature-desc">{t('home.featureUploadDesc')}</span>
+              </div>
+            </div>
+            <div className="hero-feature">
+              <span className="hero-feature-icon">🔒</span>
+              <div className="hero-feature-text">
+                <span className="hero-feature-name">{t('home.featureShare')}</span>
+                <span className="hero-feature-desc">{t('home.featureShareDesc')}</span>
+              </div>
+            </div>
+            <div className="hero-feature">
+              <span className="hero-feature-icon">🏠</span>
+              <div className="hero-feature-text">
+                <span className="hero-feature-name">{t('home.featurePrivate')}</span>
+                <span className="hero-feature-desc">{t('home.featurePrivateDesc')}</span>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {!user && trending.length > 0 && (
         <section className="trending-section guest-preview" aria-label={t('home.trending')}>
-          <h2 className="trending-title">{t('home.trending')} · 试看</h2>
+          <h2 className="trending-title">{t('home.trending')} · {t('home.guestPreview')}</h2>
           <div className="video-grid">
             {trending.slice(0, 3).map((video, i) => (
               <div key={`guest-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
@@ -240,8 +265,8 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <div style={{ textAlign: 'center', marginTop: 16 }}>
-            <Link to="/profile" className="empty-cta">登录查看更多 →</Link>
+          <div className="guest-cta-wrap">
+            <Link to="/profile" className="empty-cta">{t('home.guestCta')} →</Link>
           </div>
         </section>
       )}
@@ -342,7 +367,7 @@ export default function Home() {
       {/* 哨兵始终渲染，避免登录状态切换后 observer 失效 */}
       <div ref={sentinelRef} className="load-sentinel" aria-hidden="true" />
 
-      {!user && <AuthDialog closable={false} />}
+      {/* 游客不强制弹窗，通过 CTA 按钮引导登录 */}
     </div>
   )
 }

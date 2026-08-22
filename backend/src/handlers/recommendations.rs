@@ -10,8 +10,8 @@ use crate::middleware::auth::AuthUser;
 use crate::models::recommendation::{RecommendationItem, RecommendationResponse};
 use crate::services::recommendation_service::VideoRecommendation;
 use crate::state::AppState;
-use crate::util::hashid;
 use crate::util::error::ServiceError;
+use crate::util::hashid;
 use crate::util::response::{error_response, ErrorResponse};
 
 fn map_to_recommendation(r: VideoRecommendation) -> RecommendationItem {

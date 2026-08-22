@@ -103,14 +103,14 @@ impl TenantRateLimiter {
     /// 应定期调用以防止内存泄漏
     pub fn cleanup(&self) {
         let now = Instant::now();
-        self.counters.retain(|_, (window_start, _)| {
-            now.duration_since(*window_start).as_secs() < 120
-        });
+        self.counters
+            .retain(|_, (window_start, _)| now.duration_since(*window_start).as_secs() < 120);
     }
 }
 
 /// 从数据库行反序列化租户信息
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TenantRow {
     id: i64,
     slug: String,

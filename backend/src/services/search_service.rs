@@ -136,7 +136,11 @@ impl SearchService {
         Ok((results, total))
     }
 
-    pub async fn search_suggest(&self, query: &str, limit: i64) -> Result<Vec<String>, ServiceError> {
+    pub async fn search_suggest(
+        &self,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<String>, ServiceError> {
         let query = normalize_query(query);
         if query.is_empty() {
             return Ok(Vec::new());

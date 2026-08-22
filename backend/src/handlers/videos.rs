@@ -392,4 +392,3 @@ pub async fn search_suggest(
 
     Ok(Json(suggestions))
 }
-

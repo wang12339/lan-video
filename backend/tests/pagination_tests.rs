@@ -12,7 +12,7 @@ fn test_pagination_default() {
 fn test_pagination_clamp_page() {
     let p = PaginationParams::new(Some(-1), None);
     assert_eq!(p.page, 1);
-    
+
     let p = PaginationParams::new(Some(100000), None);
     assert_eq!(p.page, 10000); // MAX_PAGE
 }
@@ -21,7 +21,7 @@ fn test_pagination_clamp_page() {
 fn test_pagination_clamp_page_size() {
     let p = PaginationParams::new(None, Some(0));
     assert_eq!(p.page_size, 1);
-    
+
     let p = PaginationParams::new(None, Some(1000));
     assert_eq!(p.page_size, 100); // MAX_PAGE_SIZE
 }

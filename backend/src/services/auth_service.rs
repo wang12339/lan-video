@@ -387,10 +387,7 @@ impl AuthService {
 
         let hash = hash_in_blocking(password).await?;
 
-        let updated = self
-            .user_repo
-            .update_password_hash(user_id, &hash)
-            .await?;
+        let updated = self.user_repo.update_password_hash(user_id, &hash).await?;
 
         if !updated {
             // The user was deleted between token validation and the update.
@@ -424,11 +421,7 @@ impl AuthService {
     /// - 邮箱地址会 trim 并转为小写后存储
     /// - 验证邮箱格式（长度、@ 符号、域名格式等）
     /// - 检查唯一约束，防止重复绑定
-    pub async fn update_email(
-        &self,
-        user_id: i64,
-        email: &str,
-    ) -> Result<(), ServiceError> {
+    pub async fn update_email(&self, user_id: i64, email: &str) -> Result<(), ServiceError> {
         let email = email.trim().to_lowercase();
 
         if !is_valid_email(&email) {

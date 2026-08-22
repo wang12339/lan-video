@@ -12,8 +12,8 @@ use crate::models::video::*;
 use crate::services::media_service::is_safe_external_url;
 use crate::services::media_service::upload::stream_multipart_to_file;
 use crate::state::AppState;
-use crate::util::hashid;
 use crate::util::error::ServiceError;
+use crate::util::hashid;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 use serde::Deserialize;
 
@@ -157,12 +157,18 @@ pub async fn upload_video(
         Err(ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_)) => {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             tracing::warn!(actor = %auth_user.username, "upload conflict");
-            return Err(error_response(StatusCode::CONFLICT, "文件重复或存储配额已用尽"));
+            return Err(error_response(
+                StatusCode::CONFLICT,
+                "文件重复或存储配额已用尽",
+            ));
         }
         Err(e) => {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             tracing::warn!(actor = %auth_user.username, "upload failed: {}", e);
-            return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败"));
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "上传失败",
+            ));
         }
     };
 

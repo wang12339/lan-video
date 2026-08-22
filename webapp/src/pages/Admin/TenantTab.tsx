@@ -27,7 +27,10 @@ const TenantTab: React.FC = () => {
   // 获取选中租户的统计
   const { data: stats } = useQuery({
     queryKey: ['tenantStats', selectedTenant?.tenant_id],
-    queryFn: () => getTenantStats(selectedTenant!.tenant_id),
+    queryFn: () => {
+      if (!selectedTenant) throw new Error('No tenant selected')
+      return getTenantStats(selectedTenant.tenant_id)
+    },
     enabled: !!selectedTenant,
   });
 

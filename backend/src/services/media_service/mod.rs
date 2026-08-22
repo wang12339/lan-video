@@ -10,9 +10,9 @@ use crate::config::AppConfig;
 use crate::repositories::video_repo::VideoRepository;
 use crate::util::error::ServiceError;
 
-mod validate;
 pub mod sweeper;
 pub mod upload;
+mod validate;
 
 use validate::{extract_duration, sweep_upload_temps_blocking};
 pub use validate::{
@@ -104,7 +104,7 @@ impl MediaService {
         tokio::task::spawn_blocking(move || sweep_upload_temps_blocking(&root, UPLOAD_TEMP_TTL))
             .await
             .map_err(|e| ServiceError::Internal(format!("临时文件清理任务失败: {}", e)))?
-            .map_err(|e| ServiceError::Internal(e))
+            .map_err(ServiceError::Internal)
     }
 
     /// 流式上传：从临时文件读取，计算 SHA-256，移动到最终位置
@@ -401,14 +401,21 @@ impl MediaService {
         .await
         .unwrap_or(false);
         if !video_path_exists {
-            return Err(ServiceError::Internal(format!("video file not found: {}", video_path.display())));
+            return Err(ServiceError::Internal(format!(
+                "video file not found: {}",
+                video_path.display()
+            )));
         }
 
         // Limit concurrent ffmpeg thumbnail jobs and give each one a hard
         // timeout, so a hung process can't pin a blocking worker forever.
         let _permit = match thumbnail_semaphore().acquire().await {
             Ok(p) => p,
-            Err(_) => return Err(ServiceError::Internal("thumbnail semaphore closed".to_string())),
+            Err(_) => {
+                return Err(ServiceError::Internal(
+                    "thumbnail semaphore closed".to_string(),
+                ))
+            }
         };
 
         // Extract frame at 1 second using ffmpeg
@@ -524,7 +531,12 @@ impl MediaService {
         Ok((generated, errors))
     }
 
-    pub async fn update_cover(&self, id: i64, file_name: &str, bytes: Bytes) -> Result<(), ServiceError> {
+    pub async fn update_cover(
+        &self,
+        id: i64,
+        file_name: &str,
+        bytes: Bytes,
+    ) -> Result<(), ServiceError> {
         let ext = Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())

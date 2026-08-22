@@ -3,9 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use std::sync::Arc;
 
-use crate::models::admin::{
-    TranscodeRequest, TranscodeResponse, TranscodeStatusResponse,
-};
+use crate::models::admin::{TranscodeRequest, TranscodeResponse, TranscodeStatusResponse};
 use crate::services::media_service::safe_media_path;
 use crate::state::AppState;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};

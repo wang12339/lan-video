@@ -118,10 +118,7 @@ pub fn cache_stats() -> (u64, u64, f64) {
 }
 
 /// 执行带超时和重试的数据库查询
-async fn execute_with_retry<T, F, Fut>(
-    label: &str,
-    query_fn: F,
-) -> Result<T, sqlx::Error>
+async fn execute_with_retry<T, F, Fut>(label: &str, query_fn: F) -> Result<T, sqlx::Error>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
@@ -352,16 +349,22 @@ impl TenantRepository {
 
     /// Convert a Tenant to a TenantConfig with settings from database.
     pub fn to_config(tenant: &Tenant) -> TenantConfig {
-        let settings = tenant.settings.as_ref()
+        let settings = tenant
+            .settings
+            .as_ref()
             .and_then(|s| serde_json::from_value::<TenantSettings>(s.clone()).ok())
             .unwrap_or_default();
-        
+
         TenantConfig {
             tenant_id: tenant.id,
             slug: tenant.slug.clone(),
             name: tenant.name.clone(),
             host: tenant.custom_domain.clone().unwrap_or_default(),
-            status: if tenant.is_active { "active".to_string() } else { "disabled".to_string() },
+            status: if tenant.is_active {
+                "active".to_string()
+            } else {
+                "disabled".to_string()
+            },
             plan: tenant.plan.clone(),
             max_users: tenant.max_users,
             max_storage_bytes: tenant.max_storage_bytes,
@@ -371,9 +374,7 @@ impl TenantRepository {
 
     /// Fetch tenant configuration by slug.
     pub async fn get_config_by_slug(&self, slug: &str) -> Option<TenantConfig> {
-        self.find_by_slug(slug)
-            .await
-            .map(|t| Self::to_config(&t))
+        self.find_by_slug(slug).await.map(|t| Self::to_config(&t))
     }
 
     /// Fetch tenant configuration by domain.
@@ -479,7 +480,7 @@ impl TenantRepository {
         })
         .await?;
 
-        Ok(tenants.iter().map(|t| Self::to_config(t)).collect())
+        Ok(tenants.iter().map(Self::to_config).collect())
     }
 
     /// 设置租户启用/禁用状态。
@@ -492,11 +493,7 @@ impl TenantRepository {
     /// * `Ok(true)` - 更新成功
     /// * `Ok(false)` - 租户不存在
     /// * `Err(sqlx::Error)` - 数据库更新失败
-    pub async fn set_active(
-        &self,
-        tenant_id: i64,
-        is_active: bool,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn set_active(&self, tenant_id: i64, is_active: bool) -> Result<bool, sqlx::Error> {
         let rows = execute_with_retry("tenant_set_active", || {
             sqlx::query("UPDATE tenants SET is_active = $1 WHERE id = $2")
                 .bind(is_active)
@@ -513,7 +510,8 @@ impl TenantRepository {
         let host_clean = normalize_host(host);
 
         if host_clean.is_empty() {
-            return self.find_by_slug("default")
+            return self
+                .find_by_slug("default")
                 .await
                 .map(|t| Self::to_config(&t));
         }

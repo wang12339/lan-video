@@ -541,14 +541,35 @@ pub async fn build_router(config: AppConfig) -> Router {
             .route("/admin/system", get(handlers::admin::system_info))
             .route("/admin/logs", get(handlers::admin::get_logs))
             .route("/admin/logs", delete(handlers::admin::clear_logs))
-            .route("/admin/performance/metrics", get(handlers::admin::get_performance_metrics))
-            .route("/admin/performance/reset", post(handlers::admin::reset_performance_metrics))
+            .route(
+                "/admin/performance/metrics",
+                get(handlers::admin::get_performance_metrics),
+            )
+            .route(
+                "/admin/performance/reset",
+                post(handlers::admin::reset_performance_metrics),
+            )
             // 租户管理路由
-            .route("/admin/tenants", get(handlers::admin::admin_tenant::list_tenants))
-            .route("/admin/tenants/{id}", get(handlers::admin::admin_tenant::get_tenant))
-            .route("/admin/tenants/{id}", put(handlers::admin::admin_tenant::update_tenant))
-            .route("/admin/tenants/{id}/stats", get(handlers::admin::admin_tenant::get_tenant_stats))
-            .route("/admin/tenants/{id}/toggle", post(handlers::admin::admin_tenant::toggle_tenant))
+            .route(
+                "/admin/tenants",
+                get(handlers::admin::admin_tenant::list_tenants),
+            )
+            .route(
+                "/admin/tenants/{id}",
+                get(handlers::admin::admin_tenant::get_tenant),
+            )
+            .route(
+                "/admin/tenants/{id}",
+                put(handlers::admin::admin_tenant::update_tenant),
+            )
+            .route(
+                "/admin/tenants/{id}/stats",
+                get(handlers::admin::admin_tenant::get_tenant_stats),
+            )
+            .route(
+                "/admin/tenants/{id}/toggle",
+                post(handlers::admin::admin_tenant::toggle_tenant),
+            )
             .route_layer(axum_mw::from_fn(admin_auth))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         7200,

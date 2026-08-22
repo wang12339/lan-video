@@ -462,6 +462,9 @@ impl VideoService {
     /// - `Ok(())`: 更新成功
     /// - `Err(ServiceError)`: 数据库更新失败
     pub async fn increment_views(&self, id: i64) -> Result<(), ServiceError> {
-        self.repo.increment_views(id).await.map_err(ServiceError::from)
+        self.repo
+            .increment_views(id)
+            .await
+            .map_err(ServiceError::from)
     }
 }

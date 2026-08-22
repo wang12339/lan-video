@@ -6,40 +6,44 @@ vi.mock('../api/client', () => ({
   getToken: vi.fn(() => null),
 }))
 
-import { request } from '../api/client'
+import { request, getToken } from '../api/client'
 import { track, trackClick, trackPage, trackVideo, initTrackRouter } from '../utils/track'
 
 const mockedRequest = vi.mocked(request)
+const mockedGetToken = vi.mocked(getToken)
 
 describe('track', () => {
   beforeEach(() => {
     mockedRequest.mockReset()
     mockedRequest.mockResolvedValue(undefined)
+    mockedGetToken.mockReset()
+    mockedGetToken.mockReturnValue(null)
   })
 
-  it('posts the event to /admin/track without auth when logged out', async () => {
+  it('skips request when not logged in', async () => {
+    await track({ action: '点击', target: 'x' })
+    expect(mockedRequest).not.toHaveBeenCalled()
+  })
+
+  it('sends request with auth and silent when logged in', async () => {
+    mockedGetToken.mockReturnValue('tok123')
     await track({ action: '点击', target: 'x' })
     expect(mockedRequest).toHaveBeenCalledWith('/admin/track', {
       method: 'POST',
       body: { action: '点击', target: 'x', page: undefined },
-      auth: false,
+      auth: true,
+      silent: true,
     })
   })
 
-  it('uses auth when a token exists', async () => {
-    const { getToken } = await import('../api/client')
-    vi.mocked(getToken).mockReturnValue('tok123')
-    await track({ action: 'a' })
-    expect(mockedRequest.mock.calls[0]?.[1]?.auth).toBe(true)
-    vi.mocked(getToken).mockReturnValue(null)
-  })
-
   it('swallows request failures silently', async () => {
+    mockedGetToken.mockReturnValue('tok123')
     mockedRequest.mockRejectedValueOnce(new Error('boom'))
     await expect(track({ action: 'a' })).resolves.toBeUndefined()
   })
 
   it('trackClick adds the current pathname as page', async () => {
+    mockedGetToken.mockReturnValue('tok123')
     window.history.pushState({}, '', '/videos/42')
     trackClick('点击视频', '标题')
     await vi.waitFor(() => expect(mockedRequest).toHaveBeenCalledTimes(1))
@@ -49,6 +53,7 @@ describe('track', () => {
   })
 
   it('trackPage sends the page visit event', async () => {
+    mockedGetToken.mockReturnValue('tok123')
     trackPage('/home')
     await vi.waitFor(() => expect(mockedRequest).toHaveBeenCalledTimes(1))
     expect(mockedRequest.mock.calls[0]?.[1]?.body).toEqual({
@@ -57,6 +62,7 @@ describe('track', () => {
   })
 
   it('trackVideo prefixes the video id', async () => {
+    mockedGetToken.mockReturnValue('tok123')
     trackVideo('播放', 7)
     await vi.waitFor(() => expect(mockedRequest).toHaveBeenCalledTimes(1))
     expect(mockedRequest.mock.calls[0]?.[1]?.body).toEqual({
@@ -69,6 +75,8 @@ describe('initTrackRouter', () => {
   beforeEach(() => {
     mockedRequest.mockReset()
     mockedRequest.mockResolvedValue(undefined)
+    mockedGetToken.mockReset()
+    mockedGetToken.mockReturnValue('tok123')
     window.history.replaceState({}, '', '/')
     document.body.innerHTML = ''
   })
