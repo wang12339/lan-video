@@ -127,7 +127,7 @@ export default function Home() {
 
   const recentVideos = useMemo(
     () =>
-      (recentData ?? [])
+      (Array.isArray(recentData) ? recentData : [])
         .filter((h) => h.videoId && h.title)
         .slice(0, 4)
         .map((h: PlaybackHistory) => ({
@@ -144,7 +144,7 @@ export default function Home() {
   )
 
   const trending = useMemo(
-    () => (trendingData ?? []).filter((v) => v.id).slice(0, 6),
+    () => (Array.isArray(trendingData) ? trendingData : []).filter((v) => v.id).slice(0, 6),
     [trendingData]
   )
   const trendingIds = useMemo(() => new Set(trending.map((v) => v.id)), [trending])

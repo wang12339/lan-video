@@ -24,7 +24,8 @@ export async function savePlayback(
 
 export async function listPlaybackHistory(limit = 50): Promise<PlaybackHistory[]> {
   const clamped = Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit));
-  return request<PlaybackHistory[]>(`/playback/history?limit=${clamped}`);
+  const res = await request<{ items: PlaybackHistory[]; total: number }>(`/playback/history?limit=${clamped}`);
+  return res.items ?? [];
 }
 
 // --- 播放会话跟踪 ---
