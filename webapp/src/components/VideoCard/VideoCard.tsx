@@ -116,7 +116,11 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
         />
         <div className="thumb-overlay" aria-hidden="true" />
         <div className="play-over" aria-hidden="true">
-          <div className="play-btn">▶</div>
+          <div className="play-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24" aria-hidden="true">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </div>
         </div>
         {video.duration != null && video.duration > 0 && (
           <span className="dur">
@@ -135,7 +139,7 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
             {t('home.categories.' + getCategoryKey(video.category), { defaultValue: video.category })}
           </span>
         )}
-        <h3>{video.title}</h3>
+        <h3 className="title">{video.title}</h3>
         <div className="video-meta">
           {video.views > 0
             ? <span className="views" aria-label={`${video.views} views`}>
@@ -146,6 +150,7 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
               </span>
             : <span className="video-badge-new" aria-label="新视频">新</span>
           }
+          {video.views > 0 && video.date && <span className="meta-sep" aria-hidden="true">·</span>}
           {video.date && <span className="video-date">{relativeTime(video.date)}</span>}
         </div>
       </div>
