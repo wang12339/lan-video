@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import SkeletonLoader from '../ui/SkeletonLoader'
 import LazyImage from '../ui/LazyImage'
+import './VideoCard.css'
 
 interface Video {
   id: string;

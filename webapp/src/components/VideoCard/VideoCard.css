@@ -1,4 +1,4 @@
-.card {
+.video-card {
   background: var(--bg2);
   border-radius: var(--radius);
   overflow: hidden;
@@ -8,7 +8,7 @@
   border: 1px solid var(--border);
 }
 
-.card:hover {
+.video-card:hover {
   transform: translateY(-6px);
   box-shadow: 
     0 12px 32px rgba(0, 0, 0, 0.25),
@@ -18,13 +18,13 @@
   will-change: transform;
 }
 
-.card:focus-visible {
+.video-card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 99, 102, 241), 0.2);
 }
 
-.card:focus:not(:focus-visible) {
+.video-card:focus:not(:focus-visible) {
   outline: none;
 }
 
@@ -47,7 +47,7 @@
   opacity: 1;
 }
 
-.card:hover .card-img.loaded {
+.video-card:hover .card-img.loaded {
   transform: scale(1.05);
 }
 
@@ -110,7 +110,7 @@
   pointer-events: none;
 }
 
-.card:hover .thumb-overlay {
+.video-card:hover .thumb-overlay {
   opacity: 1;
 }
 
@@ -125,7 +125,7 @@
   pointer-events: none;
 }
 
-.card:hover .play-over {
+.video-card:hover .play-over {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
 }
@@ -138,10 +138,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
   color: white;
   backdrop-filter: blur(8px);
   transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.play-btn svg {
+  width: 24px;
+  height: 24px;
 }
 
 .play-btn:hover {
@@ -165,10 +169,6 @@
   -webkit-backdrop-filter: blur(4px);
 }
 
-.info {
-  padding: 12px;
-}
-
 .video-info {
   padding: 12px 14px;
   display: flex;
@@ -187,13 +187,6 @@
   overflow: hidden;
   color: var(--text);
   margin: 0;
-}
-
-.info-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
 }
 
 .cat-badge {
@@ -232,7 +225,6 @@
   color: white;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
 }
 
 .video-meta {
@@ -252,31 +244,21 @@
   color: var(--text3);
 }
 
-.title {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
 /* 列表模式 */
-.card.list-mode {
+.video-card.list-mode {
   display: flex;
   flex-direction: row;
   gap: 0;
 }
 
-.card.list-mode .thumb-wrap {
+.video-card.list-mode .thumb-wrap {
   width: 220px;
   flex-shrink: 0;
   aspect-ratio: 16 / 9;
   height: auto;
 }
 
-.card.list-mode .video-info {
+.video-card.list-mode .video-info {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -285,27 +267,17 @@
   gap: 8px;
 }
 
-.card.list-mode .title {
+.video-card.list-mode .title {
   -webkit-line-clamp: 2;
 }
 
-@media (max-width: 640px) {
-  .card.list-mode .thumb-wrap {
-    width: 140px;
-  }
-  
-  .card.list-mode .video-info {
-    padding: 8px 12px;
-  }
-}
-
 /* 选中状态 */
-.card.selected {
+.video-card.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.card.selected::after {
+.video-card.selected::after {
   content: '✓';
   position: absolute;
   top: 8px;
@@ -383,38 +355,29 @@
 }
 
 /* 分类标签颜色标识 */
-.card[data-cat="科技"] .cat-badge { --cat-color: #3b82f6; }
-.card[data-cat="设计"] .cat-badge { --cat-color: #ec4899; }
-.card[data-cat="音乐"] .cat-badge { --cat-color: #8b5cf6; }
-.card[data-cat="教程"] .cat-badge { --cat-color: #f59e0b; }
-.card[data-cat="娱乐"] .cat-badge { --cat-color: #10b981; }
-.card[data-cat="运动"] .cat-badge { --cat-color: #ef4444; }
-.card[data-cat="记录"] .cat-badge { --cat-color: #06b6d4; }
-.card[data-cat="外部"] .cat-badge { --cat-color: #64748b; }
+.video-card[data-cat="科技"] .cat-badge { --cat-color: #3b82f6; }
+.video-card[data-cat="设计"] .cat-badge { --cat-color: #ec4899; }
+.video-card[data-cat="音乐"] .cat-badge { --cat-color: #8b5cf6; }
+.video-card[data-cat="教程"] .cat-badge { --cat-color: #f59e0b; }
+.video-card[data-cat="娱乐"] .cat-badge { --cat-color: #10b981; }
+.video-card[data-cat="运动"] .cat-badge { --cat-color: #ef4444; }
+.video-card[data-cat="记录"] .cat-badge { --cat-color: #06b6d4; }
+.video-card[data-cat="外部"] .cat-badge { --cat-color: #64748b; }
 
 /* ── Mobile / Touch optimizations ── */
 @media (max-width: 640px) {
-  .card.list-mode {
+  .video-card.list-mode {
     flex-direction: column;
   }
 
-  .card.list-mode .thumb-wrap {
+  .video-card.list-mode .thumb-wrap {
     width: 100%;
     height: auto;
     aspect-ratio: 16 / 9;
   }
 
-  .card.list-mode .info {
-    padding: 10px;
-  }
-
-  .info {
-    padding: 10px;
-  }
-
-  .title {
-    font-size: 13px;
-    -webkit-line-clamp: 2;
+  .video-card.list-mode .video-info {
+    padding: 8px 12px;
   }
 
   .video-info {
@@ -429,22 +392,27 @@
   .play-btn {
     width: 44px;
     height: 44px;
-    font-size: 16px;
+  }
+
+  .play-btn svg {
+    width: 20px;
+    height: 20px;
   }
 }
 
 @media (hover: none) and (pointer: coarse) {
-  .card .play-over {
+  .video-card .play-over {
     opacity: 0.7;
   }
 
-  .card .thumb-overlay {
+  .video-card .thumb-overlay {
     opacity: 1;
   }
 
-  .card {
+  .video-card {
     transition: none;
     -webkit-tap-highlight-color: transparent;
+    min-height: 44px;
   }
 
   .dur {
@@ -452,22 +420,18 @@
     font-size: 13px;
   }
 
-  .card {
-    min-height: 44px;
-  }
-
-  .card:active {
+  .video-card:active {
     transform: scale(0.98);
     opacity: 0.9;
   }
 }
 
 /* ── Dark mode enhancements ── */
-:root[data-theme="dark"] .card {
+:root[data-theme="dark"] .video-card {
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-:root[data-theme="dark"] .card:hover {
+:root[data-theme="dark"] .video-card:hover {
   border-color: rgba(var(--accent-rgb), 0.25);
   box-shadow: 
     0 12px 32px rgba(0, 0, 0, 0.4),
@@ -485,7 +449,7 @@
 
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
-  .card,
+  .video-card,
   .card-img,
   .thumb-overlay,
   .play-over,
