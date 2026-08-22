@@ -85,7 +85,7 @@
     "untitled": "未命名",
     "unitWan": "{{n}}万",
     "unitYi": "{{n}}亿",
-    "views": "{{n}} 次播放",
+    "views": "{{count}} 次观看",
     "processing": "处理中...",
     "alertTitle": "提示",
     "minutes": "{{n}} 分钟",
@@ -119,7 +119,18 @@
     "emailVerifyFailed": "✗ 邮箱验证失败，链接无效或已过期",
     "searchEmpty": "未找到与「{{query}}」相关的视频",
     "guestCta": "登录后浏览全部视频",
-    "guestPreview": "试看"
+    "guestPreview": "试看",
+    "categories": {
+      "all": "全部",
+      "tech": "科技",
+      "design": "设计",
+      "music": "音乐",
+      "tutorial": "教程",
+      "entertainment": "娱乐",
+      "sports": "运动",
+      "record": "记录",
+      "external": "外部"
+    }
   },
   "gallery": {
     "search": "搜索图片...",

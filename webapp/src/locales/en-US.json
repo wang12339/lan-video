@@ -85,7 +85,7 @@
     "untitled": "Untitled",
     "unitWan": "{{n}}×10⁴",
     "unitYi": "{{n}}×10⁸",
-    "views": "{{n}} plays",
+    "views": "{{count}} views",
     "processing": "Processing...",
     "alertTitle": "Notice",
     "minutes": "{{n}} min",
@@ -119,7 +119,18 @@
     "emailVerifyFailed": "✗ Email verification failed — the link is invalid or has expired",
     "searchEmpty": "No videos found for \"{{query}}\"",
     "guestCta": "Sign in to browse all videos",
-    "guestPreview": "Preview"
+    "guestPreview": "Preview",
+    "categories": {
+      "all": "All",
+      "tech": "Tech",
+      "design": "Design",
+      "music": "Music",
+      "tutorial": "Tutorial",
+      "entertainment": "Entertainment",
+      "sports": "Sports",
+      "record": "Record",
+      "external": "External"
+    }
   },
   "gallery": {
     "search": "Search images...",

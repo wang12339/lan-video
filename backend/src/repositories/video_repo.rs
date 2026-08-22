@@ -683,13 +683,8 @@ impl VideoRepository {
             .bind(ids)
             .execute(&mut *tx)
             .await?;
-        let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
-            .bind(ids)
-            .execute(&mut *tx)
-            .await?;
-
-        // Decrement storage quota for all affected uploaders in one statement
-        // instead of one UPDATE per uploader inside the transaction.
+        // Decrement storage quota for all affected uploaders BEFORE deleting
+        // the videos, since the subquery reads FROM videos.
         sqlx::query(
             "UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - sub.total_bytes) \
              FROM (SELECT uploader_id, SUM(file_size) AS total_bytes \
@@ -700,6 +695,11 @@ impl VideoRepository {
         .bind(ids)
         .execute(&mut *tx)
         .await?;
+
+        let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
+            .bind(ids)
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
         Ok(result.rows_affected())

@@ -278,7 +278,7 @@ function LazyImageImpl({
         onLoad={handleLoad}
         onError={handleError}
         loading={eager ? 'eager' : 'lazy'}
-        // @ts-ignore fetchPriority is valid for img but React types don't include it
+        // @ts-expect-error fetchPriority is valid for img but React types don't include it yet
         fetchpriority={eager ? 'high' : 'auto'}
         decoding="async"
         {...responsiveProps}

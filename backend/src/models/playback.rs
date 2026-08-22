@@ -6,6 +6,22 @@ pub struct ListQuery {
     pub limit: Option<i64>,
 }
 
+/// Pagination query parameters shared by favorites and playback history.
+#[derive(Deserialize)]
+pub struct PaginationQuery {
+    pub page: Option<i64>,
+    pub size: Option<i64>,
+}
+
+/// Paginated response wrapper for `RecentWatchItem` lists.
+#[derive(Debug, Serialize)]
+pub struct PagedRecentWatchResponse {
+    pub items: Vec<RecentWatchItem>,
+    pub total: i64,
+    pub page: i64,
+    pub size: i64,
+}
+
 /// Request body for playback session start/heartbeat/stop.
 #[derive(Deserialize)]
 pub struct SessionRequest {

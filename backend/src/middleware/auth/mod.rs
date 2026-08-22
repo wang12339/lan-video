@@ -214,7 +214,10 @@ pub fn extract_token_from_cookie(headers: &HeaderMap) -> Option<String> {
 /// Authorization/Cookie values: each unique bogus token would otherwise
 /// trigger a SHA-256 hash and a database lookup.
 fn is_valid_auth_token(token: &str) -> bool {
-    token.len() == 64 && token.bytes().all(|b| b.is_ascii_alphanumeric())
+    token.len() == 64
+        && token.bytes().all(|b| b.is_ascii_alphanumeric())
+        && token.bytes().any(|b| b.is_ascii_alphabetic())
+        && token.bytes().any(|b| b.is_ascii_digit())
 }
 
 /// Build a Set-Cookie header value for the auth token

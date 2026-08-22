@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import SkeletonLoader from '../ui/SkeletonLoader'
 import LazyImage from '../ui/LazyImage'
 
@@ -21,6 +22,7 @@ interface VideoCardProps {
 
 const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = false, eager = false }) => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   const handleClick = useCallback(
     (_e: React.SyntheticEvent) => {
@@ -48,8 +50,8 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
   );
 
   const viewsText = useMemo(
-    () => `${video.views.toLocaleString()} 次观看`,
-    [video.views]
+    () => t('common.views', { count: video.views }),
+    [video.views, t]
   );
 
   // 获取缩略图URL，优先使用thumbnail_url，然后是thumb
@@ -81,7 +83,10 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
       </div>
       <div className="video-info">
         <h3>{video.title}</h3>
-        <span aria-label={`${video.views} 次观看`}>{viewsText}</span>
+        {viewsText
+          ? <span aria-label={`${video.views} 次观看`}>{viewsText}</span>
+          : <span className="video-badge-new" aria-label="新视频">新</span>
+        }
       </div>
     </div>
   );

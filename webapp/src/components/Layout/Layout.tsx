@@ -131,10 +131,8 @@ function NavBar() {
         setConfirmLogout(false)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside as EventListener)
     document.addEventListener('pointerdown', handleClickOutside as EventListener)
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside as EventListener)
       document.removeEventListener('pointerdown', handleClickOutside as EventListener)
     }
   }, [])

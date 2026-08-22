@@ -412,7 +412,7 @@ describe('Layout 侧边栏 / 移动端菜单', () => {
     expect(screen.getByText('testuser')).toBeInTheDocument()
 
     // 点击页面其他区域
-    fireEvent.mouseDown(document.body)
+    fireEvent.pointerDown(document.body)
 
     expect(screen.queryByText('testuser')).not.toBeInTheDocument()
   })

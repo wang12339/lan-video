@@ -345,7 +345,7 @@ export default function Player() {
     const nextVideo = related[0]
     if (!nextVideo || nextVideo.id === videoId) return
     
-    console.log('Preloading next video:', nextVideo.id)
+    if (import.meta.env.DEV) console.log('Preloading next video:', nextVideo.id)
     setPreloadingNext(true)
     preloadVideo(nextVideo.id)
     
@@ -452,7 +452,7 @@ export default function Player() {
             thumbnail_url: thumbUrl || '',  // 添加此字段
             stream: mediaUrl(sv.streamUrl),
             cover: null,
-            sourceType: sv.sourceType as any,
+            sourceType: (sv.sourceType ?? 'local_video') as 'local_video' | 'external',
             duration: 0,
             views: 0,
             date: '',
@@ -580,15 +580,7 @@ export default function Player() {
 
     let cancelled = false
 
-    // 启动播放会话（必须在加载视频源之前）
-    // 使用 async/await 确保会话启动后再加载视频
     const initVideo = async () => {
-      try {
-        await startPlaybackSession(videoId)
-      } catch {
-        // 忽略错误，继续加载视频
-      }
-
       if (cancelled) return
 
       v.src = video!.stream!

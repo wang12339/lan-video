@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::{
@@ -8,6 +8,8 @@ use axum::{
     response::IntoResponse,
 };
 use tower_http::cors::CorsLayer;
+
+use crate::util::cloudflare_ips::is_cloudflare_peer;
 
 /// Security headers middleware — adds standard security headers to every response
 pub async fn security_headers(req: Request, next: Next) -> impl IntoResponse {
@@ -110,75 +112,6 @@ fn is_trusted_peer(req: &Request) -> bool {
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ci| is_cloudflare_peer(ci.0.ip()))
         .unwrap_or(false)
-}
-
-/// Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips/).
-const CLOUDFLARE_IPV4: &[(&str, u8)] = &[
-    ("173.245.48.0", 20),
-    ("103.21.244.0", 22),
-    ("103.22.200.0", 22),
-    ("103.31.4.0", 22),
-    ("141.101.64.0", 18),
-    ("108.162.192.0", 18),
-    ("190.93.240.0", 20),
-    ("188.114.96.0", 20),
-    ("197.234.240.0", 22),
-    ("198.41.128.0", 17),
-    ("162.158.0.0", 15),
-    ("104.16.0.0", 13),
-    ("104.24.0.0", 14),
-    ("172.64.0.0", 13),
-    ("131.0.72.0", 22),
-];
-
-/// Cloudflare's published IPv6 ranges.
-const CLOUDFLARE_IPV6: &[(&str, u8)] = &[
-    ("2400:cb00::", 32),
-    ("2606:4700::", 32),
-    ("2803:f800::", 32),
-    ("2405:b500::", 32),
-    ("2405:8100::", 32),
-    ("2a06:98c0::", 29),
-    ("2c0f:f248::", 32),
-];
-
-fn ipv4_in_network(ip: u32, network: u32, prefix: u8) -> bool {
-    let mask = if prefix >= 32 {
-        u32::MAX
-    } else {
-        u32::MAX << (32 - prefix)
-    };
-    (ip & mask) == (network & mask)
-}
-
-fn ipv6_in_network(ip: u128, network: u128, prefix: u8) -> bool {
-    let mask = if prefix >= 128 {
-        u128::MAX
-    } else {
-        u128::MAX << (128 - prefix)
-    };
-    (ip & mask) == (network & mask)
-}
-
-fn is_cloudflare_peer(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let ip = u32::from(v4);
-            CLOUDFLARE_IPV4.iter().any(|(net, prefix)| {
-                net.parse::<std::net::Ipv4Addr>()
-                    .map(|n| ipv4_in_network(ip, u32::from(n), *prefix))
-                    .unwrap_or(false)
-            })
-        }
-        IpAddr::V6(v6) => {
-            let ip = u128::from(v6);
-            CLOUDFLARE_IPV6.iter().any(|(net, prefix)| {
-                net.parse::<std::net::Ipv6Addr>()
-                    .map(|n| ipv6_in_network(ip, u128::from(n), *prefix))
-                    .unwrap_or(false)
-            })
-        }
-    }
 }
 
 /// CSP policy string — restrict resources to same-origin where possible.
@@ -367,22 +300,6 @@ mod tests {
         req.headers_mut()
             .insert("x-forwarded-proto", "https".parse().unwrap());
         assert!(!is_https_request(&req));
-    }
-
-    #[test]
-    fn cloudflare_peer_matches_known_range() {
-        assert!(is_cloudflare_peer("104.16.42.1".parse().unwrap()));
-        assert!(is_cloudflare_peer("172.64.0.1".parse().unwrap()));
-        assert!(is_cloudflare_peer(
-            "2606:4700:3037::6815:1234".parse().unwrap()
-        ));
-    }
-
-    #[test]
-    fn non_cloudflare_peer_rejected() {
-        assert!(!is_cloudflare_peer("8.8.8.8".parse().unwrap()));
-        assert!(!is_cloudflare_peer("203.0.113.7".parse().unwrap()));
-        assert!(!is_cloudflare_peer("2001:db8::1".parse().unwrap()));
     }
 
     // ---- Middleware-level tests (full security_headers path) ----

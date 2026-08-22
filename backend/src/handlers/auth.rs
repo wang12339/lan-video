@@ -13,6 +13,7 @@ use crate::models::auth::{
     ResetPasswordToken, SendVerificationEmailResponse, UpdateEmailRequest, UserInfoResponse,
     UserProfileResponse, VerifyEmailRequest,
 };
+use crate::services::auth_service::is_valid_email;
 use crate::state::AppState;
 use crate::util::net::client_ip;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse};
@@ -135,7 +136,7 @@ pub async fn register(
 
     // Extract the body bytes from the request.
     let body = req.into_body();
-    let body = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+    let body = axum::body::to_bytes(body, 1_048_576).await.map_err(|e| {
         tracing::error!("Failed to read request body: {}", e);
         error_response(StatusCode::BAD_REQUEST, "invalid request body")
     })?;
@@ -169,7 +170,7 @@ pub async fn login(
 
     // Extract the body bytes from the request.
     let body = req.into_body();
-    let body = axum::body::to_bytes(body, usize::MAX).await.map_err(|e| {
+    let body = axum::body::to_bytes(body, 1_048_576).await.map_err(|e| {
         tracing::error!("Failed to read request body: {}", e);
         error_response(StatusCode::BAD_REQUEST, "invalid request body")
     })?;
@@ -396,7 +397,7 @@ pub async fn forgot_password(
 
     // Extract the JSON body from the request.
     let body = req.into_body();
-    let body = match axum::body::to_bytes(body, usize::MAX).await {
+    let body = match axum::body::to_bytes(body, 1_048_576).await {
         Ok(b) => b,
         Err(_) => {
             return Json(ForgotPasswordResponse {
@@ -589,35 +590,6 @@ pub async fn update_email(
     Ok(Json(
         serde_json::json!({ "ok": true, "message": "邮箱已更新，验证状态已重置，请重新验证新邮箱" }),
     ))
-}
-
-fn is_valid_email(email: &str) -> bool {
-    if email.is_empty() || email.len() > 254 {
-        return false;
-    }
-    let parts: Vec<&str> = email.splitn(2, '@').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-    let (local, domain) = (parts[0], parts[1]);
-    if local.is_empty() || local.len() > 64 {
-        return false;
-    }
-    if domain.is_empty() || !domain.contains('.') {
-        return false;
-    }
-    if domain.starts_with('.') || domain.ends_with('.') {
-        return false;
-    }
-    if domain.contains("..") {
-        return false;
-    }
-    // Reject whitespace and control characters: they break the envelope
-    // and can be abused for header/command injection in SMTP.
-    if email.chars().any(char::is_whitespace) || email.chars().any(char::is_control) {
-        return false;
-    }
-    true
 }
 
 /// POST /auth/send-verification-email

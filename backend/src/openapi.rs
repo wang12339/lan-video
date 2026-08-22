@@ -667,19 +667,30 @@ pub fn spec() -> serde_json::Value {
             },
             "/videos/favorites": {
                 "get": {
-                    "summary": "List current user's favorites",
+                    "summary": "List current user's favorites (paginated)",
                     "operationId": "listFavorites",
-                    "description": "返回当前用户收藏的视频列表",
+                    "description": "返回当前用户收藏的视频列表（分页）",
+                    "parameters": [
+                        {
+                            "name": "page",
+                            "in": "query",
+                            "description": "Page number (1-indexed)",
+                            "schema": { "type": "integer", "default": 1, "minimum": 1 }
+                        },
+                        {
+                            "name": "size",
+                            "in": "query",
+                            "description": "Page size (1-100)",
+                            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 }
+                        }
+                    ],
                     "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "200": {
-                            "description": "Favorite video list",
+                            "description": "Paginated favorite video list",
                             "content": {
                                 "application/json": {
-                                    "schema": {
-                                        "type": "array",
-                                        "items": { "$ref": "#/components/schemas/RecentWatchItem" }
-                                    }
+                                    "schema": { "$ref": "#/components/schemas/PagedRecentWatchResponse" }
                                 }
                             }
                         },
@@ -1119,19 +1130,30 @@ pub fn spec() -> serde_json::Value {
             },
             "/playback/history": {
                 "get": {
-                    "summary": "List playback history for current user",
+                    "summary": "List playback history for current user (paginated)",
                     "operationId": "listPlaybackHistory",
                     "description": "Get the current user's playback history, ordered by most recent",
+                    "parameters": [
+                        {
+                            "name": "page",
+                            "in": "query",
+                            "description": "Page number (1-indexed)",
+                            "schema": { "type": "integer", "default": 1, "minimum": 1 }
+                        },
+                        {
+                            "name": "size",
+                            "in": "query",
+                            "description": "Page size (1-100)",
+                            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 }
+                        }
+                    ],
                     "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "200": {
-                            "description": "Watch history list",
+                            "description": "Paginated watch history list",
                             "content": {
                                 "application/json": {
-                                    "schema": {
-                                        "type": "array",
-                                        "items": { "$ref": "#/components/schemas/RecentWatchItem" }
-                                    }
+                                    "schema": { "$ref": "#/components/schemas/PagedRecentWatchResponse" }
                                 }
                             }
                         },
@@ -2841,6 +2863,16 @@ pub fn spec() -> serde_json::Value {
                         "updatedAt": { "type": "string", "description": "Last watch timestamp (YYYY-MM-DD HH:MM:SS)" }
                     },
                     "required": ["videoId", "title", "streamUrl", "sourceType", "category", "positionMs", "durationMs", "updatedAt"]
+                },
+                "PagedRecentWatchResponse": {
+                    "type": "object",
+                    "properties": {
+                        "items": { "type": "array", "items": { "$ref": "#/components/schemas/RecentWatchItem" } },
+                        "total": { "type": "integer", "description": "Total number of matching items" },
+                        "page": { "type": "integer", "description": "Current page number (1-indexed)" },
+                        "size": { "type": "integer", "description": "Page size" }
+                    },
+                    "required": ["items", "total", "page", "size"]
                 },
                 "ExternalVideoRequest": {
                     "type": "object",

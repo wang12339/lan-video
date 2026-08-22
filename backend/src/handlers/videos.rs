@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
+use crate::models::playback::{PagedRecentWatchResponse, PaginationQuery};
 use crate::models::video::{
     PagedVideoResponse, SearchQuery, SearchResponse, SearchResultItem, VideoItem, VideoQuery,
     VideoVariantResponse,
@@ -271,15 +272,25 @@ pub async fn get_favorite_status(
 pub async fn list_favorites(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-) -> Result<Json<Vec<crate::models::playback::RecentWatchItem>>, (StatusCode, Json<ErrorResponse>)>
-{
-    let favorites = state
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<PagedRecentWatchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let pagination = PaginationParams::new(params.page, params.size);
+    let page = pagination.page;
+    let size = pagination.page_size;
+    let offset = pagination.offset();
+
+    let (items, total) = state
         .services
         .playback
-        .get_favorites(&auth_user.username)
+        .get_favorites(&auth_user.username, size, offset)
         .await
         .map_err(|e| internal_error_log("list_favorites", &e))?;
-    Ok(Json(favorites))
+    Ok(Json(PagedRecentWatchResponse {
+        items,
+        total,
+        page,
+        size,
+    }))
 }
 
 /// POST /videos/{id}/view

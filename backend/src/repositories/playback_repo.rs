@@ -83,22 +83,29 @@ impl PlaybackRepository {
         Ok(row.map(|r| (r.position_ms, r.duration_ms)))
     }
 
-    /// 查询指定用户的播放历史列表。
+    /// 查询指定用户的播放历史列表（分页）。
     ///
-    /// 按 `updated_at` 降序排列，最多返回 `limit` 条记录（默认 500）。
+    /// 按 `updated_at` 降序排列，返回指定页的数据及总记录数。
     ///
     /// # 参数
     /// - `username`: 用户名。
-    /// - `limit`: 可选的最大返回条数，默认 500。
+    /// - `limit`: 每页条数。
+    /// - `offset`: 偏移量。
     ///
     /// # 返回
-    /// 包含视频信息和播放进度的 `RecentWatchItem` 列表。
+    /// `(items, total)` — 当页的 `RecentWatchItem` 列表和符合条件的总记录数。
     pub async fn find_playback_history_by_username(
         &self,
         username: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<RecentWatchItem>, sqlx::Error> {
-        let limit = limit.unwrap_or(500);
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<RecentWatchItem>, i64), sqlx::Error> {
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM playback_history WHERE username = $1")
+                .bind(username)
+                .fetch_one(&self.pool)
+                .await?;
+
         let rows = sqlx::query_as::<_, HistoryRow>(
             r#"SELECT h.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
                       h.position_ms, h.duration_ms, h.updated_at
@@ -106,13 +113,14 @@ impl PlaybackRepository {
                JOIN videos v ON h.video_id = v.id
                WHERE h.username = $1
                ORDER BY h.updated_at DESC
-               LIMIT $2"#,
+               LIMIT $2 OFFSET $3"#,
         )
         .bind(username)
         .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(RecentWatchItem::from).collect())
+        Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
     }
 
     /// 插入或更新播放进度记录（upsert）。
@@ -280,20 +288,30 @@ impl PlaybackRepository {
         Ok(favorited)
     }
 
-    /// 查询指定用户的收藏视频列表。
+    /// 查询指定用户的收藏视频列表（分页）。
     ///
-    /// 按收藏时间降序排列，最多返回 500 条。播放进度从 `playback_history` 左连接获取，
+    /// 按收藏时间降序排列，返回指定页的数据及总记录数。播放进度从 `playback_history` 左连接获取，
     /// 无播放记录时默认为 0。
     ///
     /// # 参数
     /// - `username`: 用户名。
+    /// - `limit`: 每页条数。
+    /// - `offset`: 偏移量。
     ///
     /// # 返回
-    /// 包含视频信息和播放进度的 `RecentWatchItem` 列表。
+    /// `(items, total)` — 当页的 `RecentWatchItem` 列表和符合条件的总记录数。
     pub async fn find_favorites_by_username(
         &self,
         username: &str,
-    ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM user_favorites WHERE username = $1")
+                .bind(username)
+                .fetch_one(&self.pool)
+                .await?;
+
         let rows = sqlx::query_as::<_, HistoryRow>(
             r#"SELECT f.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
                       COALESCE(h.position_ms, 0) AS position_ms, COALESCE(h.duration_ms, 0) AS duration_ms,
@@ -303,11 +321,13 @@ impl PlaybackRepository {
                LEFT JOIN playback_history h ON f.video_id = h.video_id AND h.username = f.username
                WHERE f.username = $1
                ORDER BY f.created_at DESC
-               LIMIT 500"#,
+               LIMIT $2 OFFSET $3"#,
         )
         .bind(username)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(RecentWatchItem::from).collect())
+        Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
     }
 }

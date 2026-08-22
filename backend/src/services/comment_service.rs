@@ -53,8 +53,10 @@ impl CommentService {
     ) -> Result<(Vec<CommentRow>, i64), ServiceError> {
         let size = size.clamp(1, 100);
         let offset = page.max(0).saturating_mul(size);
-        let comments = self.repo.get_comments(video_id, size, offset).await?;
-        let total = self.repo.count_comments(video_id).await?;
+        let (comments, total) = tokio::try_join!(
+            self.repo.get_comments(video_id, size, offset),
+            self.repo.count_comments(video_id),
+        )?;
         Ok((comments, total))
     }
 

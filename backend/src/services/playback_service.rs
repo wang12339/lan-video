@@ -55,20 +55,22 @@ impl PlaybackService {
         self.repo.get_playback_data(username, video_id).await
     }
 
-    /// 获取用户的播放历史记录（最近观看列表）。
+    /// 获取用户的播放历史记录（最近观看列表，分页）。
     ///
     /// 返回按最近播放时间倒序排列的视频列表，每项包含视频基本信息及播放进度。
     ///
     /// # 参数
     /// * `username` - 用户名。
-    /// * `limit` - 返回的最大记录数。
+    /// * `limit` - 每页条数。
+    /// * `offset` - 偏移量。
     pub async fn get_playback_history(
         &self,
         username: &str,
         limit: i64,
-    ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
+        offset: i64,
+    ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
         self.repo
-            .find_playback_history_by_username(username, Some(limit))
+            .find_playback_history_by_username(username, limit, offset)
             .await
     }
 
@@ -112,9 +114,9 @@ impl PlaybackService {
     ) -> Result<(i64, i64, Vec<crate::models::playback::RecentWatchItem>), sqlx::Error> {
         let total_videos_watched = self.repo.count_watched_videos(username).await?;
         let total_watch_time = self.repo.sum_watch_time(username).await?;
-        let recent_history = self
+        let (recent_history, _) = self
             .repo
-            .find_playback_history_by_username(username, Some(20))
+            .find_playback_history_by_username(username, 20, 0)
             .await?;
         Ok((total_videos_watched, total_watch_time, recent_history))
     }
@@ -165,17 +167,23 @@ impl PlaybackService {
         self.repo.is_favorited(username, video_id).await
     }
 
-    /// 获取用户的收藏列表。
+    /// 获取用户的收藏列表（分页）。
     ///
-    /// 返回用户收藏的所有视频信息，包含视频基本信息及播放进度。
+    /// 返回用户收藏的视频信息，包含视频基本信息及播放进度。
     ///
     /// # 参数
     /// * `username` - 用户名。
+    /// * `limit` - 每页条数。
+    /// * `offset` - 偏移量。
     pub async fn get_favorites(
         &self,
         username: &str,
-    ) -> Result<Vec<crate::models::playback::RecentWatchItem>, sqlx::Error> {
-        self.repo.find_favorites_by_username(username).await
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
+        self.repo
+            .find_favorites_by_username(username, limit, offset)
+            .await
     }
 }
 

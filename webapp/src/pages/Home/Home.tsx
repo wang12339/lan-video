@@ -12,7 +12,17 @@ import { trackClick } from '../../utils/track'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 import './Home.css'
 
-const CATEGORIES = ['全部', '科技', '设计', '音乐', '教程', '娱乐', '运动', '记录', '外部']
+const CATEGORY_KEYS = [
+  { key: 'all', value: '全部' },
+  { key: 'tech', value: '科技' },
+  { key: 'design', value: '设计' },
+  { key: 'music', value: '音乐' },
+  { key: 'tutorial', value: '教程' },
+  { key: 'entertainment', value: '娱乐' },
+  { key: 'sports', value: '运动' },
+  { key: 'record', value: '记录' },
+  { key: 'external', value: '外部' },
+]
 const PAGE_SIZE = 20
 
 // 离开首页时记住滚动位置，返回时恢复（模块级变量，跨组件卸载保留）
@@ -274,13 +284,13 @@ export default function Home() {
       {user && (
         <>
           <div className="category-bar">
-            {CATEGORIES.map((cat) => (
+            {CATEGORY_KEYS.map((cat) => (
               <button
-                key={cat}
-                className={`cat-tag ${category === cat ? 'active' : ''}`}
-                onClick={() => handleCategoryClick(cat)}
+                key={cat.key}
+                className={`cat-tag ${category === cat.value ? 'active' : ''}`}
+                onClick={() => handleCategoryClick(cat.value)}
               >
-                {cat}
+                {t('home.categories.' + cat.key)}
               </button>
             ))}
           </div>

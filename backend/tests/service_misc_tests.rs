@@ -339,10 +339,10 @@ async fn search_nonempty_query_reaches_db() {
 //     失败仅记日志、不入队副作用，正好验证"内存队列不依赖 DB"的契约。
 // ══════════════════════════════════════════════════════════════════════
 
-fn make_task(id: i32, status: TaskStatus) -> TranscodeTask {
+fn make_task(id: i64, status: TaskStatus) -> TranscodeTask {
     TranscodeTask {
         id,
-        video_id: id as i64,
+        video_id: id,
         input_path: "/tmp/atmos-test-nonexistent.mp4".to_string(),
         resolutions: vec!["720p".to_string()],
         status,

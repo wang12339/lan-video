@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
 use crate::models::playback::{
-    ListQuery, PlaybackHistoryRequest, PlaybackHistoryResponse, RecentWatchItem, SessionRequest,
+    PagedRecentWatchResponse, PaginationQuery, PlaybackHistoryRequest, PlaybackHistoryResponse,
+    SessionRequest,
 };
 use crate::state::AppState;
 use crate::util::hashid;
+use crate::util::pagination::PaginationParams;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
 /// GET /playback/history/{videoId}
@@ -47,16 +49,25 @@ pub async fn get_playback_history_for_video(
 pub async fn list_playback_history(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Query(params): Query<ListQuery>,
-) -> Result<Json<Vec<RecentWatchItem>>, (StatusCode, Json<ErrorResponse>)> {
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let history = state
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<PagedRecentWatchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let pagination = PaginationParams::new(params.page, params.size);
+    let page = pagination.page;
+    let size = pagination.page_size;
+    let offset = pagination.offset();
+
+    let (items, total) = state
         .services
         .playback
-        .get_playback_history(&auth_user.username, limit)
+        .get_playback_history(&auth_user.username, size, offset)
         .await
         .map_err(|e| internal_error_log("get_playback_history", &e))?;
-    Ok(Json(history))
+    Ok(Json(PagedRecentWatchResponse {
+        items,
+        total,
+        page,
+        size,
+    }))
 }
 
 /// POST /playback/history

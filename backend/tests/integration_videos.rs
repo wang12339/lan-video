@@ -398,10 +398,10 @@ async fn test_playback_history() {
     );
 
     // Check history list
-    let history = state
+    let (history, _) = state
         .services
         .playback
-        .get_playback_history(&username, 50)
+        .get_playback_history(&username, 50, 0)
         .await
         .expect("get history");
 
@@ -1225,10 +1225,10 @@ async fn test_favorites_list_and_removal() {
         .await
         .expect("fav v2"));
 
-    let favs = state
+    let (favs, _) = state
         .services
         .playback
-        .get_favorites(&u)
+        .get_favorites(&u, 100, 0)
         .await
         .expect("get favorites");
     assert!(favs.iter().any(|f| f.video_id == v1));
@@ -1241,10 +1241,10 @@ async fn test_favorites_list_and_removal() {
         .toggle_favorite(&u, v1)
         .await
         .expect("unfav v1"));
-    let favs = state
+    let (favs, _) = state
         .services
         .playback
-        .get_favorites(&u)
+        .get_favorites(&u, 100, 0)
         .await
         .expect("get favorites after unfav");
     assert!(

@@ -708,10 +708,16 @@ pub struct SendVerificationEmailResult {
 /// # 安全
 /// - 防止攻击者通过用户名等字段注入换行符伪造日志记录
 /// - 控制字符包括：换行符、回车符、制表符等
-fn sanitize_for_log(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect()
+fn sanitize_for_log(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.chars().all(|c| !c.is_control()) {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(
+            s.chars()
+                .map(|c| if c.is_control() { '?' } else { c })
+                .collect(),
+        )
+    }
 }
 
 /// 在阻塞线程池上执行 Argon2id 哈希
