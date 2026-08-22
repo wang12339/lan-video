@@ -9,13 +9,21 @@
 
 .card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(var(--accent-rgb, 99, 102, 241), 0.15),
+    0 4px 16px rgba(var(--accent-rgb, 99, 102, 241), 0.1);
   will-change: transform;
 }
 
 .card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+}
+
+.card:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .thumb-wrap {
@@ -41,10 +49,27 @@
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: var(--bg3);
+  gap: 8px;
+  background: linear-gradient(135deg, var(--bg3), var(--bg2));
   font-size: 40px;
+}
+
+.thumb-fallback-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.thumb-fallback-text {
+  font-size: 11px;
+  color: var(--text3);
+  max-width: 80%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-bar {
@@ -140,8 +165,17 @@
 }
 
 .views {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--text3);
+}
+
+.views-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .video-badge-new {
@@ -151,6 +185,17 @@
   background: var(--accent, #6366f1);
   color: white;
   font-weight: 500;
+}
+
+.video-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.video-date {
+  font-size: 12px;
+  color: var(--text3);
 }
 
 .title {
@@ -295,19 +340,30 @@
 }
 
 @media (hover: none) and (pointer: coarse) {
-  /* Always show play overlay on touch (no hover) */
   .card .play-over {
     opacity: 0.7;
   }
 
-  /* Disable card lift animation */
-  .card {
-    transition: none;
+  .card .thumb-overlay {
+    opacity: 1;
   }
 
-  /* Make duration badge larger for tap */
+  .card {
+    transition: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .dur {
     padding: 3px 8px;
     font-size: 13px;
+  }
+
+  .card {
+    min-height: 44px;
+  }
+
+  .card:active {
+    transform: scale(0.98);
+    opacity: 0.9;
   }
 }

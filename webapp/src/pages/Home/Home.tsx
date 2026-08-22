@@ -5,6 +5,8 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { listVideos } from '../../api/videos'
 import { mapVideo } from '../../api/utils'
 import { getTrendingVideos } from '../../api/recommendations'
+import { listPlaybackHistory } from '../../api/playback'
+import type { PlaybackHistory } from '../../api/types'
 import type { MappedVideo } from '../../api/types'
 import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
 import { useAuth } from '../../context/AuthContext'
@@ -13,15 +15,15 @@ import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 import './Home.css'
 
 const CATEGORY_KEYS = [
-  { key: 'all', value: '全部' },
-  { key: 'tech', value: '科技' },
-  { key: 'design', value: '设计' },
-  { key: 'music', value: '音乐' },
-  { key: 'tutorial', value: '教程' },
-  { key: 'entertainment', value: '娱乐' },
-  { key: 'sports', value: '运动' },
-  { key: 'record', value: '记录' },
-  { key: 'external', value: '外部' },
+  { key: 'all', value: '全部', icon: '📋' },
+  { key: 'tech', value: '科技', icon: '💻' },
+  { key: 'design', value: '设计', icon: '🎨' },
+  { key: 'music', value: '音乐', icon: '🎵' },
+  { key: 'tutorial', value: '教程', icon: '📚' },
+  { key: 'entertainment', value: '娱乐', icon: '🎮' },
+  { key: 'sports', value: '运动', icon: '⚽' },
+  { key: 'record', value: '记录', icon: '📷' },
+  { key: 'external', value: '外部', icon: '🌐' },
 ]
 const PAGE_SIZE = 20
 
@@ -54,6 +56,10 @@ export default function Home() {
   const { t } = useTranslation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user } = useAuth()
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() =>
+    (localStorage.getItem('home-view-mode') as 'grid' | 'list') || 'grid'
+  )
+  const [showScrollTop, setShowScrollTop] = useState(false)
   const [category, setCategory] = useState(() => searchParams.get('cat') || '全部')
   const [emailVerified, setEmailVerified] = useState<boolean | null>(() => {
     const param = searchParams.get('email_verified')
@@ -110,6 +116,32 @@ export default function Home() {
     enabled: !query,
     staleTime: 60_000,
   })
+
+  // 最近观看（登录用户，无搜索时展示）
+  const { data: recentData } = useQuery({
+    queryKey: ['recent-videos'],
+    queryFn: () => listPlaybackHistory(8),
+    enabled: !!user && !query,
+    staleTime: 30_000,
+  })
+
+  const recentVideos = useMemo(
+    () =>
+      (recentData ?? [])
+        .filter((h) => h.videoId && h.title)
+        .slice(0, 4)
+        .map((h: PlaybackHistory) => ({
+          id: h.videoId,
+          title: h.title,
+          thumbnail_url: h.coverUrl ?? undefined,
+          thumb: h.coverUrl ?? undefined,
+          views: 0,
+          category: h.category,
+          duration: h.durationMs > 0 ? Math.floor(h.durationMs / 1000) : undefined,
+          date: h.updatedAt,
+        })),
+    [recentData]
+  )
 
   const trending = useMemo(
     () => (trendingData ?? []).filter((v) => v.id).slice(0, 6),
@@ -195,6 +227,56 @@ export default function Home() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Scroll-to-top button visibility
+  useEffect(() => {
+    const onScroll = () => setShowScrollTop(window.scrollY > 400)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Keyboard shortcut to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        const searchInput = document.querySelector('.nav-search input') as HTMLInputElement
+        searchInput?.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Arrow key navigation between video cards
+  useEffect(() => {
+    const handleArrowKeys = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      const cards = document.querySelectorAll('.video-card[tabindex="0"]') as NodeListOf<HTMLElement>
+      const current = document.activeElement
+      const currentIndex = Array.from(cards).indexOf(current as HTMLElement)
+
+      if (currentIndex < 0) return
+
+      let nextIndex = currentIndex
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        nextIndex = Math.min(currentIndex + 1, cards.length - 1)
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        nextIndex = Math.max(currentIndex - 1, 0)
+      } else {
+        return
+      }
+
+      if (nextIndex !== currentIndex) {
+        e.preventDefault()
+        cards[nextIndex]?.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleArrowKeys)
+    return () => document.removeEventListener('keydown', handleArrowKeys)
+  }, [])
+
   // 底部哨兵：统一 useInfiniteScroll
   const sentinelRef = useRef<HTMLDivElement>(null)
   useInfiniteScroll(sentinelRef, {
@@ -207,6 +289,10 @@ export default function Home() {
   const handleCategoryClick = useCallback((cat: string) => {
     if (cat === category) return
     setCategory(cat)
+    requestAnimationFrame(() => {
+      const active = document.querySelector('.cat-tag.active')
+      active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    })
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       if (cat === '全部') next.delete('cat')
@@ -216,11 +302,21 @@ export default function Home() {
     trackClick('切换分类', cat)
   }, [category, setSearchParams])
 
+  const skeletonCount = useMemo(() => {
+    if (typeof window === 'undefined') return 6
+    const width = window.innerWidth
+    if (width <= 380) return 2
+    if (width <= 640) return 4
+    if (width <= 1024) return 6
+    return 8
+  }, [])
+
   const showInitialError = isError && filteredVideos.length === 0 && !isPending
   const showEmpty = !isPending && !isError && filteredVideos.length === 0
 
   return (
     <div className="home">
+      {isPending && <div className="home-progress" role="progressbar" aria-label={t('common.loading')} />}
       {emailVerified !== null && (
         <div className={`email-verify-banner ${emailVerified ? 'success' : 'error'}`}>
           {emailVerified ? t('home.emailVerified') : t('home.emailVerifyFailed')}
@@ -229,6 +325,9 @@ export default function Home() {
 
       {!user && (
         <div className="hero">
+          <div className="hero-particles" aria-hidden="true">
+            <span /><span /><span /><span /><span />
+          </div>
           <h1 className="hero-title">{t('home.heroTitle')}</h1>
           <p className="hero-sub">{t('home.heroSub')}</p>
           <p className="hero-desc">{t('home.heroDesc')}</p>
@@ -262,6 +361,23 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <div className="hero-stats">
+            <div className="hero-stat">
+              <span className="hero-stat-value">HLS</span>
+              <span className="hero-stat-label">{t('home.featureHls')}</span>
+            </div>
+            <div className="hero-stat">
+              <span className="hero-stat-value">4K</span>
+              <span className="hero-stat-label">Max</span>
+            </div>
+            <div className="hero-stat">
+              <span className="hero-stat-value">∞</span>
+              <span className="hero-stat-label">{t('home.featureUpload')}</span>
+            </div>
+          </div>
+          <div className="hero-scroll-hint" aria-hidden="true">
+            <span className="hero-scroll-arrow">↓</span>
+          </div>
         </div>
       )}
 
@@ -290,17 +406,57 @@ export default function Home() {
                 className={`cat-tag ${category === cat.value ? 'active' : ''}`}
                 onClick={() => handleCategoryClick(cat.value)}
               >
+                <span className="cat-icon" aria-hidden="true">{cat.icon}</span>
                 {t('home.categories.' + cat.key)}
+                {cat.key === 'all' && total > 0 && (
+                  <span className="cat-count">{total}</span>
+                )}
               </button>
             ))}
           </div>
 
           {total > 0 && <div className="home-count">{t('home.totalCount', { count: total })}</div>}
 
+          <div className="view-toggle">
+            <button
+              className={`view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => { setViewMode('grid'); localStorage.setItem('home-view-mode', 'grid'); }}
+              aria-label="网格视图"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/>
+                <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+              </svg>
+            </button>
+            <button
+              className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => { setViewMode('list'); localStorage.setItem('home-view-mode', 'list'); }}
+              aria-label="列表视图"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                <rect x="1" y="1" width="14" height="3" rx="1"/><rect x="1" y="6" width="14" height="3" rx="1"/>
+                <rect x="1" y="11" width="14" height="3" rx="1"/>
+              </svg>
+            </button>
+          </div>
+
+          {!query && recentVideos.length > 0 && (
+            <section className="trending-section recent-section" aria-label={t('home.recent')}>
+              <h2 className="trending-title recent-title">{t('home.recent')}</h2>
+              <div className={`video-grid recent-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
+                {recentVideos.map((video, i) => (
+                  <div key={`recent-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
+                    <VideoCardMemo video={video} eager={i < 2} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {!query && trending.length > 0 && (
             <section className="trending-section" aria-label={t('home.trending')}>
               <h2 className="trending-title">{t('home.trending')}</h2>
-              <div className="video-grid">
+              <div className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
                 {trending.map((video, i) => (
                   <div key={`trend-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
                     <VideoCardMemo video={video} eager={i < 4} />
@@ -311,7 +467,7 @@ export default function Home() {
           )}
 
           {filteredVideos.length > 0 ? (
-            <div className="video-grid">
+            <div className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
               {filteredVideos.map((video, i) => (
                 <div key={video.id} style={{ '--card-index': i } as React.CSSProperties}>
                   <VideoCardMemo video={video} eager={i < 4} />
@@ -320,12 +476,13 @@ export default function Home() {
             </div>
           ) : isPending ? (
             <div className="video-grid">
-              <VideoCardSkeleton count={6} />
+              <VideoCardSkeleton count={skeletonCount} />
             </div>
           ) : showInitialError ? (
             <div className="empty-state">
               <div className="empty-icon">⚠️</div>
               <div className="empty-text">{t('errors.network')}</div>
+              <p className="empty-hint">{t('home.errorHint', { defaultValue: '请检查网络连接后重试' })}</p>
               <button className="retry-btn" onClick={() => refetch()}>
                 {t('common.retry')}
               </button>
@@ -378,6 +535,16 @@ export default function Home() {
       <div ref={sentinelRef} className="load-sentinel" aria-hidden="true" />
 
       {/* 游客不强制弹窗，通过 CTA 按钮引导登录 */}
+
+      {showScrollTop && (
+        <button
+          className="scroll-top-btn"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          aria-label={t('common.scrollToTop')}
+        >
+          ↑
+        </button>
+      )}
     </div>
   )
 }

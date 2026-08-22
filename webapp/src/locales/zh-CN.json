@@ -112,6 +112,7 @@
     "featureShareDesc": "链接加密 + 有效期控制，分享无忧",
     "featurePrivate": "私有部署",
     "featurePrivateDesc": "数据完全掌控，不经过第三方",
+    "recent": "最近观看",
     "trending": "热门推荐",
     "empty": "暂无视频",
     "totalCount": "共 {{count}} 个视频",
@@ -120,6 +121,7 @@
     "searchEmpty": "未找到与「{{query}}」相关的视频",
     "guestCta": "登录后浏览全部视频",
     "guestPreview": "试看",
+    "errorHint": "请检查网络连接后重试",
     "categories": {
       "all": "全部",
       "tech": "科技",
