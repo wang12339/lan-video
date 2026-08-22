@@ -1,5 +1,47 @@
 use serde::{Deserialize, Serialize};
 
+// ── Search ──
+
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub page: Option<i64>,
+    pub size: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SearchResponse {
+    pub items: Vec<SearchResultItem>,
+    pub total: i64,
+    pub page: i64,
+    pub size: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SearchResultItem {
+    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
+    pub id: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub rank: f32,
+    pub headline: Option<String>,
+}
+
+// ── Video variants ──
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoVariantResponse {
+    pub resolution: String,
+    pub url: String,
+    pub file_size: i64,
+    pub bitrate: Option<i32>,
+    pub codec: Option<String>,
+}
+
+// ── Video item & list ──
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoItem {

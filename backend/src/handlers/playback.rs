@@ -3,19 +3,15 @@ use axum::{
     http::StatusCode,
     Extension, Json,
 };
-use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::models::playback::{PlaybackHistoryRequest, PlaybackHistoryResponse, RecentWatchItem};
+use crate::models::playback::{
+    ListQuery, PlaybackHistoryRequest, PlaybackHistoryResponse, RecentWatchItem, SessionRequest,
+};
 use crate::state::AppState;
 use crate::util::hashid;
-use crate::util::response::{error_response, ErrorResponse, SafeJson};
-
-#[derive(Deserialize)]
-pub struct ListQuery {
-    pub limit: Option<i64>,
-}
+use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
 /// GET /playback/history/{videoId}
 pub async fn get_playback_history_for_video(
@@ -37,7 +33,7 @@ pub async fn get_playback_history_for_video(
         .playback
         .get_playback_data(username, video_id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?
+        .map_err(|e| internal_error_log("get_playback_data", &e))?
         .unwrap_or((0, 0));
 
     Ok(Json(PlaybackHistoryResponse {
@@ -59,7 +55,7 @@ pub async fn list_playback_history(
         .playback
         .get_playback_history(&auth_user.username, limit)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("get_playback_history", &e))?;
     Ok(Json(history))
 }
 
@@ -105,17 +101,11 @@ pub async fn update_playback_history(
             payload.duration_ms,
         )
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("update_playback", &e))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 // --- 播放会话跟踪 ---
-
-#[derive(Deserialize)]
-pub struct SessionRequest {
-    #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]
-    pub video_id: i64,
-}
 
 fn validate_session_request(
     payload: &SessionRequest,

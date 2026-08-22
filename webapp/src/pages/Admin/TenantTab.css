@@ -1,0 +1,466 @@
+/* 租户管理页面样式 */
+.tenant-tab {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.tenant-header {
+  margin-bottom: 24px;
+}
+
+.tenant-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.tenant-subtitle {
+  color: #666;
+  margin: 0;
+}
+
+.tenant-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+/* 租户列表 */
+.tenant-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.tenant-list-header h3 {
+  margin: 0;
+}
+
+.tenant-count {
+  color: #666;
+  font-size: 14px;
+}
+
+.tenant-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tenant-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tenant-card:hover {
+  border-color: #1976d2;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.tenant-card.selected {
+  border-color: #1976d2;
+  background: #f5f9ff;
+}
+
+.tenant-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.tenant-info h4 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+}
+
+.tenant-slug {
+  color: #666;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.tenant-status {
+  padding: 4px 8px;
+  border-radius: 12px;
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tenant-card-body {
+  margin-bottom: 12px;
+}
+
+.tenant-meta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tenant-plan {
+  background: #e3f2fd;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tenant-host {
+  color: #666;
+  font-size: 12px;
+}
+
+.tenant-stats-preview {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #666;
+}
+
+.tenant-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-edit, .btn-toggle {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.btn-edit:hover {
+  background: #f5f5f5;
+}
+
+.btn-enable {
+  color: #4caf50;
+  border-color: #4caf50;
+}
+
+.btn-enable:hover {
+  background: #e8f5e9;
+}
+
+.btn-disable {
+  color: #f44336;
+  border-color: #f44336;
+}
+
+.btn-disable:hover {
+  background: #ffebee;
+}
+
+/* 租户详情 */
+.tenant-detail {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 24px;
+  position: sticky;
+  top: 24px;
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.detail-header h3 {
+  margin: 0;
+}
+
+.detail-section {
+  margin-bottom: 24px;
+}
+
+.detail-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-item label {
+  font-size: 12px;
+  color: #666;
+}
+
+.detail-item span {
+  font-size: 14px;
+}
+
+.plan-badge {
+  background: #e3f2fd;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  width: fit-content;
+}
+
+.status-active {
+  color: #4caf50;
+}
+
+.status-disabled {
+  color: #f44336;
+}
+
+.status-maintenance {
+  color: #ff9800;
+}
+
+/* 统计卡片 */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: #f5f5f5;
+  padding: 16px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1976d2;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.stat-limit {
+  font-size: 11px;
+  color: #999;
+}
+
+/* 进度条 */
+.storage-progress {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* 主题预览 */
+.theme-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: white;
+  font-size: 12px;
+}
+
+/* 弹窗样式 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.input-disabled {
+  background: #f5f5f5;
+  color: #666;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.color-input {
+  display: flex;
+  gap: 8px;
+}
+
+.color-input input[type="color"] {
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color-input input[type="text"] {
+  flex: 1;
+}
+
+.form-error {
+  color: #f44336;
+  font-size: 14px;
+  margin-top: 8px;
+  padding: 8px;
+  background: #ffebee;
+  border-radius: 4px;
+}
+
+.btn-cancel, .btn-save {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-cancel {
+  background: white;
+  border: 1px solid #ddd;
+}
+
+.btn-cancel:hover {
+  background: #f5f5f5;
+}
+
+.btn-save {
+  background: #1976d2;
+  color: white;
+  border: none;
+}
+
+.btn-save:hover {
+  background: #1565c0;
+}
+
+.btn-save:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.tenant-loading, .tenant-error, .stats-loading {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+}
+
+.tenant-error {
+  color: #f44336;
+}

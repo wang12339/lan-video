@@ -8,6 +8,7 @@
   border-radius: var(--radius);
   padding: 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -35,44 +36,118 @@
 }
 
 .pwa-install-icon {
-  font-size: 24px;
+  font-size: 28px;
+  line-height: 1;
 }
 
 .pwa-install-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .pwa-install-text strong {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
+  color: var(--text1);
 }
 
 .pwa-install-text span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text3);
 }
 
 .pwa-install-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
 .pwa-install-btn {
-  padding: 8px 16px;
+  padding: 10px 20px;
   background: var(--accent);
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .pwa-install-btn:hover {
-  opacity: 0.9;
+  background: var(--accent-hover, var(--accent));
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.pwa-install-btn:active {
+  transform: translateY(0);
+}
+
+.pwa-install-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text3);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.pwa-install-close:hover {
+  background: var(--bg3);
+  color: var(--text1);
+  border-color: var(--text3);
+}
+
+/* iOS 引导样式 */
+.pwa-install-ios {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.pwa-ios-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.pwa-ios-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.4;
+}
+
+.pwa-ios-step-number {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.pwa-ios-step strong {
+  color: var(--text1);
 }
 
 /* 移动端 */
@@ -81,10 +156,29 @@
     left: 10px;
     right: 10px;
     bottom: 10px;
-    padding: 12px;
+    padding: 14px;
   }
-  
+
   .pwa-install-btn {
-    padding: 11px 16px;
+    padding: 12px 18px;
+    font-size: 15px;
+  }
+
+  .pwa-install-close {
+    width: 36px;
+    height: 36px;
+  }
+
+  .pwa-ios-step {
+    font-size: 14px;
+  }
+}
+
+/* 桌面端优化 */
+@media (min-width: 641px) {
+  .pwa-install-banner {
+    max-width: 420px;
+    left: auto;
+    right: 20px;
   }
 }

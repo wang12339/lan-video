@@ -148,6 +148,15 @@
   animation: cardFadeIn 0.4s ease both;
 }
 
+/* 图片加载占位符 */
+.gallery-card-placeholder {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s ease-in-out infinite;
+}
+
 .gallery-card:nth-child(1)  { animation-delay: 0ms; }
 .gallery-card:nth-child(2)  { animation-delay: 30ms; }
 .gallery-card:nth-child(3)  { animation-delay: 60ms; }
@@ -334,6 +343,13 @@
   font-size: 13px;
   color: var(--text3);
   opacity: 0.7;
+}
+
+/* ── IntersectionObserver 哨兵 ─────────────── */
+.gallery-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
 }
 
 /* ── Lightbox ───────────────────────────────── */

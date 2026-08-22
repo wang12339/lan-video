@@ -1,14 +1,17 @@
 pub mod admin_service;
 pub mod auth_service;
+pub mod log_parser;
 pub mod comment_service;
 pub mod email_service;
 pub mod media_service;
 pub mod playback_service;
+pub mod playlist_service;
 pub mod recommendation_service;
 pub mod redis;
 pub mod search_service;
 pub mod share_service;
 pub mod tag_service;
 pub mod task_queue;
+pub mod tenant_service;
 pub mod transcoder;
 pub mod video_service;

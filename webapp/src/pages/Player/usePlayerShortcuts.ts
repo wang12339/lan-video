@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react'
 
+// Speed options for playback rate adjustment
 export const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+
+// Seek step in seconds for arrow key navigation
 export const SEEK_STEP_S = 10
+
+// Volume adjustment step (0-1 range)
 const VOLUME_STEP = 0.05
 
 interface ShortcutHandlers {
@@ -24,89 +29,130 @@ export function usePlayerShortcuts(
   handlersRef.current = handlers
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      const v = videoRef.current
-      if (!v) return
-      const k = e.key.toLowerCase()
-      const { togglePlay, toggleFullscreen, toggleMute, togglePiP, setVolumeValue, setSpeedValue, showShortcut, resetHideTimer, t } = handlersRef.current
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip shortcuts when user is typing in input/textarea fields
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
 
-      switch (k) {
-        case ' ': case 'k':
+      const video = videoRef.current
+      if (!video) return
+
+      const key = e.key.toLowerCase()
+      const {
+        togglePlay,
+        toggleFullscreen,
+        toggleMute,
+        togglePiP,
+        setVolumeValue,
+        setSpeedValue,
+        showShortcut,
+        resetHideTimer,
+        t,
+      } = handlersRef.current
+
+      // Helper to get current volume percentage for display
+      const getVolumePercent = () => Math.round(video.volume * 100)
+
+      switch (key) {
+        // Play/Pause: Space or K
+        case ' ':
+        case 'k':
           e.preventDefault()
           togglePlay()
           resetHideTimer()
           showShortcut(t('player.shortcutPlay'))
           break
-        case 'arrowleft': case 'j':
+
+        // Seek backward: Left arrow or J
+        case 'arrowleft':
+        case 'j':
           e.preventDefault()
-          v.currentTime = Math.max(0, v.currentTime - SEEK_STEP_S)
+          video.currentTime = Math.max(0, video.currentTime - SEEK_STEP_S)
           resetHideTimer()
           showShortcut(t('player.shortcutSeekBack'))
           break
-        case 'arrowright': case 'l':
+
+        // Seek forward: Right arrow or L
+        case 'arrowright':
+        case 'l':
           e.preventDefault()
-          v.currentTime = Math.min(v.duration || 0, v.currentTime + SEEK_STEP_S)
+          video.currentTime = Math.min(video.duration || 0, video.currentTime + SEEK_STEP_S)
           resetHideTimer()
           showShortcut(t('player.shortcutSeekForward'))
           break
+
+        // Volume up: Up arrow
         case 'arrowup':
           e.preventDefault()
-          setVolumeValue(Math.min(1, v.volume + VOLUME_STEP))
-          showShortcut(t('player.shortcutVolume', { val: Math.round(v.volume * 100) }))
+          setVolumeValue(Math.min(1, video.volume + VOLUME_STEP))
+          showShortcut(t('player.shortcutVolume', { val: getVolumePercent() }))
           break
+
+        // Volume down: Down arrow
         case 'arrowdown':
           e.preventDefault()
-          setVolumeValue(Math.max(0, v.volume - VOLUME_STEP))
-          showShortcut(t('player.shortcutVolume', { val: Math.round(v.volume * 100) }))
+          setVolumeValue(Math.max(0, video.volume - VOLUME_STEP))
+          showShortcut(t('player.shortcutVolume', { val: getVolumePercent() }))
           break
+
+        // Fullscreen: F
         case 'f':
           toggleFullscreen()
           break
+
+        // Mute/Unmute: M
         case 'm':
           toggleMute()
-          showShortcut(v.muted ? t('player.shortcutMuted') : t('player.shortcutVolume', { val: Math.round(v.volume * 100) }))
+          showShortcut(video.muted ? t('player.shortcutMuted') : t('player.shortcutVolume', { val: getVolumePercent() }))
           break
+
+        // Picture-in-Picture: P
         case 'p':
           e.preventDefault()
           togglePiP()
           showShortcut(t('player.shortcutPiP'))
           break
+
+        // Speed slower: ,
         case ',': {
           e.preventDefault()
-          const curIdx = SPEED_STEPS.indexOf(v.playbackRate)
-          const newIdx = curIdx > 0 ? curIdx - 1 : 0
-          const newSpeed = SPEED_STEPS[newIdx]
-          if (newSpeed !== undefined) {
-            setSpeedValue(newSpeed)
-            showShortcut(t('player.shortcutSpeedSlower', { val: newSpeed }))
+          const currentIndex = SPEED_STEPS.indexOf(video.playbackRate)
+          const slowerIndex = Math.max(0, currentIndex - 1)
+          const slowerSpeed = SPEED_STEPS[slowerIndex]
+          if (slowerSpeed !== undefined) {
+            setSpeedValue(slowerSpeed)
+            showShortcut(t('player.shortcutSpeedSlower', { val: slowerSpeed }))
           }
           break
         }
+
+        // Speed faster: .
         case '.': {
           e.preventDefault()
-          const curIdx = SPEED_STEPS.indexOf(v.playbackRate)
-          const newIdx = curIdx < SPEED_STEPS.length - 1 ? curIdx + 1 : SPEED_STEPS.length - 1
-          const newSpeed = SPEED_STEPS[newIdx]
-          if (newSpeed !== undefined) {
-            setSpeedValue(newSpeed)
-            showShortcut(t('player.shortcutSpeedFaster', { val: newSpeed }))
+          const currentIndex = SPEED_STEPS.indexOf(video.playbackRate)
+          const fasterIndex = Math.min(SPEED_STEPS.length - 1, currentIndex + 1)
+          const fasterSpeed = SPEED_STEPS[fasterIndex]
+          if (fasterSpeed !== undefined) {
+            setSpeedValue(fasterSpeed)
+            showShortcut(t('player.shortcutSpeedFaster', { val: fasterSpeed }))
           }
           break
         }
+
+        // Jump to percentage: 0-9 keys
         default:
-          if (k >= '0' && k <= '9' && v.duration) {
+          if (key >= '0' && key <= '9' && video.duration) {
             e.preventDefault()
-            const pct = parseInt(k) * 10
-            v.currentTime = v.duration * pct / 100
+            const percentage = parseInt(key) * 10
+            video.currentTime = (video.duration * percentage) / 100
             resetHideTimer()
-            showShortcut(t('player.shortcutPercent', { val: pct }))
+            showShortcut(t('player.shortcutPercent', { val: percentage }))
           }
           break
       }
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
   }, [videoRef])
 }

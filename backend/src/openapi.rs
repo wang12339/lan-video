@@ -17,12 +17,20 @@ pub fn spec() -> serde_json::Value {
         "paths": {
             "/health": {
                 "get": {
-                    "summary": "Health check",
+                    "summary": "Comprehensive health check",
                     "operationId": "health",
-                    "description": "Liveness probe — returns 200 if the server is running",
+                    "description": "Returns detailed health status including database connectivity, Redis connectivity (if configured), disk space usage, system information, and version information. Returns 200 if all checks pass, 503 if any critical check fails.",
                     "responses": {
                         "200": {
-                            "description": "Server is healthy",
+                            "description": "All health checks passed",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/HealthResponse" }
+                                }
+                            }
+                        },
+                        "503": {
+                            "description": "One or more health checks failed",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/HealthResponse" }
@@ -2211,6 +2219,157 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/admin/tenants": {
+                "get": {
+                    "summary": "List all tenants",
+                    "operationId": "listTenants",
+                    "description": "获取所有租户列表",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Tenant list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "tenants": {
+                                                "type": "array",
+                                                "items": { "$ref": "#/components/schemas/TenantConfig" }
+                                            }
+                                        },
+                                        "required": ["tenants"]
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/tenants/{id}": {
+                "get": {
+                    "summary": "Get tenant details",
+                    "operationId": "getTenant",
+                    "description": "获取单个租户详情",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Tenant details",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/TenantConfig" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "put": {
+                    "summary": "Update tenant settings",
+                    "operationId": "updateTenant",
+                    "description": "更新租户配置",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TenantSettings" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Tenant settings updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/tenants/{id}/stats": {
+                "get": {
+                    "summary": "Get tenant usage statistics",
+                    "operationId": "getTenantStats",
+                    "description": "获取租户使用统计",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Tenant statistics",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/TenantStats" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/tenants/{id}/toggle": {
+                "post": {
+                    "summary": "Enable or disable tenant",
+                    "operationId": "toggleTenant",
+                    "description": "禁用/启用租户",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": { "type": "string", "enum": ["active", "disabled", "maintenance"], "description": "Tenant status" }
+                                    },
+                                    "required": ["status"]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Tenant status updated",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/OkResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": { "$ref": "#/components/responses/NotFound" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
             "/videos/{id}/tags": {
                 "get": {
                     "summary": "Get tags for a video",
@@ -2519,9 +2678,57 @@ pub fn spec() -> serde_json::Value {
                 "HealthResponse": {
                     "type": "object",
                     "properties": {
-                        "status": { "type": "string", "example": "ok" }
+                        "status": { "type": "string", "enum": ["healthy", "unhealthy"], "description": "Overall health status" },
+                        "version": { "type": "string", "description": "Server version from Cargo.toml" },
+                        "timestamp": { "type": "string", "format": "date-time", "description": "Response timestamp in RFC3339 format" },
+                        "checks": {
+                            "type": "object",
+                            "description": "Individual health check results",
+                            "additionalProperties": {
+                                "$ref": "#/components/schemas/CheckStatus"
+                            }
+                        },
+                        "system_info": { "$ref": "#/components/schemas/SystemInfo" }
+                    },
+                    "required": ["status", "version", "timestamp", "checks", "system_info"]
+                },
+                "CheckStatus": {
+                    "type": "object",
+                    "properties": {
+                        "status": { "type": "string", "enum": ["healthy", "unhealthy", "warning"], "description": "Check result status" },
+                        "message": { "type": "string", "nullable": true, "description": "Optional error message" },
+                        "response_time_ms": { "type": "integer", "nullable": true, "description": "Response time in milliseconds" }
                     },
                     "required": ["status"]
+                },
+                "SystemInfo": {
+                    "type": "object",
+                    "properties": {
+                        "uptime_secs": { "type": "integer", "description": "Server uptime in seconds" },
+                        "disk_usage": { "$ref": "#/components/schemas/DiskUsage" },
+                        "memory_usage": { "$ref": "#/components/schemas/MemoryUsage", "nullable": true }
+                    },
+                    "required": ["uptime_secs", "disk_usage"]
+                },
+                "DiskUsage": {
+                    "type": "object",
+                    "properties": {
+                        "total_bytes": { "type": "integer", "description": "Total disk space in bytes" },
+                        "used_bytes": { "type": "integer", "description": "Used disk space in bytes" },
+                        "available_bytes": { "type": "integer", "description": "Available disk space in bytes" },
+                        "usage_percent": { "type": "number", "format": "double", "description": "Disk usage percentage (0-100)" }
+                    },
+                    "required": ["total_bytes", "used_bytes", "available_bytes", "usage_percent"]
+                },
+                "MemoryUsage": {
+                    "type": "object",
+                    "properties": {
+                        "total_bytes": { "type": "integer", "description": "Total memory in bytes" },
+                        "used_bytes": { "type": "integer", "description": "Used memory in bytes" },
+                        "available_bytes": { "type": "integer", "description": "Available memory in bytes" },
+                        "usage_percent": { "type": "number", "format": "double", "description": "Memory usage percentage (0-100)" }
+                    },
+                    "required": ["total_bytes", "used_bytes", "available_bytes", "usage_percent"]
                 },
                 "ServerInfo": {
                     "type": "object",
@@ -2675,6 +2882,41 @@ pub fn spec() -> serde_json::Value {
                     "properties": {
                         "liked": { "type": "boolean", "description": "New like/favorite status" }
                     }
+                },
+                "TenantConfig": {
+                    "type": "object",
+                    "properties": {
+                        "tenant_id": { "type": "integer", "description": "租户 ID" },
+                        "slug": { "type": "string", "description": "租户标识符" },
+                        "name": { "type": "string", "description": "租户名称" },
+                        "host": { "type": "string", "description": "租户域名" },
+                        "settings": { "$ref": "#/components/schemas/TenantSettings" }
+                    },
+                    "required": ["tenant_id", "slug", "name", "host", "settings"]
+                },
+                "TenantSettings": {
+                    "type": "object",
+                    "properties": {
+                        "max_upload_size_mb": { "type": "integer", "description": "上传文件大小限制（MB）" },
+                        "max_videos_per_user": { "type": "integer", "description": "用户视频数量上限" },
+                        "registration_enabled": { "type": "boolean", "description": "是否允许注册" },
+                        "custom_theme": { "type": "string", "nullable": true, "description": "自定义主题标识" },
+                        "storage_quota_gb": { "type": "integer", "description": "存储配额（GB）" }
+                    },
+                    "required": ["max_upload_size_mb", "max_videos_per_user", "registration_enabled", "storage_quota_gb"]
+                },
+                "TenantStats": {
+                    "type": "object",
+                    "properties": {
+                        "tenant_id": { "type": "integer", "description": "租户 ID" },
+                        "slug": { "type": "string", "description": "租户标识符" },
+                        "name": { "type": "string", "description": "租户名称" },
+                        "user_count": { "type": "integer", "description": "用户总数" },
+                        "video_count": { "type": "integer", "description": "视频总数" },
+                        "storage_used_bytes": { "type": "integer", "description": "已用存储（字节）" },
+                        "storage_limit_bytes": { "type": "integer", "description": "存储上限（字节）" }
+                    },
+                    "required": ["tenant_id", "slug", "name", "user_count", "video_count", "storage_used_bytes", "storage_limit_bytes"]
                 },
                 "CheckHashesRequest": {
                     "type": "object",

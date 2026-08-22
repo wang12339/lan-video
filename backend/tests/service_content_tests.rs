@@ -11,11 +11,11 @@
 //! 运行（仅非 ignore 测试，无需 DB）：
 //!   cargo test --test service_content_tests
 
-use atmos_video_backend::handlers::playlists::{
+use atmos_video_backend::models::playlist::{
     AddVideoRequest, CreatePlaylistRequest, PlaylistListResponse, PlaylistResponse,
     PlaylistVideoItem, UpdatePlaylistRequest,
 };
-use atmos_video_backend::handlers::tags::TagResponse as HandlerTagResponse;
+use atmos_video_backend::models::tag::TagResponse as HandlerTagResponse;
 use atmos_video_backend::repositories::share_repo::hash_share_token;
 use atmos_video_backend::repositories::tag_repo::Tag;
 use atmos_video_backend::services::comment_service::CommentService;
@@ -36,6 +36,10 @@ fn expect_share_ok<T>(r: Result<T, ServiceError>, msg: &str) -> T {
         Err(ServiceError::BadRequest(m)) => panic!("{msg}: 无效参数 {m}"),
         Err(ServiceError::Internal(m)) => panic!("{msg}: 内部错误 {m}"),
         Err(ServiceError::RateLimited) => panic!("{msg}: 限流"),
+        Err(ServiceError::Conflict(m)) => panic!("{msg}: 资源冲突 {m}"),
+        Err(ServiceError::Duplicate(m)) => panic!("{msg}: 资源重复 {m}"),
+        Err(ServiceError::QuotaExceeded(m)) => panic!("{msg}: 配额超限 {m}"),
+        Err(ServiceError::Validation(m)) => panic!("{msg}: 验证失败 {m}"),
     }
 }
 
@@ -816,7 +820,7 @@ async fn db_tag_name_normalized_color_validated_and_deduped() {
         })
         .await
         .unwrap_err();
-    assert!(err.contains("已存在"), "{err}");
+    assert!(matches!(err, ServiceError::Duplicate(_)), "{err}");
 
     // 非法颜色 → 校验失败
     let err = svc
@@ -826,7 +830,7 @@ async fn db_tag_name_normalized_color_validated_and_deduped() {
         })
         .await
         .unwrap_err();
-    assert!(err.contains("颜色格式无效"), "{err}");
+    assert!(matches!(err, ServiceError::Validation(_)), "{err}");
 
     // 空名 / 超长名 → 校验失败
     assert!(svc
@@ -853,13 +857,13 @@ async fn db_tag_name_normalized_color_validated_and_deduped() {
         .add_tags_to_video(video_id, &[999_999], user_id, false)
         .await
         .unwrap_err();
-    assert!(err.contains("不存在"), "{err}");
+    assert!(matches!(err, ServiceError::NotFound(_)), "{err}");
     let too_many: Vec<i32> = (1..=101).collect();
     let err = svc
         .add_tags_to_video(video_id, &too_many, user_id, false)
         .await
         .unwrap_err();
-    assert!(err.contains("单次最多"), "{err}");
+    assert!(matches!(err, ServiceError::Validation(_)), "{err}");
 
     // 空列表直接成功（幂等）
     svc.add_tags_to_video(video_id, &[], user_id, false)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../context/AuthContext'
 import {
@@ -13,7 +13,7 @@ import type { Playlist } from '../../api/playlists'
 import type { ShareListItem } from '../../api'
 import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
 import AuthDialog from '../../components/AuthDialog/AuthDialog'
-import { ConfirmDialog, AlertDialog } from '../../components/ui'
+import { ConfirmDialog, AlertDialog, SkeletonLoader } from '../../components/ui'
 import { trackClick } from '../../utils/track'
 import './Profile.css'
 
@@ -100,19 +100,11 @@ function HistoryRow({ item, showProgress }: { item: MappedHistory; showProgress?
   )
 }
 
-// 列表骨架屏（历史/收藏用）
+// 列表骨架屏（历史/收藏用，委托给统一 SkeletonLoader）
 function ListSkeleton() {
   return (
     <div className="history-list" aria-hidden="true">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="history-item">
-          <div className="sk-thumb" />
-          <div className="history-info">
-            <div className="sk-line" style={{ width: '60%' }} />
-            <div className="sk-line" style={{ width: '30%' }} />
-          </div>
-        </div>
-      ))}
+      <SkeletonLoader type="video-card" lines={4} />
     </div>
   )
 }
@@ -147,6 +139,7 @@ export default function Profile() {
   const [editingEmail, setEditingEmail] = useState(false)
   const [emailValue, setEmailValue] = useState('')
   const [savingEmail, setSavingEmail] = useState(false)
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Dialog state
@@ -349,7 +342,8 @@ export default function Profile() {
 
   const handleCreatePlaylist = async () => {
     const name = newPlaylistName.trim()
-    if (!name) return
+    if (!name || creatingPlaylist) return
+    setCreatingPlaylist(true)
     try {
       await createPlaylist({ name })
       setNewPlaylistName('')
@@ -357,6 +351,8 @@ export default function Profile() {
       queryClient.invalidateQueries({ queryKey: ['my-playlists', user?.id] })
     } catch (err) {
       setAlertMsg(err instanceof Error ? err.message : t('common.createFailed'))
+    } finally {
+      setCreatingPlaylist(false)
     }
   }
 
@@ -538,9 +534,10 @@ export default function Profile() {
               )}
             </>
           ) : (
-            <div className="profile-empty">
-              <div className="empty-icon">🎬</div>
+            <div className="profile-empty" role="status" aria-live="polite">
+              <div className="empty-icon" aria-hidden="true">🎬</div>
               <div>{t('profile.noWorks')}</div>
+              <Link to="/upload" className="empty-cta">去上传第一个视频 →</Link>
             </div>
           )}
         </div>
@@ -560,9 +557,10 @@ export default function Profile() {
               ))}
             </div>
           ) : (
-            <div className="profile-empty">
-              <div className="empty-icon">🕐</div>
+            <div className="profile-empty" role="status">
+              <div className="empty-icon" aria-hidden="true">🕐</div>
               <div>{t('profile.noHistory')}</div>
+              <Link to="/gallery" className="empty-cta">去发现精彩 →</Link>
             </div>
           )}
         </div>
@@ -585,6 +583,7 @@ export default function Profile() {
             <div className="profile-empty">
               <div className="empty-icon">❤️</div>
               <div>{t('profile.noFavorites')}</div>
+              <Link to="/gallery" className="empty-cta">去逛逛 →</Link>
             </div>
           )}
         </div>
@@ -635,6 +634,9 @@ export default function Profile() {
             <div className="profile-empty">
               <div className="empty-icon">📋</div>
               <div>{t('profile.noPlaylists')}</div>
+              <Link to="" onClick={e => { e.preventDefault(); setShowNewPlaylist(true) }} className="empty-cta" role="button">
+                {t('profile.newPlaylist')} +
+              </Link>
             </div>
           )}
         </div>
@@ -667,9 +669,11 @@ export default function Profile() {
               ))}
             </div>
           ) : (
-            <div className="profile-empty">
-              <div className="empty-icon">🔗</div>
+            <div className="profile-empty" role="status">
+              <div className="empty-icon" aria-hidden="true">🔗</div>
               <div>{t('profile.noShares')}</div>
+              <p style={{fontSize:'13px', color:'var(--text3)', marginTop:'8px'}}>观看视频后可在播放页创建分享链接</p>
+              <Link to="/" className="empty-cta">去首页观看 →</Link>
             </div>
           )}
         </div>

@@ -23,11 +23,13 @@ use crate::services::comment_service::CommentService;
 use crate::services::email_service::EmailService;
 use crate::services::media_service::MediaService;
 use crate::services::playback_service::PlaybackService;
+use crate::services::playlist_service::PlaylistService;
 use crate::services::recommendation_service::{RecommendationService, VideoRecommendation};
 use crate::services::search_service::SearchService;
 use crate::services::share_service::ShareService;
 use crate::services::tag_service::TagService;
 use crate::services::task_queue::TaskQueue;
+use crate::services::tenant_service::TenantService;
 use crate::services::transcoder::Transcoder;
 use crate::services::video_service::VideoService;
 
@@ -133,6 +135,7 @@ pub struct ServiceLayer {
     pub video: VideoService,
     pub media: MediaService,
     pub playback: PlaybackService,
+    pub playlist: PlaylistService,
     pub auth: AuthService,
     pub email: EmailService,
     pub tag: TagService,
@@ -141,6 +144,7 @@ pub struct ServiceLayer {
     pub comment: CommentService,
     pub share: ShareService,
     pub admin: AdminService,
+    pub tenant: TenantService,
 }
 
 #[derive(Clone)]

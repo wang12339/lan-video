@@ -1,32 +1,59 @@
+:root {
+  --preview-width: 320px;
+  --preview-height: 180px; /* 16:9 比例 */
+  --preview-bg: var(--bg);
+  --preview-border: var(--border);
+  --preview-radius: var(--radius);
+  --preview-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --preview-z-index: 50;
+  --preview-transition-duration: var(--duration-normal, 200ms);
+  --preview-transition-timing: var(--ease-spring, cubic-bezier(0.4, 0, 0.2, 1));
+  --progress-height: 3px;
+  --progress-color: var(--accent, #ff6b6b);
+  --progress-bg: rgba(255, 255, 255, 0.1);
+  --spinner-size: 24px;
+  --spinner-color: white;
+  --spinner-bg: rgba(255, 255, 255, 0.3);
+}
+
 .video-preview {
   position: absolute;
   top: -120px;
   left: 50%;
-  transform: translateX(-50%);
-  width: 320px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  transform: translateX(-50%) translateZ(0); /* 启用硬件加速 */
+  width: var(--preview-width);
+  background: var(--preview-bg);
+  border: 1px solid var(--preview-border);
+  border-radius: var(--preview-radius);
   overflow: hidden;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  z-index: 50;
+  box-shadow: var(--preview-shadow);
+  z-index: var(--preview-z-index);
   opacity: 0;
   visibility: hidden;
-  transition: all var(--duration-normal) var(--ease-spring);
+  will-change: transform, opacity, visibility;
+  transition: 
+    opacity var(--preview-transition-duration) var(--preview-transition-timing),
+    visibility var(--preview-transition-duration) var(--preview-transition-timing),
+    transform var(--preview-transition-duration) var(--preview-transition-timing);
   pointer-events: none;
+  backface-visibility: hidden; /* 提升动画性能 */
+  -webkit-backface-visibility: hidden;
 }
 
 .video-preview.visible {
   opacity: 1;
   visibility: visible;
-  transform: translateX(-50%) translateY(-8px);
+  transform: translateX(-50%) translateY(-8px) translateZ(0);
+  pointer-events: auto;
 }
 
 .video-preview-video {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: var(--preview-height);
+  object-fit: cover;
   background: #000;
   display: block;
+  will-change: transform;
 }
 
 .video-preview-info {
@@ -59,22 +86,25 @@
   transform: translateX(-50%) rotate(45deg);
   width: 12px;
   height: 12px;
-  background: var(--bg);
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  background: var(--preview-bg);
+  border-right: 1px solid var(--preview-border);
+  border-bottom: 1px solid var(--preview-border);
 }
 
 /* Progress bar */
 .video-preview-progress {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.1);
+  height: var(--progress-height);
+  background: var(--progress-bg);
   position: relative;
+  overflow: hidden;
 }
 
 .video-preview-progress-fill {
   height: 100%;
-  background: var(--accent);
-  transition: width 100ms linear;
+  background: var(--progress-color);
+  will-change: transform;
+  transform: translateX(0%);
+  /* 移除过渡效果，使用 JS 控制 */
 }
 
 /* Loading state */
@@ -85,17 +115,74 @@
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 
 .video-preview-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
+  border: 2px solid var(--spinner-bg);
+  border-top-color: var(--spinner-color);
   border-radius: 50%;
   animation: preview-spin 0.8s linear infinite;
 }
 
 @keyframes preview-spin {
   to { transform: rotate(360deg); }
+}
+
+/* 优化：减少重绘区域 */
+.video-preview-progress-fill,
+.video-preview-video {
+  contain: strict;
+}
+
+/* 响应式调整 */
+@media (max-width: 480px) {
+  :root {
+    --preview-width: 280px;
+    --preview-height: 157px;
+  }
+  
+  .video-preview-info {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 360px) {
+  :root {
+    --preview-width: 240px;
+    --preview-height: 135px;
+  }
+}
+
+/* 高对比度模式支持 */
+@media (prefers-contrast: high) {
+  .video-preview {
+    border-width: 2px;
+    box-shadow: 0 0 0 2px var(--preview-bg);
+  }
+  
+  .video-preview-progress-fill {
+    background: currentColor;
+  }
+}
+
+/* 减少动画模式 */
+@media (prefers-reduced-motion: reduce) {
+  .video-preview {
+    transition: opacity 0.01ms linear, visibility 0.01ms linear;
+  }
+  
+  .video-preview-spinner {
+    animation: none;
+  }
+}
+
+/* 打印样式 */
+@media print {
+  .video-preview {
+    display: none;
+  }
 }

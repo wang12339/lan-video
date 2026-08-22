@@ -117,13 +117,19 @@ describe('client request', () => {
   })
 
   it('localizes server errors by status code', async () => {
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(jsonResponse(500, { error: 'internal server error' }))
-      .mockResolvedValueOnce(jsonResponse(429, { error: 'too many requests' }))
-      .mockResolvedValueOnce(jsonResponse(400, {})))
-    await expect(request('/videos')).rejects.toThrow('服务器内部错误')
-    await expect(request('/videos')).rejects.toThrow('请求过于频繁，请稍后再试')
-    await expect(request('/videos')).rejects.toThrow('发生未知错误')
+    const originalSetTimeout = global.setTimeout as unknown as typeof setTimeout
+    // @ts-ignore mock to make retries immediate
+    global.setTimeout = ((fn: any) => { fn(); return 0 as any }) as any
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(500, { error: 'internal server error' })))
+      await expect(request('/videos?c=500')).rejects.toThrow('服务器内部错误')
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(429, { error: 'too many requests' })))
+      await expect(request('/videos?c=429')).rejects.toThrow('请求过于频繁，请稍后再试')
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(400, {})))
+      await expect(request('/videos?c=400')).rejects.toThrow('发生未知错误')
+    } finally {
+      global.setTimeout = originalSetTimeout
+    }
   })
 
   it('throws localized errors for non-JSON error responses', async () => {
@@ -213,8 +219,9 @@ describe('client request', () => {
   it('does not notify the global error callback when silent is set', async () => {
     const onError = vi.fn()
     setOnError(onError)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(500, { error: '服务器开小差了' })))
-    const err = await request('/videos', { silent: true }).catch((e: unknown) => e)
+    // 使用 400 避免重试超时
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(400, { error: '服务器开小差了' })))
+    const err = await request('/videos?s=silent', { silent: true }).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(APIError)
     expect((err as APIError).message).toBe('服务器开小差了')
     expect(onError).not.toHaveBeenCalled()

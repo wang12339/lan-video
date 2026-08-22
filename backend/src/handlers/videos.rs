@@ -3,145 +3,21 @@ use axum::{
     http::{header, StatusCode},
     Extension, Json,
 };
-use serde::Deserialize;
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::models::video::{PagedVideoResponse, VideoItem, VideoQuery};
-use crate::services::media_service::UPLOAD_TEMP_TTL;
+use crate::models::video::{
+    PagedVideoResponse, SearchQuery, SearchResponse, SearchResultItem, VideoItem, VideoQuery,
+    VideoVariantResponse,
+};
+use crate::services::media_service::sweeper;
 use crate::state::AppState;
 use crate::util::hashid;
+use crate::util::pagination::PaginationParams;
 use crate::util::response::{error_response, internal_error_log, CachedResponse, ErrorResponse};
 
 const MAX_SEARCH_QUERY_LEN: usize = 200;
-
-/// Cap the page number so `page * size` can never overflow i64 (an unbounded
-/// `page` previously caused a panic in debug builds / a wrapped negative
-/// OFFSET in release).
-const MAX_PAGE: i64 = 1_000_000;
-
-/// upload_locks（续传上传的内存锁表）的清理间隔：与 media_service 的
-/// 临时文件清扫任务同频。
-const UPLOAD_LOCK_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
-
-/// 惰性启动 upload_locks 的周期性清理（SECURITY L-07）。续传上传在
-/// DashMap 中为每个 hash 创建互斥锁，仅在成功收尾时移除；放弃/失败的上传
-/// 会遗留条目导致内存缓慢增长。本任务移除"临时文件不存在或超过 24h 未变化"
-/// 的条目（与 media_service 临时文件清扫同一判定标准）。由首次 /videos
-/// 列表请求触发，进程内只启动一个任务（OnceLock 幂等）。
-fn ensure_upload_lock_cleanup(state: &Arc<AppState>) {
-    static CLEANUP_STARTED: OnceLock<()> = OnceLock::new();
-    if CLEANUP_STARTED.get().is_some() {
-        return;
-    }
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    let state = state.clone();
-    CLEANUP_STARTED.get_or_init(|| {
-        std::mem::drop(handle.spawn(async move {
-            let mut interval = tokio::time::interval(UPLOAD_LOCK_CLEANUP_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                interval.tick().await;
-                prune_upload_locks(&state).await;
-            }
-        }));
-    });
-}
-
-async fn prune_upload_locks(state: &Arc<AppState>) {
-    if state.upload_locks.is_empty() {
-        return;
-    }
-    let root = state.config.media_root.clone();
-    let locks = state.upload_locks.clone();
-    let stale =
-        tokio::task::spawn_blocking(move || stale_upload_lock_keys(&locks, &root, UPLOAD_TEMP_TTL))
-            .await
-            .unwrap_or_default();
-    if stale.is_empty() {
-        return;
-    }
-    for key in &stale {
-        state.upload_locks.remove(key);
-    }
-    tracing::info!(
-        removed = stale.len(),
-        remaining = state.upload_locks.len(),
-        "pruned stale upload lock entries"
-    );
-}
-
-/// 返回应移除的锁 key：其 `.upload_{hash}` 临时文件缺失，或 mtime 超过
-/// `ttl`（与 media_service 临时文件清扫同标准——文件已超龄，锁必然已死）。
-/// 对 hash 做格式校验，防止意外 key 拼出目录外路径。竞态说明：entry 创建到
-/// 临时文件落盘之间是微秒级窗口，且清理每小时一次；最坏情况是同一 hash
-/// 短暂出现两个互斥锁，下一次 chunk 请求会重建串行化，可接受。
-fn stale_upload_lock_keys(
-    locks: &dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>,
-    media_root: &std::path::Path,
-    ttl: Duration,
-) -> Vec<String> {
-    let now = std::time::SystemTime::now();
-    locks
-        .iter()
-        .filter_map(|entry| {
-            let hash = entry.key();
-            let valid_hash = hash.len() <= 128
-                && hash
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-            if !valid_hash {
-                return Some(hash.clone());
-            }
-            let path = media_root.join(format!(".upload_{}", hash));
-            // 保守判定：文件存在且 mtime 可读且未超龄 → 存活；其余情况（含
-            // mtime 读取失败、时钟异常）一律视为死亡并移除锁条目。
-            let live = std::fs::metadata(&path)
-                .map(|m| {
-                    m.is_file()
-                        && m.modified()
-                            .map(|t| now.duration_since(t).map(|age| age < ttl).unwrap_or(true))
-                            .unwrap_or(true)
-                })
-                .unwrap_or(false);
-            if live {
-                None
-            } else {
-                Some(hash.clone())
-            }
-        })
-        .collect()
-}
-
-#[derive(Deserialize)]
-pub struct SearchQuery {
-    pub q: String,
-    pub page: Option<i64>,
-    pub size: Option<i64>,
-}
-
-#[derive(serde::Serialize)]
-pub struct SearchResponse {
-    pub items: Vec<SearchResultItem>,
-    pub total: i64,
-    pub page: i64,
-    pub size: i64,
-}
-
-#[derive(serde::Serialize)]
-pub struct SearchResultItem {
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub id: i64,
-    pub title: String,
-    pub description: Option<String>,
-    pub category: Option<String>,
-    pub rank: f32,
-    pub headline: Option<String>,
-}
 
 /// GET /videos
 pub async fn list_videos(
@@ -150,10 +26,11 @@ pub async fn list_videos(
     Query(params): Query<VideoQuery>,
 ) -> Result<CachedResponse<PagedVideoResponse>, (StatusCode, Json<ErrorResponse>)> {
     // 惰性启动 upload_locks 清理任务（进程内仅一次，幂等）
-    ensure_upload_lock_cleanup(&state);
+    sweeper::ensure_upload_lock_cleanup(&state);
 
-    let page = params.page.unwrap_or(0).clamp(0, MAX_PAGE);
-    let size = params.size.unwrap_or(20).clamp(1, 1000);
+    let pagination = PaginationParams::new(params.page, params.size);
+    let page = pagination.page;
+    let size = pagination.page_size;
     let query = params.query.as_deref().unwrap_or("");
     let source_type = params.source_type.as_deref().unwrap_or("");
     let category = params.category.as_deref().unwrap_or("");
@@ -215,7 +92,7 @@ pub async fn list_videos(
             sort,
         )
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("list_videos", &e))?;
 
     let resp = PagedVideoResponse {
         items,
@@ -252,7 +129,7 @@ pub async fn get_video(
         .video
         .get_video(id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?
+        .map_err(|e| internal_error_log("get_video", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
     state.video_detail_cache.insert(id, video.clone());
 
@@ -271,7 +148,7 @@ pub async fn get_video_variants(
         .video
         .list_variants(id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("get_video_variants", &e))?;
     Ok(Json(
         variants
             .into_iter()
@@ -290,16 +167,6 @@ pub async fn get_video_variants(
             })
             .collect(),
     ))
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VideoVariantResponse {
-    pub resolution: String,
-    pub url: String,
-    pub file_size: i64,
-    pub bitrate: Option<i32>,
-    pub codec: Option<String>,
 }
 
 /// GET /videos/{id}/hls — Get HLS playlist URL for adaptive streaming
@@ -343,7 +210,7 @@ pub async fn toggle_like(
         .playback
         .toggle_like(&auth_user.username, id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "操作失败"))?;
+        .map_err(|e| internal_error_log("toggle_like", &e))?;
     tracing::info!(user = %auth_user.username, video_id = id, liked = liked, "toggle like");
     Ok(Json(serde_json::json!({"liked": liked})))
 }
@@ -361,7 +228,7 @@ pub async fn get_like_status(
         .playback
         .is_liked(&auth_user.username, id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "查询失败"))?;
+        .map_err(|e| internal_error_log("get_like_status", &e))?;
     Ok(Json(serde_json::json!({"liked": liked})))
 }
 
@@ -378,7 +245,7 @@ pub async fn toggle_favorite(
         .playback
         .toggle_favorite(&auth_user.username, id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "操作失败"))?;
+        .map_err(|e| internal_error_log("toggle_favorite", &e))?;
     tracing::info!(user = %auth_user.username, video_id = id, favorited = favorited, "toggle favorite");
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
@@ -396,7 +263,7 @@ pub async fn get_favorite_status(
         .playback
         .is_favorited(&auth_user.username, id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "查询失败"))?;
+        .map_err(|e| internal_error_log("get_favorite_status", &e))?;
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
 
@@ -411,7 +278,7 @@ pub async fn list_favorites(
         .playback
         .get_favorites(&auth_user.username)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "查询失败"))?;
+        .map_err(|e| internal_error_log("list_favorites", &e))?;
     Ok(Json(favorites))
 }
 
@@ -440,7 +307,7 @@ pub async fn increment_views(
         .video
         .increment_views(id)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "操作失败"))?;
+        .map_err(|e| internal_error_log("increment_views", &e))?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -449,8 +316,9 @@ pub async fn search_videos(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let page = params.page.unwrap_or(0).clamp(0, MAX_PAGE);
-    let size = params.size.unwrap_or(20).clamp(1, 100);
+    let pagination = PaginationParams::new(params.page, params.size);
+    let page = pagination.page;
+    let size = pagination.page_size;
 
     if params.q.len() > MAX_SEARCH_QUERY_LEN {
         return Err(error_response(
@@ -525,69 +393,3 @@ pub async fn search_suggest(
     Ok(Json(suggestions))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("atmos_{}_{}", name, std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn test_stale_upload_lock_keys_prunes_dead_entries() {
-        let dir = test_dir("lockprune");
-        let locks: dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>> = dashmap::DashMap::new();
-        locks.insert("alive".to_string(), Arc::new(tokio::sync::Mutex::new(())));
-        locks.insert("dead".to_string(), Arc::new(tokio::sync::Mutex::new(())));
-        locks.insert("old".to_string(), Arc::new(tokio::sync::Mutex::new(())));
-        std::fs::write(dir.join(".upload_alive"), b"x").unwrap();
-        std::fs::write(dir.join(".upload_old"), b"y").unwrap();
-        std::fs::File::open(dir.join(".upload_old"))
-            .unwrap()
-            .set_modified(
-                std::time::SystemTime::now()
-                    .checked_sub(std::time::Duration::from_secs(25 * 60 * 60))
-                    .unwrap(),
-            )
-            .unwrap();
-
-        let stale = stale_upload_lock_keys(&locks, &dir, UPLOAD_TEMP_TTL);
-        assert!(
-            stale.contains(&"dead".to_string()),
-            "临时文件缺失的条目应移除"
-        );
-        assert!(
-            stale.contains(&"old".to_string()),
-            "临时文件超龄的条目应移除"
-        );
-        assert!(
-            !stale.contains(&"alive".to_string()),
-            "临时文件新鲜的条目应保留"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_stale_upload_lock_keys_defensive_hash_format() {
-        let dir = test_dir("lockprune2");
-        let locks: dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>> = dashmap::DashMap::new();
-        locks.insert("../evil".to_string(), Arc::new(tokio::sync::Mutex::new(())));
-        locks.insert(
-            "valid_hash_1".to_string(),
-            Arc::new(tokio::sync::Mutex::new(())),
-        );
-
-        let stale = stale_upload_lock_keys(&locks, &dir, UPLOAD_TEMP_TTL);
-        assert!(
-            stale.contains(&"../evil".to_string()),
-            "非 hash 格式的 key 应被防御性移除"
-        );
-        assert!(
-            stale.contains(&"valid_hash_1".to_string()),
-            "临时文件不存在时合法 key 也应收敛"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-}

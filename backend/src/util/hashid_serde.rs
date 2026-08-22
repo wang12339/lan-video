@@ -52,3 +52,20 @@ pub fn deserialize_option_id<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i
         )),
     }
 }
+
+/// Deserialize a `Vec<i64>` from an array of HashID strings or plain numbers.
+pub fn deserialize_vec_ids<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<i64>, D::Error> {
+    let vals: Vec<serde_json::Value> = Vec::deserialize(d)?;
+    vals.into_iter()
+        .map(|val| match val {
+            serde_json::Value::String(s) => super::hashid::decode_id_or_numeric(&s)
+                .ok_or_else(|| serde::de::Error::custom(format!("invalid hashid: {}", s))),
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| serde::de::Error::custom("number out of i64 range")),
+            _ => Err(serde::de::Error::custom(
+                "expected string or number for id",
+            )),
+        })
+        .collect()
+}

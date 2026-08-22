@@ -3,10 +3,12 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { searchSuggest, setOnError } from '../../api'
+import { addToSearchHistory } from '../../utils/searchHistory'
 import { trackClick } from '../../utils/track'
 import { ToastProvider, useToast } from '../Toast/Toast'
 import PageTransition from '../ui/PageTransition'
 import AuthDialog from '../AuthDialog/AuthDialog'
+import ThemeToggle from '../ui/ThemeToggle'
 import './Layout.css'
 
 function ErrorBoundaryInit() {
@@ -23,11 +25,13 @@ function ErrorBoundaryInit() {
 
 export default function Layout() {
   const location = useLocation()
+  const { t } = useTranslation()
   return (
     <ToastProvider>
       <ErrorBoundaryInit />
+      <a href="#main-content" className="skip-link">{t('common.skipToContent') || '跳至主内容'}</a>
       <NavBar />
-      <main className="page-content">
+      <main id="main-content" className="page-content">
         <PageTransition transitionKey={location.pathname}>
           <Outlet />
         </PageTransition>
@@ -53,6 +57,7 @@ function NavBar() {
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [showAuth, setShowAuth] = useState(false)
   const suggestTimer = useRef<ReturnType<typeof setTimeout>>()
+  const suggestSeq = useRef(0)
   const searchRef = useRef<HTMLDivElement>(null)
   const linksRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
@@ -60,8 +65,9 @@ function NavBar() {
 
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    const q = selectedIdx >= 0 ? suggestions[selectedIdx] : searchQuery.trim()
+    const q = selectedIdx >= 0 ? (suggestions[selectedIdx] ?? '') : searchQuery.trim()
     if (q) {
+      try { addToSearchHistory(q) } catch {}
       navigate(`/?q=${encodeURIComponent(q)}`)
       setShowSuggestions(false)
       setSearchQuery(q)
@@ -81,14 +87,18 @@ function NavBar() {
     }
     setSearchLoading(true)
     setSearchTried(false)
+    const seq = ++suggestSeq.current
     suggestTimer.current = setTimeout(async () => {
       try {
         const res = await searchSuggest(value.trim())
+        if (seq !== suggestSeq.current) return
         setSuggestions(res)
         setShowSuggestions(res.length > 0)
         setSearchTried(true)
       } catch { /* ignore */ }
-      finally { setSearchLoading(false) }
+      finally {
+        if (seq === suggestSeq.current) setSearchLoading(false)
+      }
     }, 300)
   }, [])
 
@@ -106,7 +116,7 @@ function NavBar() {
   }, [showSuggestions, suggestions.length])
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
+    function handleClickOutside(e: MouseEvent | PointerEvent) {
       if (hamburgerRef.current && hamburgerRef.current.contains(e.target as Node)) {
         return
       }
@@ -121,8 +131,12 @@ function NavBar() {
         setConfirmLogout(false)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('mousedown', handleClickOutside as EventListener)
+    document.addEventListener('pointerdown', handleClickOutside as EventListener)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside as EventListener)
+      document.removeEventListener('pointerdown', handleClickOutside as EventListener)
+    }
   }, [])
 
   useEffect(() => {
@@ -208,6 +222,7 @@ function NavBar() {
                     role="option"
                     aria-selected={i === selectedIdx}
                     onMouseDown={() => {
+                      try { addToSearchHistory(s) } catch {}
                       navigate(`/?q=${encodeURIComponent(s)}`)
                       setShowSuggestions(false)
                       setSearchQuery(s)
@@ -243,7 +258,7 @@ function NavBar() {
         <div ref={linksRef} className={`nav-links ${menuOpen ? 'open' : ''}`}>
           <Link to="/" className={`nav-link ${isActive('/') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.home')); closeMenu() }}>{t('nav.home')}</Link>
           <Link to="/gallery" className={`nav-link ${isActive('/gallery') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.gallery')); closeMenu() }}>{t('nav.gallery')}</Link>
-          {user?.isAdmin && (
+          {user && (
             <Link to="/upload" className={`nav-link ${isActive('/upload') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.upload')); closeMenu() }}>{t('nav.upload')}</Link>
           )}
           {user?.isAdmin && (
@@ -280,13 +295,14 @@ function NavBar() {
           onClick={() => {
             const next = i18n.language === 'zh-CN' ? 'en-US' : 'zh-CN'
             i18n.changeLanguage(next)
-            localStorage.setItem('atmos.lang', next)
+            try { localStorage.setItem('atmos.lang', next) } catch {}
           }}
           aria-label={t('nav.toggleLanguage')}
           title={t('nav.toggleLanguage')}
         >
           {i18n.language === 'zh-CN' ? 'EN' : '中'}
         </button>
+        <ThemeToggle />
 
         {user ? (
           <div className="nav-user" ref={userMenuRef}>

@@ -1,0 +1,154 @@
+{
+  "agentId": 18,
+  "files": [
+    "webapp/src/components/ui/SearchHistory.tsx",
+    "webapp/src/components/ui/SearchWithHistory.tsx"
+  ],
+  "issues": [
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 96,
+      "category": "性能问题",
+      "severity": "Medium",
+      "description": "useMemo 用于记忆化函数引用，但函数内部依赖外部状态（Date.now()），导致每次渲染都可能产生新结果，useMemo 无法有效缓存",
+      "suggestion": "将 formatTimestamp 提取为独立的工具函数或使用 useCallback，如果需要缓存结果，可以考虑使用 useRef 存储上次结果"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 48,
+      "category": "性能问题",
+      "severity": "Low",
+      "description": "cleanExpiredHistory 在每次组件挂载时执行，可能导致不必要的 localStorage 操作",
+      "suggestion": "将过期清理逻辑移到应用初始化阶段，或使用防抖/节流机制限制清理频率"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 145,
+      "category": "代码质量问题",
+      "severity": "Medium",
+      "description": "隐私模式和非隐私模式的 SVG 图标完全相同，没有视觉区分",
+      "suggestion": "为隐私模式和非隐私模式使用不同的图标，例如隐私模式使用带锁的盾牌，非隐私模式使用普通盾牌"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 101,
+      "category": "代码质量问题",
+      "severity": "Low",
+      "description": "魔法数字 60000、3600000、86400000 用于时间计算，可读性差",
+      "suggestion": "定义常量如 MS_PER_MINUTE、MS_PER_HOUR、MS_PER_DAY 来提高代码可读性"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 189,
+      "category": "性能问题",
+      "severity": "Medium",
+      "description": "使用 item.query 作为 key，如果查询内容重复可能导致渲染问题",
+      "suggestion": "使用 item.timestamp + item.query 组合作为 key，确保唯一性"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 194,
+      "category": "可访问性问题",
+      "severity": "Low",
+      "description": "历史记录项缺少 aria-selected 属性，屏幕阅读器无法知道当前选中状态",
+      "suggestion": "为历史记录项添加 aria-selected 属性，并管理焦点状态"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 256,
+      "category": "错误处理缺陷",
+      "severity": "Medium",
+      "description": "清除确认对话框缺少键盘导航支持（Escape 键关闭）",
+      "suggestion": "添加 onKeyDown 事件处理，支持 Escape 键关闭对话框，并管理焦点陷阱"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 111,
+      "category": "代码质量问题",
+      "severity": "Low",
+      "description": "条件渲染逻辑复杂，可读性较差",
+      "suggestion": "将条件提取为变量，如 const shouldRender = visible && (!privacyMode || history.length > 0)"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 33,
+      "category": "内存泄漏风险",
+      "severity": "Low",
+      "description": "事件监听器在组件卸载时正确清理，但缺少依赖数组可能导致闭包问题",
+      "suggestion": "添加依赖数组 [] 确保事件监听器只注册一次，或使用 useCallback 包装 handleClickOutside"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 136,
+      "category": "性能问题",
+      "severity": "Medium",
+      "description": "使用 index 作为 key，如果列表重新排序会导致不必要的重渲染",
+      "suggestion": "使用 recent 作为 key（假设搜索词唯一），或使用 recent + index 组合"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 140,
+      "category": "代码质量问题",
+      "severity": "Low",
+      "description": "内联函数定义导致每次渲染都创建新函数，可能影响子组件性能",
+      "suggestion": "将内联函数提取为 useCallback，特别是当传递给子组件时"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 47,
+      "category": "代码质量问题",
+      "severity": "Low",
+      "description": "最小搜索长度 2 是魔法数字，应该提取为常量",
+      "suggestion": "定义常量 MIN_SEARCH_LENGTH = 2，提高代码可维护性"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 104,
+      "category": "安全隐患",
+      "severity": "Low",
+      "description": "autoComplete=\"off\" 可能影响用户体验，某些浏览器会忽略此属性",
+      "suggestion": "考虑使用 autoComplete=\"search\" 或根据业务需求决定是否禁用自动完成"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchWithHistory.tsx",
+      "line": 83,
+      "category": "可访问性问题",
+      "severity": "Low",
+      "description": "搜索表单缺少 role=\"search\" 属性",
+      "suggestion": "为表单添加 role=\"search\" 以提高屏幕阅读器的识别度"
+    },
+    {
+      "file": "webapp/src/components/ui/SearchHistory.tsx",
+      "line": 1,
+      "category": "TypeScript类型安全",
+      "severity": "Low",
+      "description": "组件导出使用默认导出，但没有明确的类型注解",
+      "suggestion": "为组件添加明确的类型注解，如 export default function SearchHistory(props: SearchHistoryProps): JSX.Element"
+    },
+    {
+      "file": "webapp/src/utils/searchHistory.ts",
+      "line": 83,
+      "category": "TypeScript类型安全",
+      "severity": "Low",
+      "description": "时间戳验证逻辑使用硬编码的 86400000（一天的毫秒数）",
+      "suggestion": "使用常量 MS_PER_DAY 或计算表达式 24 * 60 * 60 * 1000"
+    },
+    {
+      "file": "webapp/src/utils/searchHistory.ts",
+      "line": 13,
+      "category": "代码质量问题",
+      "severity": "Low",
+      "description": "MAX_HISTORY 常量值为 30，但没有文档说明为什么选择这个值",
+      "suggestion": "添加注释说明选择 30 条记录的原因，或者使其可配置"
+    },
+    {
+      "file": "webapp/src/utils/searchHistory.ts",
+      "line": 204,
+      "category": "性能问题",
+      "severity": "Medium",
+      "description": "cleanExpiredHistory 函数调用 getSearchHistory 两次，可能导致重复的 localStorage 读取",
+      "suggestion": "优化为只调用一次 getSearchHistory，然后在内存中过滤"
+    }
+  ],
+  "summary": "代码审查发现 SearchHistory 和 SearchWithHistory 组件整体质量良好，TypeScript 类型安全，React Hook 使用正确，内存泄漏风险低。主要问题集中在性能优化（useMemo 使用不当、列表 key 选择）、代码可读性（魔法数字、复杂条件）、可访问性增强（aria 属性、键盘导航）和代码质量（重复逻辑、常量提取）。建议优先处理性能问题和可访问性问题，然后逐步改进代码质量和可维护性。"
+}

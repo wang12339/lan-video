@@ -1,5 +1,53 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [Unreleased]
+
+### Added
+- playlist_service 服务层
+- log_parser 模块
+- upload 通用函数
+- db_error 工具模块
+- pagination 分页工具
+- 错误处理单元测试
+- 分页工具单元测试
+- Home/Player 页面测试
+- 架构文档
+- API 文档
+- 部署文档
+- 贡献指南
+- PR 模板
+
+### Changed
+- ServiceError 新增 Conflict/Duplicate/QuotaExceeded 变体
+- tag_service String错误 → ServiceError
+- search_service String错误 → ServiceError
+- media_service String错误 → ServiceError
+- videos.rs 静默吞错 → 记录日志
+- playback.rs 静默吞错 → 记录日志
+- auth 错误响应使用真实 HTTP 状态码
+- admin 错误响应使用正确状态码
+- 错误消息中文化
+- 完善 README 文档
+- 添加代码文档注释
+- Clippy 启用更严格检查
+
+### Fixed
+- playists.rs 分层违规（添加 service 层）
+- auth.rs 分层违规
+- get_logs 超长函数（230行 → 模块化）
+- upload 超长函数（提取公共函数）
+- 内联 HTML 移到模板文件
+- 代码重复（文件清理、DB错误、密码策略）
+
+### Security
+- 删除 From<String> for ServiceError 暗雷
+- 清理 ApiHandlerError 死代码
+- 统一密码策略常量
+
 ## [0.4.0] - 2026-08-13
 
 ### 新增

@@ -90,6 +90,8 @@ pub async fn init_pool(database_url: &str) -> PgPool {
             .max_connections(max_connections)
             .min_connections(2)
             .acquire_timeout(std::time::Duration::from_secs(10))
+            .idle_timeout(std::time::Duration::from_secs(300))  // 空闲连接超时5分钟
+            .max_lifetime(std::time::Duration::from_secs(1800)) // 连接最大生命周期30分钟
             .connect(database_url)
             .await
         {

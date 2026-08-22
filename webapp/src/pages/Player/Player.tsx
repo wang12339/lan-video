@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
@@ -6,12 +6,16 @@ import {
   savePlayback, getCatColor, deleteVideo,
   startPlaybackSession, heartbeatPlaybackSession, stopPlaybackSession,
   getSimilarVideos, createShareLink, getShareVideo, APIError,
+  toggleFavorite, getFavoriteStatus,
 } from '../../api'
+import { listMyPlaylists, addVideoToPlaylist } from '../../api/playlists'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { request, mediaUrl, getToken, BASE } from '../../api/client'
 import type { MappedVideo, VideoVariant } from '../../api/types'
 import { getPref } from '../../api/prefs'
 import { useAuth } from '../../context/AuthContext'
-import { trackVideo } from '../../utils/track'
+import { useToast } from '../../components/Toast/Toast'
+import { trackClick, trackVideo } from '../../utils/track'
 import { useHlsPlayer } from '../../hooks/useHlsPlayer'
 import VideoCard from '../../components/VideoCard/VideoCard'
 import Comments from '../../components/Comments/Comments'
@@ -25,9 +29,36 @@ import './Player.css'
 // 兜底父级偶发重渲染（暂停/菜单切换等）不波及评论区子树
 const MemoComments = memo(Comments)
 
+// ============================================================
+// 性能优化常量
+// ============================================================
+
 const SAVE_THROTTLE_MS = 10000
 const MIN_PROGRESS_SAVE_S = 5
 const HEARTBEAT_INTERVAL_MS = 45000
+
+// 预加载配置
+const PRELOAD_THRESHOLD = 0.85 // 播放到 85% 时开始预加载下一集
+
+// 节流配置
+const TIME_UPDATE_THROTTLE_MS = 1000 // timeupdate 事件节流间隔
+const MOUSE_MOVE_THROTTLE_MS = 100 // 鼠标移动节流间隔
+const VOLUME_CHANGE_THROTTLE_MS = 100 // 音量变化节流间隔
+
+// 内存管理配置
+const MAX_RELATED_VIDEOS = 6 // 最多保留的相关视频数量
+const PROGRESS_SAVE_DEBOUNCE_MS = 3000 // 进度保存防抖时间
+
+// ============================================================
+// 工具函数
+// ============================================================
+import { throttle, debounce } from '../../utils/throttle'
+import { cleanupVideoElement, safeGetDuration } from '../../utils/videoUtils'
+import { usePreloadManager, useMemoryManager } from './usePlayerHooks'
+
+// ============================================================
+// Player 组件
+// ============================================================
 
 export default function Player() {
   const [searchParams] = useSearchParams()
@@ -62,6 +93,49 @@ export default function Player() {
   // Quality/variant state
   const [variants, setVariants] = useState<VideoVariant[]>([])
   const [currentQuality, setCurrentQuality] = useState<string>('original')
+
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [favorited, setFavorited] = useState(false)
+  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false)
+
+  const { data: favStatus } = useQuery({
+    queryKey: ['favorite-status', videoId],
+    queryFn: () => getFavoriteStatus(videoId),
+    enabled: !!user && !!videoId && !isShared,
+  })
+  useEffect(() => { if (favStatus) setFavorited(favStatus.favorited) }, [favStatus])
+
+  const { data: myPlaylists = [] } = useQuery({
+    queryKey: ['my-playlists', user?.id],
+    queryFn: listMyPlaylists,
+    enabled: !!user && showPlaylistPicker,
+  })
+
+  const handleFavorite = async () => {
+    if (!user || !video) { toast(t('auth.pleaseLogin') || '请先登录', 'error'); return }
+    try {
+      const res = await toggleFavorite(video.id)
+      setFavorited(res.favorited)
+      toast(res.favorited ? (t('player.favorited') as string || '已收藏') : (t('player.unfavorited') as string || '已取消收藏'), 'success')
+      queryClient.invalidateQueries({ queryKey: ['my-favorites'] })
+      trackClick(res.favorited ? '收藏' : '取消收藏', video.title)
+    } catch (e: any) {
+      toast(e.message || t('player.favoriteFailed') || '收藏失败', 'error')
+    }
+  }
+  const handleAddToPlaylist = async (playlistId: string) => {
+    if (!video) return
+    try {
+      await addVideoToPlaylist(playlistId, video.id)
+      toast((t('player.addedToPlaylist') as string) || '已加入播放列表', 'success')
+      setShowPlaylistPicker(false)
+      queryClient.invalidateQueries({ queryKey: ['my-playlists'] })
+      trackClick('加入播放列表', video.title)
+    } catch (e: any) {
+      toast(e.message || (t('player.addToPlaylistFailed') as string) || '加入失败', 'error')
+    }
+  }
   const [showQualityMenu, setShowQualityMenu] = useState(false)
 
   // Share state
@@ -71,6 +145,9 @@ export default function Player() {
   // Dialog state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleteAlertMsg, setDeleteAlertMsg] = useState('')
+
+  // 预加载状态
+  const [preloadingNext, setPreloadingNext] = useState(false)
 
   const lastVolumeRef = useRef(0.8)
   const lastSaveTimeRef = useRef(0)
@@ -87,12 +164,24 @@ export default function Player() {
   const saveProgressRef = useRef<() => void>(() => {})
   const [hlsUrl, setHlsUrl] = useState<string | null>(null)
 
+  // 节流事件处理器引用
+  const throttledMouseMoveRef = useRef<((e: React.MouseEvent) => void) | null>(null)
+  const throttledVolumeChangeRef = useRef<(() => void) | null>(null)
+
+  // 使用自定义 hooks
+  const { preloadVideo, cleanup: cleanupPreload } = usePreloadManager()
+  const { optimizeMemory } = useMemoryManager()
+
   // HLS播放器支持
   useHlsPlayer({
     videoRef,
     src: hlsUrl || (video?.stream ? mediaUrl(video.stream) : null),
     autoPlay: false,
   })
+
+  // ============================================================
+  // 优化的回调函数
+  // ============================================================
 
   const showShortcut = useCallback((text: string) => {
     setShortcutText(text)
@@ -135,12 +224,7 @@ export default function Player() {
 
   // 断开视频连接：清空 src 停止浏览器预加载 + 停止播放会话
   const disconnectVideo = useCallback(() => {
-    const v = videoRef.current
-    if (v) {
-      v.pause()
-      v.removeAttribute('src')
-      v.load()
-    }
+    cleanupVideoElement(videoRef.current)
     stopSession()
   }, [stopSession])
 
@@ -199,12 +283,19 @@ export default function Player() {
     } catch { /* PiP not supported */ }
   }, [])
 
+  // 优化的进度保存 - 使用防抖
   const saveProgress = useCallback(() => {
     if (!videoId || isShared) return
     const v = videoRef.current
     if (!v || !isFinite(v.currentTime) || !isFinite(v.duration) || !v.duration) return
     savePlayback(videoId, Math.floor(v.currentTime * 1000), Math.floor(v.duration * 1000)).catch(() => {})
   }, [videoId, isShared])
+
+  // 使用防抖版本的进度保存
+  const debouncedSaveProgress = useMemo(
+    () => debounce(saveProgress, PROGRESS_SAVE_DEBOUNCE_MS),
+    [saveProgress]
+  )
 
   saveProgressRef.current = saveProgress
 
@@ -244,7 +335,28 @@ export default function Player() {
     resetHideTimer()
   }, [resetHideTimer])
 
+  // ============================================================
+  // 预加载下一集逻辑
+  // ============================================================
+
+  const preloadNextVideo = useCallback(() => {
+    if (preloadingNext || related.length === 0) return
+    
+    const nextVideo = related[0]
+    if (!nextVideo || nextVideo.id === videoId) return
+    
+    console.log('Preloading next video:', nextVideo.id)
+    setPreloadingNext(true)
+    preloadVideo(nextVideo.id)
+    
+    // 预加载后优化内存
+    setTimeout(optimizeMemory, 1000)
+  }, [preloadingNext, related, videoId, preloadVideo, optimizeMemory])
+
+  // ============================================================
   // Keyboard shortcuts (extracted to hook)
+  // ============================================================
+
   usePlayerShortcuts(videoRef, {
     togglePlay, toggleFullscreen, toggleMute, togglePiP,
     setVolumeValue, setSpeedValue, showShortcut, resetHideTimer,
@@ -253,6 +365,33 @@ export default function Player() {
 
   // Touch gestures (extracted to hook)
   usePlayerTouch(playerRef, videoRef, { setVolumeValue, showControls })
+
+  // ============================================================
+  // 初始化节流函数
+  // ============================================================
+
+  useEffect(() => {
+    // 节流鼠标移动
+    throttledMouseMoveRef.current = throttle((_e: unknown) => {
+      resetHideTimer()
+    }, MOUSE_MOVE_THROTTLE_MS) as unknown as (e: React.MouseEvent) => void
+
+    // 节流音量变化
+    throttledVolumeChangeRef.current = throttle(() => {
+      const v = videoRef.current
+      if (!v) return
+      if (v.volume > 0 && !v.muted) lastVolumeRef.current = v.volume
+    }, VOLUME_CHANGE_THROTTLE_MS)
+
+    return () => {
+      throttledMouseMoveRef.current = null
+      throttledVolumeChangeRef.current = null
+    }
+  }, [resetHideTimer])
+
+  // ============================================================
+  // 事件监听器
+  // ============================================================
 
   // Save on visibility change — pause, don't destroy
   useEffect(() => {
@@ -281,14 +420,16 @@ export default function Player() {
       stopSession()
       if (shortcutTimerRef.current) clearTimeout(shortcutTimerRef.current)
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+      cleanupPreload()
     }
-  }, [stopSession])
+  }, [stopSession, cleanupPreload])
 
   // 切换视频时重置清晰度/错误状态
   useEffect(() => {
     setVariants([])
     setCurrentQuality('original')
     setVideoError('')
+    setPreloadingNext(false)
   }, [videoId])
 
   // Load video
@@ -301,15 +442,17 @@ export default function Player() {
         try {
           const sv = await getShareVideo(shareToken)
           if (cancelled) return
+          const thumbUrl = sv.thumbUrl ? mediaUrl(sv.thumbUrl) : null;
           const mv: MappedVideo = {
             id: sv.id,
             title: sv.title,
             category: sv.category,
             description: sv.description || '',
-            thumb: sv.thumbUrl ? mediaUrl(sv.thumbUrl) : null,
+            thumb: thumbUrl,
+            thumbnail_url: thumbUrl || '',  // 添加此字段
             stream: mediaUrl(sv.streamUrl),
             cover: null,
-            sourceType: sv.sourceType,
+            sourceType: sv.sourceType as any,
             duration: 0,
             views: 0,
             date: '',
@@ -389,7 +532,8 @@ export default function Player() {
     if (isShared) return
     try {
       const recommended = await getSimilarVideos(videoId)
-      const items = recommended.filter(v => v.id !== videoId).slice(0, 8)
+      // 限制相关视频数量以节省内存
+      const items = recommended.filter(v => v.id !== videoId).slice(0, MAX_RELATED_VIDEOS)
       if (items.length > 0) {
         setRelated(items)
         return
@@ -397,7 +541,7 @@ export default function Player() {
     } catch { /* fall back to category filter */ }
     try {
       const r = await listVideos({ type: 'local_video', size: 20, category })
-      const items = r.items.map(mapVideo).filter((v): v is MappedVideo => !!v && v.id !== videoId).slice(0, 8)
+      const items = r.items.map(mapVideo).filter((v): v is MappedVideo => !!v && v.id !== videoId).slice(0, MAX_RELATED_VIDEOS)
       setRelated(items)
     } catch { /* ignore */ }
   }, [videoId, isShared])
@@ -470,18 +614,34 @@ export default function Player() {
     initVideo()
   }, [video, videoId])
 
-  // 视频事件处理器：timeupdate 只做节流上报，不再 setState，
-  // 进度条 UI 由 PlayerControls 内部订阅 video 事件驱动（H-1 高频重渲染隔离）
+  // ============================================================
+  // 优化的视频事件处理器
+  // ============================================================
+
+  // 节流的 timeupdate 处理器
+  const throttledTimeUpdate = useMemo(
+    () => throttle(() => {
+      const v = videoRef.current
+      if (!v) return
+      if (isShared) return
+      const now = Date.now()
+      if (now - lastSaveTimeRef.current >= SAVE_THROTTLE_MS && videoId && v.duration) {
+        lastSaveTimeRef.current = now
+        debouncedSaveProgress()
+      }
+      
+      // 检查是否需要预加载下一集
+      const duration = safeGetDuration(v)
+      if (duration > 0 && v.currentTime / duration >= PRELOAD_THRESHOLD) {
+        preloadNextVideo()
+      }
+    }, TIME_UPDATE_THROTTLE_MS),
+    [videoId, isShared, debouncedSaveProgress, preloadNextVideo]
+  )
+
   const onTimeUpdate = useCallback(() => {
-    const v = videoRef.current
-    if (!v) return
-    if (isShared) return
-    const now = Date.now()
-    if (now - lastSaveTimeRef.current >= SAVE_THROTTLE_MS && videoId && v.duration) {
-      lastSaveTimeRef.current = now
-      savePlayback(videoId, Math.floor(v.currentTime * 1000), Math.floor(v.duration * 1000)).catch(() => {})
-    }
-  }, [videoId, isShared])
+    throttledTimeUpdate()
+  }, [throttledTimeUpdate])
 
   const onPlay = useCallback(() => {
     setPaused(false)
@@ -526,11 +686,11 @@ export default function Player() {
     setVideoError(t('errors.videoLoadFailed'))
   }, [t])
 
+  // 节流的音量变化处理器
   const onVolumeChange = useCallback(() => {
-    const v = videoRef.current
-    if (!v) return
-    // UI 状态（音量/静音）由 PlayerControls 内部订阅 volumechange 维护
-    if (v.volume > 0 && !v.muted) lastVolumeRef.current = v.volume
+    if (throttledVolumeChangeRef.current) {
+      throttledVolumeChangeRef.current()
+    }
   }, [])
 
   const onRateChange = useCallback(() => {
@@ -601,6 +761,36 @@ export default function Player() {
     }
   }
 
+  // 优化的鼠标移动处理器
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (throttledMouseMoveRef.current) {
+      throttledMouseMoveRef.current(e)
+    }
+  }, [])
+
+  // ============================================================
+  // 记忆化的样式和类名
+  // ============================================================
+
+  const playerWrapClassName = useMemo(() => 
+    `player-wrap ${controlsVisible ? '' : 'controls-hidden'}`,
+    [controlsVisible]
+  )
+
+  const playerTopClassName = useMemo(() => 
+    `player-top ${controlsVisible ? 'show' : ''}`,
+    [controlsVisible]
+  )
+
+  const loadingClassName = useMemo(() => 
+    `player-loading ${showLoading ? 'show' : ''}`,
+    [showLoading]
+  )
+
+  // ============================================================
+  // 渲染
+  // ============================================================
+
   if (error) {
     return (
       <div className="player-error">
@@ -614,9 +804,9 @@ export default function Player() {
   return (
     <div className="player-page">
       <div
-        className={`player-wrap ${controlsVisible ? '' : 'controls-hidden'}`}
+        className={playerWrapClassName}
         ref={playerRef}
-        onMouseMove={resetHideTimer}
+        onMouseMove={onMouseMove}
         onDoubleClick={toggleFullscreen}
         onTouchStart={resetHideTimer}
         onMouseLeave={() => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); hideTimerRef.current = setTimeout(hideControls, 1000) }}
@@ -642,16 +832,21 @@ export default function Player() {
         />
 
         {/* Top bar */}
-        <header className={`player-top ${controlsVisible ? 'show' : ''}`}>
+        <header className={playerTopClassName}>
           <button className="player-back" onClick={() => navigate('/')} aria-label={t('player.backToHome')}>←</button>
           <span className="player-title">{video?.title || ''}</span>
           {user?.isAdmin && <button className="player-delete" onClick={handleDelete} title={t('player.delete')} aria-label={t('player.delete')}>🗑</button>}
         </header>
 
         {/* Loading spinner */}
-        <div className={`player-loading ${showLoading ? 'show' : ''}`}>
+        <div className={loadingClassName}>
           <div className="loading-ring" />
           <span>{t('common.loading')}</span>
+          {preloadingNext && (
+            <div className="preload-indicator">
+              {t('player.preloadingNext')}
+            </div>
+          )}
         </div>
 
         {/* Video load error */}
@@ -705,6 +900,16 @@ export default function Player() {
         <div className="player-detail">
           <div className="pd-meta">
             <span style={{ background: getCatColor(video.category) + '1a', color: getCatColor(video.category) }}>{video.category || t('common.other')}</span>
+            {user && !isShared && (
+              <button className={`pd-action-btn ${favorited ? 'favorited' : ''}`} onClick={handleFavorite} aria-label={favorited ? '取消收藏' : '收藏'}>
+                {favorited ? '❤️' : '♡'} {favorited ? (t('player.favorited') as string || '已收藏') : (t('player.favorite') as string || '收藏')}
+              </button>
+            )}
+            {user && !isShared && (
+              <button className="pd-action-btn" onClick={() => setShowPlaylistPicker(true)}>
+                ➕ {t('player.addToPlaylist') as string || '加入播放列表'}
+              </button>
+            )}
             {user && (
               <button className="pd-share-btn" onClick={handleShare}>
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
@@ -713,6 +918,27 @@ export default function Player() {
             )}
             {showShareTooltip && <span className="pd-share-tooltip">{shareTooltipMsg}</span>}
           </div>
+          {showPlaylistPicker && (
+            <div className="cd-overlay" onClick={() => setShowPlaylistPicker(false)}>
+              <div className="cd-dialog" role="dialog" aria-modal="true" aria-label="选择播放列表" onClick={e => e.stopPropagation()}>
+                <h3 className="cd-title">选择播放列表</h3>
+                <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0' }}>
+                  {myPlaylists.length === 0 ? (
+                    <p style={{ color: 'var(--text3)', fontSize: 14 }}>暂无播放列表，去个人中心创建</p>
+                  ) : (
+                    myPlaylists.map((pl: any) => (
+                      <button key={pl.id} className="cd-btn cd-btn-outline" style={{ width: '100%', justifyContent: 'flex-start' }} onClick={() => handleAddToPlaylist(pl.id)}>
+                        {pl.name} ({pl.item_count})
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="cd-actions">
+                  <button className="cd-btn cd-btn-cancel" onClick={() => setShowPlaylistPicker(false)}>取消</button>
+                </div>
+              </div>
+            </div>
+          )}
           <h1 className="pd-title">
             {video.title.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || video.title}
           </h1>

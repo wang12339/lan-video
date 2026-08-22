@@ -79,11 +79,13 @@ mod tests {
     use crate::services::email_service::EmailService;
     use crate::services::media_service::MediaService;
     use crate::services::playback_service::PlaybackService;
+    use crate::services::playlist_service::PlaylistService;
     use crate::services::recommendation_service::RecommendationService;
     use crate::services::search_service::SearchService;
     use crate::services::share_service::ShareService;
     use crate::services::tag_service::TagService;
     use crate::services::task_queue::TaskQueue;
+    use crate::services::tenant_service::TenantService;
     use crate::services::transcoder::Transcoder;
     use crate::services::video_service::VideoService;
     use crate::state::{AppState, PlaybackSessionTracker, RepoLayer, ServiceLayer};
@@ -128,10 +130,12 @@ mod tests {
             tenant: TenantRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
+        let playlist_service = PlaylistService::new(repos.playlist.clone());
         let services = ServiceLayer {
             video: VideoService::new(repos.video.clone(), config.clone()),
             media: MediaService::new(repos.video.clone(), config.clone()),
             playback: playback_service.clone(),
+            playlist: playlist_service,
             auth: AuthService::new(
                 repos.user.clone(),
                 playback_service,
@@ -146,6 +150,7 @@ mod tests {
             comment: CommentService::new(repos.comment.clone(), repos.video.clone()),
             share: ShareService::new(repos.share.clone()),
             admin: AdminService::new(repos.user.clone()),
+            tenant: TenantService::new(repos.tenant.clone()),
         };
         let transcoder = Transcoder::new(&std::env::temp_dir());
         Arc::new(AppState {

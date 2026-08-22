@@ -20,10 +20,49 @@
   border-bottom: 1px solid var(--border);
 }
 
+.search-history-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-history-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .search-history-title {
   font-size: 0.875rem;
   color: var(--text3);
   font-weight: 500;
+}
+
+.search-history-count {
+  font-size: 0.8125rem;
+  color: var(--text3);
+  opacity: 0.7;
+}
+
+.search-history-privacy {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) ease;
+  opacity: 0.6;
+}
+
+.search-history-privacy:hover {
+  opacity: 1;
+  background: var(--bg3);
+}
+
+.search-history-privacy.active {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .search-history-clear {
@@ -40,6 +79,22 @@
 .search-history-clear:hover {
   color: var(--text);
   background: var(--bg3);
+}
+
+.search-history-privacy-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg3);
+  color: var(--text3);
+  font-size: 0.8125rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-history-privacy-notice svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .search-history-list {
@@ -59,18 +114,39 @@
   background: var(--bg3);
 }
 
-.search-history-icon {
-  color: var(--text3);
+.search-history-item.private {
+  background: rgba(var(--accent-rgb), 0.05);
+  border-left: 3px solid var(--accent);
+}
+
+.search-history-item-icon {
   flex-shrink: 0;
 }
 
-.search-history-text {
+.search-history-icon {
+  color: var(--text3);
+}
+
+.search-history-item-content {
   flex: 1;
+  min-width: 0;
+}
+
+.search-history-text {
+  display: block;
   color: var(--text2);
   font-size: 0.9375rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.search-history-time {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text3);
+  opacity: 0.7;
+  margin-top: 2px;
 }
 
 .search-history-item:hover .search-history-text {
@@ -102,4 +178,99 @@
   text-align: center;
   color: var(--text3);
   font-size: 0.875rem;
+}
+
+.search-history-empty svg {
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+
+/* 确认对话框样式 */
+.search-history-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.search-history-confirm-dialog {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 360px;
+  width: 90%;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+.search-history-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.search-history-confirm-header svg {
+  color: var(--accent);
+}
+
+.search-history-confirm-content {
+  margin-bottom: 20px;
+  color: var(--text2);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.search-history-confirm-count {
+  color: var(--text3);
+  font-size: 0.875rem;
+  margin-top: 8px;
+}
+
+.search-history-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.search-history-confirm-cancel {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all var(--duration-fast) ease;
+}
+
+.search-history-confirm-cancel:hover {
+  background: var(--bg4);
+  color: var(--text);
+}
+
+.search-history-confirm-delete {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all var(--duration-fast) ease;
+}
+
+.search-history-confirm-delete:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
 }

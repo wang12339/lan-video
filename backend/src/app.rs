@@ -43,11 +43,13 @@ use crate::services::comment_service::CommentService;
 use crate::services::email_service::EmailService;
 use crate::services::media_service::MediaService;
 use crate::services::playback_service::PlaybackService;
+use crate::services::playlist_service::PlaylistService;
 use crate::services::recommendation_service::RecommendationService;
 use crate::services::search_service::SearchService;
 use crate::services::share_service::ShareService;
 use crate::services::tag_service::TagService;
 use crate::services::task_queue::TaskQueue;
+use crate::services::tenant_service::TenantService;
 use crate::services::transcoder::Transcoder;
 use crate::services::video_service::VideoService;
 use crate::state::{
@@ -94,12 +96,14 @@ pub async fn build_router(config: AppConfig) -> Router {
     let video_service = VideoService::new(video_repo.clone(), config.clone());
     let media_service = MediaService::new(video_repo.clone(), config.clone());
     let playback_service = PlaybackService::new(playback_repo.clone());
+    let playlist_service = PlaylistService::new(playlist_repo.clone());
     let tag_service = TagService::new(tag_repo.clone(), video_repo.clone());
     let search_service = SearchService::new(video_repo.clone());
     let recommendation_service = RecommendationService::new(video_repo.clone());
     let comment_service = CommentService::new(comment_repo.clone(), video_repo.clone());
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
+    let tenant_service = TenantService::new(tenant_repo.clone());
     let email_service = EmailService::new(config.clone());
     // Initialize Redis early so the rate limiter can use it for persistence.
     let redis_cm = crate::services::redis::init_redis(&config.redis_url).await;
@@ -175,6 +179,7 @@ pub async fn build_router(config: AppConfig) -> Router {
             video: video_service.clone(),
             media: media_service.clone(),
             playback: playback_service,
+            playlist: playlist_service,
             auth: auth_service,
             email: email_service,
             tag: tag_service,
@@ -183,6 +188,7 @@ pub async fn build_router(config: AppConfig) -> Router {
             comment: comment_service,
             share: share_service,
             admin: admin_service,
+            tenant: tenant_service,
         },
         config: config.clone(),
         redis: redis_cm.map(|cm| (*cm).clone()),
@@ -535,6 +541,14 @@ pub async fn build_router(config: AppConfig) -> Router {
             .route("/admin/system", get(handlers::admin::system_info))
             .route("/admin/logs", get(handlers::admin::get_logs))
             .route("/admin/logs", delete(handlers::admin::clear_logs))
+            .route("/admin/performance/metrics", get(handlers::admin::get_performance_metrics))
+            .route("/admin/performance/reset", post(handlers::admin::reset_performance_metrics))
+            // 租户管理路由
+            .route("/admin/tenants", get(handlers::admin::admin_tenant::list_tenants))
+            .route("/admin/tenants/{id}", get(handlers::admin::admin_tenant::get_tenant))
+            .route("/admin/tenants/{id}", put(handlers::admin::admin_tenant::update_tenant))
+            .route("/admin/tenants/{id}/stats", get(handlers::admin::admin_tenant::get_tenant_stats))
+            .route("/admin/tenants/{id}/toggle", post(handlers::admin::admin_tenant::toggle_tenant))
             .route_layer(axum_mw::from_fn(admin_auth))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         7200,

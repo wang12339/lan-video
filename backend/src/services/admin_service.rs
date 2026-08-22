@@ -1,33 +1,51 @@
 use crate::repositories::user_repo::{UserRepository, UserWithStatus};
 use crate::util::error::ServiceError;
 use crate::util::password;
+use crate::util::password::{MAX_PASSWORD_LEN, MIN_PASSWORD_LEN};
 
-const MIN_PASSWORD_LEN: usize = 10;
-const MAX_PASSWORD_LEN: usize = 128;
-
+/// Service layer for administrative user-management operations.
+///
+/// Provides methods to list, delete, kick, approve, and modify user accounts
+/// within a tenant. All mutation methods return an [`ActionOutcome`] indicating
+/// success or failure with an optional error message.
 #[derive(Clone)]
 pub struct AdminService {
     user_repo: UserRepository,
 }
 
-/// Result of an admin user-management action. `error_msg` is None on success.
+/// Result of an admin user-management action.
+///
+/// `error_msg` is `None` on success, and contains a human-readable
+/// error description when the action could not be completed (e.g. user not found).
 pub struct ActionOutcome {
+    /// Whether the operation succeeded.
     pub ok: bool,
+    /// Human-readable error message, or `None` on success.
     pub error_msg: Option<String>,
+    /// Number of records deleted (used by bulk-delete operations).
     pub deleted_count: Option<i64>,
+    /// The user's new role value after the action, if applicable.
     pub new_role: Option<i16>,
 }
 
 impl AdminService {
+    /// Creates a new `AdminService` backed by the given user repository.
     pub fn new(user_repo: UserRepository) -> Self {
         Self { user_repo }
     }
 
+    /// Lists all users belonging to the specified tenant.
+    ///
+    /// Returns each user together with their online/offline status.
     pub async fn list_users(&self, tenant_id: i64) -> Result<Vec<UserWithStatus>, ServiceError> {
         let users = self.user_repo.list_users(tenant_id).await?;
         Ok(users)
     }
 
+    /// Deletes the user identified by `target_id`.
+    ///
+    /// Returns an error if the actor attempts to delete themselves.
+    /// Returns `ok: false` with an error message if the target user does not exist.
     pub async fn delete_user(
         &self,
         target_id: i64,
@@ -54,6 +72,13 @@ impl AdminService {
         }
     }
 
+    /// Resets the password for the user identified by `target_id`.
+    ///
+    /// The new password is validated against length constraints and a weak-password list,
+    /// then hashed and persisted. All existing auth tokens for the user are invalidated
+    /// to force a re-login.
+    ///
+    /// Returns an error if the password does not meet policy requirements.
     pub async fn reset_user_password(
         &self,
         target_id: i64,
@@ -62,7 +87,10 @@ impl AdminService {
         if new_password.chars().count() < MIN_PASSWORD_LEN
             || new_password.chars().count() > MAX_PASSWORD_LEN
         {
-            return Err(ServiceError::bad_request("密码长度需在 10-128 个字符之间"));
+            return Err(ServiceError::bad_request(format!(
+                "密码长度需在 {}-{} 个字符之间",
+                MIN_PASSWORD_LEN, MAX_PASSWORD_LEN
+            )));
         }
         let lower = new_password.to_ascii_lowercase();
         let weak_list = [
@@ -78,7 +106,10 @@ impl AdminService {
             "monkey123",
         ];
         if weak_list.iter().any(|w| lower == *w) {
-            return Err(ServiceError::bad_request("密码长度需在 10-128 个字符之间"));
+            return Err(ServiceError::bad_request(format!(
+                "密码长度需在 {}-{} 个字符之间",
+                MIN_PASSWORD_LEN, MAX_PASSWORD_LEN
+            )));
         }
         let hash = password::hash(new_password).map_err(|e| {
             tracing::error!("password hash failed: {}", e);
@@ -108,6 +139,10 @@ impl AdminService {
         })
     }
 
+    /// Toggles the admin status of the user identified by `target_id`.
+    ///
+    /// Returns an error if the actor attempts to toggle their own admin status.
+    /// On success, returns the user's updated role in `new_role`.
     pub async fn toggle_user_admin(
         &self,
         target_id: i64,
@@ -134,6 +169,10 @@ impl AdminService {
         })
     }
 
+    /// Approves or rejects a pending user registration.
+    ///
+    /// When `approved` is `true`, the user is marked as approved and can log in.
+    /// When `approved` is `false`, the user record is permanently deleted.
     pub async fn approve_user(
         &self,
         target_id: i64,
@@ -166,6 +205,10 @@ impl AdminService {
         }
     }
 
+    /// Kicks a user by invalidating all of their active auth tokens.
+    ///
+    /// Returns the number of tokens that were deleted, which effectively forces
+    /// the user to re-authenticate on all devices.
     pub async fn kick_user(&self, target_id: i64) -> Result<i64, ServiceError> {
         let deleted = self.user_repo.delete_tokens_by_user_id(target_id).await?;
         Ok(deleted as i64)

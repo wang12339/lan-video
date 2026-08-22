@@ -68,6 +68,7 @@
     "close": "关闭提示"
   },
   "common": {
+    "skipToContent": "跳至主内容",
     "loading": "加载中...",
     "loadMore": "加载更多",
     "noMore": "没有更多了",
@@ -629,6 +630,9 @@
     "rateLimit": "请求过于频繁，请稍后再试",
     "componentError": "组件加载失败",
     "unknownError": "发生未知错误",
+    "reloadPage": "刷新页面",
+    "details": "查看错误详情",
+    "retrying": "正在重试 ({{current}}/{{max}})...",
     "loadFailed": "加载失败",
     "loadFailedNetwork": "加载失败，请检查网络后重试",
     "videoLoadFailed": "视频加载失败，请检查网络后重试",
@@ -643,7 +647,22 @@
     "recentSearches": "最近搜索",
     "clear": "清空",
     "clearHistory": "清空搜索历史",
-    "delete": "删除"
+    "delete": "删除",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "noHistory": "暂无搜索记录",
+    "privacyModeOn": "隐私模式已开启",
+    "privacyModeOff": "隐私模式已关闭",
+    "enablePrivacy": "开启隐私模式",
+    "disablePrivacy": "关闭隐私模式",
+    "privacyModeActive": "隐私模式：搜索记录不会被保存",
+    "confirmClearTitle": "确认清空",
+    "confirmClearMessage": "确定要清空所有搜索历史吗？此操作不可撤销。",
+    "recordsWillBeDeleted": "将删除 {{count}} 条记录",
+    "clearAll": "全部清空",
+    "showStats": "显示统计",
+    "hideStats": "隐藏统计"
   },
   "shortcuts": {
     "title": "键盘快捷键",
@@ -669,7 +688,12 @@
     "general": "通用",
     "closeDialog": "关闭对话框",
     "scrollToTop": "回到顶部",
-    "scrollToBottom": "跳到底部"
+    "scrollToBottom": "跳到底部",
+    "editKey": "修改快捷键",
+    "resetKey": "恢复默认",
+    "resetAll": "全部恢复默认",
+    "pressNewKey": "按下新的快捷键…",
+    "conflictAssigned": "被多个操作占用：{{names}}"
   },
   "stats": {
     "title": "观看统计",
@@ -689,6 +713,36 @@
     "2hours": "2 小时",
     "cancel": "取消定时",
     "set": "定时",
-    "after": "后关闭"
+    "after": "后关闭",
+    "pause": "暂停",
+    "resume": "继续",
+    "remaining": "剩余时间",
+    "paused": "已暂停",
+    "customTime": "自定义时间",
+    "minUnit": "分钟",
+    "hourUnit": "小时",
+    "expired": "定时已到，播放已关闭"
+  },
+  "offline": {
+    "disconnected": "网络连接已断开",
+    "reconnected": "网络已恢复",
+    "online": "网络已连接",
+    "close": "关闭",
+    "duration": "离线时长",
+    "reconnectAttempts": "重连尝试",
+    "connectionType": "连接类型",
+    "reconnecting": "正在重连...",
+    "retryConnection": "重试连接",
+    "slowConnection": "网络连接较慢",
+    "availableOffline": "离线可用功能",
+    "playCachedVideos": "播放已缓存视频",
+    "viewHistory": "查看观看历史",
+    "browseFavorites": "浏览收藏内容",
+    "managePlaylists": "管理播放列表",
+    "syncing": "正在同步数据...",
+    "synced": "数据已同步",
+    "syncNow": "立即同步",
+    "seconds": "秒",
+    "minutes": "分"
   }
 }

@@ -9,10 +9,11 @@ const DashboardTab = lazy(() => import('./DashboardTab'))
 const VideosTab = lazy(() => import('./VideosTab'))
 const UsersTab = lazy(() => import('./UsersTab'))
 const TagsTab = lazy(() => import('./TagsTab'))
+const TenantTab = lazy(() => import('./TenantTab'))
 const SystemTab = lazy(() => import('./SystemTab'))
 const LogsTab = lazy(() => import('./LogsTab'))
 
-type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'system' | 'logs'
+type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'system' | 'logs'
 type MediaSubTab = 'video' | 'image'
 
 const TABS: { key: Tab; icon: string }[] = [
@@ -20,6 +21,7 @@ const TABS: { key: Tab; icon: string }[] = [
   { key: 'videos', icon: '🎬' },
   { key: 'users', icon: '👥' },
   { key: 'tags', icon: '🏷️' },
+  { key: 'tenants', icon: '🏢' },
   { key: 'system', icon: '⚙️' },
   { key: 'logs', icon: '📋' },
 ]
@@ -144,6 +146,7 @@ export default function Admin() {
               )}
               {tab === 'users' && <UsersTab />}
               {tab === 'tags' && <TagsTab />}
+              {tab === 'tenants' && <TenantTab />}
               {tab === 'system' && <SystemTab />}
               {tab === 'logs' && <LogsTab />}
             </div>

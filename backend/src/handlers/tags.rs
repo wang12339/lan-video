@@ -1,69 +1,16 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::state::AppState;
-use crate::util::hashid;
-use crate::util::response::{
-    conflict, error_response, internal_error_log, ErrorResponse, SafeJson,
+use crate::models::tag::{
+    CreateTagRequest, TagListResponse, TagQuery, TagResponse, UpdateTagRequest,
 };
-
-#[derive(Deserialize)]
-pub struct CreateTagRequest {
-    pub name: String,
-    pub color: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateTagRequest {
-    pub name: Option<String>,
-    pub color: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TagResponse {
-    pub id: i32,
-    pub name: String,
-    pub color: Option<String>,
-    pub usage_count: i32,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TagListResponse {
-    pub tags: Vec<TagResponse>,
-    pub total: i64,
-    pub page: i64,
-    pub size: i64,
-}
-
-#[derive(Deserialize)]
-pub struct TagQuery {
-    pub page: Option<i64>,
-    pub size: Option<i64>,
-}
-
-/// Error message from `tag_service` for a unique-violation (SQLSTATE 23505)
-/// on tag creation, e.g. re-creating a tag whose name already exists.
-const TAG_ALREADY_EXISTS: &str = "标签已存在";
-/// Error message from `tag_service` when an update targets a tag name that is
-/// already taken by another tag (also a 23505 unique violation).
-const TAG_NAME_TAKEN: &str = "标签名已存在";
-
-impl From<crate::services::tag_service::TagResponse> for TagResponse {
-    fn from(t: crate::services::tag_service::TagResponse) -> Self {
-        TagResponse {
-            id: t.id,
-            name: t.name,
-            color: t.color,
-            usage_count: t.usage_count,
-        }
-    }
-}
+use crate::state::AppState;
+use crate::util::error::ServiceError;
+use crate::util::hashid;
+use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
 /// GET /tags
 ///
@@ -115,10 +62,10 @@ pub async fn create_tag(
         .await
         .map_err(|e| {
             tracing::error!("create_tag failed: {}", e);
-            if e == TAG_ALREADY_EXISTS {
-                return conflict(e);
+            match e {
+                ServiceError::Duplicate(_) => error_response(StatusCode::CONFLICT, e.to_string()),
+                _ => error_response(StatusCode::BAD_REQUEST, "创建标签失败"),
             }
-            error_response(StatusCode::BAD_REQUEST, "创建标签失败")
         })?;
 
     Ok(Json(tag.into()))
@@ -133,7 +80,10 @@ pub async fn get_tag(
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
     let tag = state.services.tag.get_tag(tag_id).await.map_err(|e| {
         tracing::error!("get_tag failed: {}", e);
-        error_response(StatusCode::NOT_FOUND, "标签不存在")
+        match e {
+            ServiceError::NotFound(_) => error_response(StatusCode::NOT_FOUND, "标签不存在"),
+            _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "获取标签失败"),
+        }
     })?;
 
     Ok(Json(tag.into()))
@@ -160,10 +110,11 @@ pub async fn update_tag(
         .await
         .map_err(|e| {
             tracing::error!("update_tag failed: {}", e);
-            if e == TAG_NAME_TAKEN {
-                return conflict(e);
+            match e {
+                ServiceError::Duplicate(_) => error_response(StatusCode::CONFLICT, e.to_string()),
+                ServiceError::NotFound(_) => error_response(StatusCode::NOT_FOUND, "标签不存在"),
+                _ => error_response(StatusCode::BAD_REQUEST, "更新标签失败"),
             }
-            error_response(StatusCode::BAD_REQUEST, "更新标签失败")
         })?;
 
     Ok(Json(tag.into()))
@@ -178,7 +129,10 @@ pub async fn delete_tag(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     state.services.tag.delete_tag(tag_id).await.map_err(|e| {
         tracing::error!("delete_tag failed: {}", e);
-        error_response(StatusCode::BAD_REQUEST, "删除标签失败")
+        match e {
+            ServiceError::NotFound(_) => error_response(StatusCode::NOT_FOUND, "标签不存在"),
+            _ => error_response(StatusCode::BAD_REQUEST, "删除标签失败"),
+        }
     })?;
 
     Ok(Json(serde_json::json!({
@@ -221,10 +175,13 @@ pub async fn add_tags_to_video(
         .await
         .map_err(|e| {
             tracing::error!("add_tags_to_video failed: {}", e);
-            if e == "无权操作" {
-                error_response(StatusCode::FORBIDDEN, &e)
-            } else {
-                error_response(StatusCode::BAD_REQUEST, "添加标签失败")
+            match e {
+                ServiceError::Forbidden(_) => error_response(StatusCode::FORBIDDEN, e.to_string()),
+                ServiceError::NotFound(_) => error_response(StatusCode::NOT_FOUND, e.to_string()),
+                ServiceError::Validation(_) => {
+                    error_response(StatusCode::BAD_REQUEST, e.to_string())
+                }
+                _ => error_response(StatusCode::BAD_REQUEST, "添加标签失败"),
             }
         })?;
 
@@ -252,10 +209,9 @@ pub async fn remove_tags_from_video(
         .await
         .map_err(|e| {
             tracing::error!("remove_tags_from_video failed: {}", e);
-            if e == "无权操作" {
-                error_response(StatusCode::FORBIDDEN, &e)
-            } else {
-                error_response(StatusCode::BAD_REQUEST, "移除标签失败")
+            match e {
+                ServiceError::Forbidden(_) => error_response(StatusCode::FORBIDDEN, e.to_string()),
+                _ => error_response(StatusCode::BAD_REQUEST, "移除标签失败"),
             }
         })?;
 
@@ -282,10 +238,9 @@ pub async fn remove_tag_from_video(
         .await
         .map_err(|e| {
             tracing::error!("remove_tag_from_video failed: {}", e);
-            if e == "无权操作" {
-                error_response(StatusCode::FORBIDDEN, &e)
-            } else {
-                error_response(StatusCode::BAD_REQUEST, "移除标签失败")
+            match e {
+                ServiceError::Forbidden(_) => error_response(StatusCode::FORBIDDEN, e.to_string()),
+                _ => error_response(StatusCode::BAD_REQUEST, "移除标签失败"),
             }
         })?;
 

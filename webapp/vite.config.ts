@@ -16,9 +16,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    // 启用 CSS 代码分割
+    target: 'es2020',
     cssCodeSplit: true,
-    // 启用压缩（使用默认的 esbuild）
+    sourcemap: false,
+    chunkSizeWarningLimit: 90,
+    reportCompressedSize: true,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -31,8 +33,14 @@ export default defineConfig({
           if (id.includes('node_modules/@tanstack/react-query')) {
             return 'query'
           }
+          if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) {
+            return 'i18n'
+          }
         },
       },
+    },
+    esbuild: {
+      drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
     },
   },
   server: {
@@ -49,6 +57,8 @@ export default defineConfig({
       '/tags': 'http://localhost:8082',
       '/recommendations': 'http://localhost:8082',
       '/share': 'http://localhost:8082',
+      '/playlists': 'http://localhost:8082',
+      '/comments': 'http://localhost:8082',
     },
   },
   test: {

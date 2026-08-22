@@ -1429,7 +1429,7 @@ async fn test_search_videos_handler_edges() {
         .expect("add video");
 
     // 空查询 → 短路空结果（200）
-    let q = handlers::videos::SearchQuery {
+    let q = atmos_video_backend::models::video::SearchQuery {
         q: String::new(),
         page: None,
         size: None,
@@ -1441,7 +1441,7 @@ async fn test_search_videos_handler_edges() {
     assert!(resp.items.is_empty());
 
     // 纯空白 + 负 page/size → 空结果，且 page/size 被 clamp
-    let q = handlers::videos::SearchQuery {
+    let q = atmos_video_backend::models::video::SearchQuery {
         q: "   ".into(),
         page: Some(-3),
         size: Some(-7),
@@ -1454,7 +1454,7 @@ async fn test_search_videos_handler_edges() {
     assert_eq!(resp.size, 1, "负 size 应 clamp 到 1");
 
     // 查询词超过 200 字符 → 400
-    let q = handlers::videos::SearchQuery {
+    let q = atmos_video_backend::models::video::SearchQuery {
         q: "a".repeat(201),
         page: None,
         size: None,
@@ -1466,7 +1466,7 @@ async fn test_search_videos_handler_edges() {
     }
 
     // 正常命中
-    let q = handlers::videos::SearchQuery {
+    let q = atmos_video_backend::models::video::SearchQuery {
         q: unique.clone(),
         page: Some(0),
         size: Some(10),
@@ -1481,7 +1481,7 @@ async fn test_search_videos_handler_edges() {
     );
 
     // 特殊字符 → 200 空结果，不报错
-    let q = handlers::videos::SearchQuery {
+    let q = atmos_video_backend::models::video::SearchQuery {
         q: "a%'\"\\--".into(),
         page: None,
         size: None,
@@ -1519,7 +1519,7 @@ async fn test_upload_video_wrong_file_type() {
         .await;
     let err = res.expect_err("伪装成 mp4 的文本文件应上传失败");
     assert!(
-        err.contains("文件验证失败"),
+        format!("{}", err).contains("文件验证失败"),
         "错误信息应为验证失败: {}",
         err
     );
@@ -1602,7 +1602,7 @@ async fn test_upload_video_duplicate_hash_rejected() {
         .upload_video_file(&fname, &tmp2, "local", user_id)
         .await;
     let err = res.expect_err("相同文件重复上传应被拒绝");
-    assert!(err.contains("重复"), "错误信息应指明重复: {}", err);
+    assert!(format!("{}", err).contains("重复"), "错误信息应指明重复: {}", err);
     assert!(!tmp2.exists(), "重复上传的临时文件应被清理");
 
     // 清理：视频行 + media_root 中新出现的文件

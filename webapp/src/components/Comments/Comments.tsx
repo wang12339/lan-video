@@ -63,34 +63,62 @@ export default function Comments({ videoId }: Props) {
 
   const createMutation = useMutation({
     mutationFn: (text: string) => createComment(videoId, text),
-    onSuccess: (created) => {
-      setContent('')
-      setSubmitError('')
-      // 乐观插入第一页头部，避免提交后整页重拉
+    onMutate: async (text) => {
+      await queryClient.cancelQueries({ queryKey })
+      const prev = queryClient.getQueryData<InfiniteData<CommentListResponse>>(queryKey)
+      const tempId = `temp-${Date.now()}`
+      const optimistic: Comment = {
+        id: tempId,
+        videoId,
+        userId: user?.id ?? 'me',
+        username: user?.username ?? t('common.you'),
+        avatarUrl: user?.avatarUrl ?? null,
+        content: text,
+        parentId: null,
+        createdAt: new Date().toISOString(),
+      }
       queryClient.setQueryData<InfiniteData<CommentListResponse>>(queryKey, (old) => {
         if (!old) return old
         return {
           ...old,
           pages: old.pages.map((p, i) => (i === 0
-            ? { ...p, comments: [created, ...p.comments], total: p.total + 1 }
+            ? { ...p, comments: [optimistic, ...p.comments], total: p.total + 1 }
             : p)),
         }
       })
-      // 滚动到新评论
+      setContent('')
+      setSubmitError('')
+      return { prev, tempId }
+    },
+    onError: (_err, _text, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(queryKey, ctx.prev)
+      setSubmitError(t('comments.submitFailed'))
+      // 失败时回滚并恢复输入（若需要可把 text 设回）
+    },
+    onSuccess: (created, _text, ctx) => {
+      // 用真实 id 替换临时 id
+      queryClient.setQueryData<InfiniteData<CommentListResponse>>(queryKey, (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          pages: old.pages.map((p, i) => (i === 0
+            ? { ...p, comments: p.comments.map(c => c.id === ctx?.tempId ? created : c) }
+            : p)),
+        }
+      })
       setTimeout(() => {
         newCommentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 100)
     },
-    onError: () => setSubmitError(t('comments.submitFailed')),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteComment(id),
-    onSuccess: (_data, id) => {
-      setDeleteTarget(null)
-      // 本地移除，避免删除后重拉
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey })
+      const prev = queryClient.getQueryData<InfiniteData<CommentListResponse>>(queryKey)
       queryClient.setQueryData<InfiniteData<CommentListResponse>>(queryKey, (old) => {
-        if (!old || !old.pages.some((p) => p.comments.some((c) => c.id === id))) return old
+        if (!old) return old
         return {
           ...old,
           pages: old.pages.map((p) => ({
@@ -100,8 +128,17 @@ export default function Comments({ videoId }: Props) {
           })),
         }
       })
+      setDeleteTarget(null)
+      return { prev }
     },
-    onError: () => setDeleteError(t('errors.serverError')),
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(queryKey, ctx.prev)
+      setDeleteError(t('errors.serverError'))
+    },
+    onSettled: () => {
+      // 确保最终一致性
+      queryClient.invalidateQueries({ queryKey })
+    },
   })
 
   const submit = () => {

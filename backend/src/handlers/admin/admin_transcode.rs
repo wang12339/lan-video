@@ -1,48 +1,14 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::models::admin::{
+    TranscodeRequest, TranscodeResponse, TranscodeStatusResponse,
+};
 use crate::services::media_service::safe_media_path;
 use crate::state::AppState;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
-
-#[derive(Deserialize)]
-pub struct TranscodeRequest {
-    pub resolutions: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct TranscodeResponse {
-    pub success: bool,
-    pub message: String,
-    pub job_id: Option<i32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscodeStatusResponse {
-    pub video_id: i64,
-    pub variants: Vec<VariantInfo>,
-    pub pending_jobs: Vec<JobInfo>,
-}
-
-#[derive(Serialize)]
-pub struct VariantInfo {
-    pub resolution: String,
-    pub file_path: String,
-    pub file_size: i64,
-    pub bitrate: Option<i32>,
-}
-
-#[derive(Serialize)]
-pub struct JobInfo {
-    pub id: i32,
-    pub resolution: String,
-    pub status: String,
-    pub progress: i32,
-}
 
 /// POST /admin/videos/{id}/transcode
 ///

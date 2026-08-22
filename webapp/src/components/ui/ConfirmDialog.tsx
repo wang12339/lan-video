@@ -1,15 +1,33 @@
-import { useState, useEffect, useRef, useId } from 'react'
+import { useState, useEffect, useRef, useId, useCallback } from 'react'
 import i18n from '../../i18n'
 import './ConfirmDialog.css'
+
+type ButtonVariant = 'primary' | 'danger' | 'ghost' | 'outline'
+
+interface CustomButton {
+  text: string
+  variant?: ButtonVariant
+  onClick: () => void | Promise<void>
+  disabled?: boolean
+  loading?: boolean
+}
 
 interface ConfirmDialogProps {
   open: boolean
   title: string
   message: string
+  /** 消息描述（可选，用于无障碍 aria-describedby） */
+  description?: string
   confirmText?: string
   cancelText?: string
   loadingText?: string
+  /** 确认按钮变体：primary(默认) | danger | ghost | outline */
+  confirmVariant?: ButtonVariant
   danger?: boolean
+  /** 自定义额外按钮（显示在取消按钮左侧） */
+  extraButtons?: CustomButton[]
+  /** 点击遮罩层是否可关闭（默认 true） */
+  closeOnOverlay?: boolean
   onConfirm: () => void | Promise<void>
   onCancel: () => void
 }
@@ -18,29 +36,48 @@ export default function ConfirmDialog({
   open,
   title,
   message,
+  description,
   confirmText = i18n.t('common.confirm'),
   cancelText = i18n.t('common.cancel'),
   loadingText = i18n.t('common.processing'),
+  confirmVariant,
   danger = false,
+  extraButtons,
+  closeOnOverlay = true,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const [loading, setLoading] = useState(false)
+  const [extraLoading, setExtraLoading] = useState<Record<number, boolean>>({})
+  const [closing, setClosing] = useState(false)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
+  const descId = useId()
 
   const onConfirmRef = useRef(onConfirm)
   const onCancelRef = useRef(onCancel)
   useEffect(() => { onConfirmRef.current = onConfirm }, [onConfirm])
   useEffect(() => { onCancelRef.current = onCancel }, [onCancel])
 
+  // 关闭动画
+  const handleClose = useCallback(() => {
+    if (loading) return
+    setClosing(true)
+    // 等待动画完成后再调用 onCancel
+    setTimeout(() => {
+      setClosing(false)
+      onCancelRef.current()
+    }, 200)
+  }, [loading])
+
   const handleConfirm = async () => {
     if (loading) return
     setLoading(true)
     try {
       await onConfirmRef.current()
-      onCancelRef.current()
+      handleClose()
     } catch (e) {
       console.error('ConfirmDialog action failed:', e)
     } finally {
@@ -48,10 +85,27 @@ export default function ConfirmDialog({
     }
   }
 
+  const handleExtraClick = async (index: number, btn: CustomButton) => {
+    if (btn.disabled || extraLoading[index]) return
+    setExtraLoading(prev => ({ ...prev, [index]: true }))
+    try {
+      await btn.onClick()
+    } catch (e) {
+      console.error('Extra button action failed:', e)
+    } finally {
+      setExtraLoading(prev => ({ ...prev, [index]: false }))
+    }
+  }
+
+  // 计算确认按钮的最终变体
+  const finalConfirmVariant: ButtonVariant = confirmVariant ?? (danger ? 'danger' : 'primary')
+
   // 打开时聚焦确认按钮，关闭时还原焦点到触发元素
   useEffect(() => {
     if (!open) return
     setLoading(false)
+    setClosing(false)
+    setExtraLoading({})
     lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const timer = setTimeout(() => confirmRef.current?.focus(), 50)
     return () => {
@@ -67,7 +121,7 @@ export default function ConfirmDialog({
       const onButton = document.activeElement instanceof HTMLButtonElement
       if (e.key === 'Escape') {
         e.preventDefault()
-        if (!loading) onCancelRef.current()
+        if (!loading) handleClose()
       } else if (e.key === 'Enter' && !loading && !onButton) {
         e.preventDefault()
         void handleConfirm()
@@ -75,28 +129,78 @@ export default function ConfirmDialog({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, loading])
+  }, [open, loading, handleClose])
 
-  if (!open) return null
+  // 焦点陷阱
+  useEffect(() => {
+    if (!open || !dialogRef.current) return
+    const dialog = dialogRef.current
+    const focusableSelector = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
+    const handleTabTrap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+      if (focusables.length === 0) return
+
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+
+      if (first && last) {  // 添加null检查防止undefined访问
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+
+    dialog.addEventListener('keydown', handleTabTrap)
+    return () => dialog.removeEventListener('keydown', handleTabTrap)
+  }, [open])
+
+  if (!open && !closing) return null
+
+  const overlayClickHandler = closeOnOverlay && !loading ? handleClose : undefined
 
   return (
-    <div className="cd-overlay" onClick={loading ? undefined : onCancel}>
+    <div
+      className={`cd-overlay${closing ? ' cd-overlay-closing' : ''}`}
+      onClick={overlayClickHandler}
+    >
       <div
-        className="cd-dialog"
+        ref={dialogRef}
+        className={`cd-dialog${closing ? ' cd-dialog-closing' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={description ? descId : undefined}
         onClick={e => e.stopPropagation()}
       >
         <h3 className="cd-title" id={titleId}>{title}</h3>
-        <p className="cd-message">{message}</p>
+        <p className="cd-message" id={description ? descId : undefined}>{message}</p>
         <div className="cd-actions">
-          <button className="cd-btn cd-btn-cancel" onClick={onCancel} disabled={loading}>
+          {extraButtons?.map((btn, i) => (
+            <button
+              key={i}
+              className={`cd-btn cd-btn-${btn.variant ?? 'outline'}`}
+              onClick={() => handleExtraClick(i, btn)}
+              disabled={btn.disabled || extraLoading[i] || loading}
+            >
+              {extraLoading[i] ? (btn.loading ?? i18n.t('common.processing')) : btn.text}
+            </button>
+          ))}
+          <button className="cd-btn cd-btn-cancel" onClick={handleClose} disabled={loading}>
             {cancelText}
           </button>
           <button
             ref={confirmRef}
-            className={`cd-btn cd-btn-confirm ${danger ? 'cd-btn-danger' : ''}`}
+            className={`cd-btn cd-btn-${finalConfirmVariant}`}
             onClick={handleConfirm}
             disabled={loading}
           >
@@ -113,19 +217,41 @@ interface AlertDialogProps {
   title?: string
   message: string
   okText?: string
+  /** 确认按钮变体 */
+  okVariant?: ButtonVariant
   onClose: () => void
 }
 
-export function AlertDialog({ open, title = i18n.t('common.alertTitle'), message, okText = i18n.t('common.confirm'), onClose }: AlertDialogProps) {
+export function AlertDialog({ 
+  open, 
+  title = i18n.t('common.alertTitle'), 
+  message, 
+  okText = i18n.t('common.confirm'), 
+  okVariant = 'primary',
+  onClose 
+}: AlertDialogProps) {
   const onCloseRef = useRef(onClose)
   const okRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
+  const descId = useId()
+  const [closing, setClosing] = useState(false)
   useEffect(() => { onCloseRef.current = onClose }, [onClose])
+
+  // 关闭动画
+  const handleClose = useCallback(() => {
+    setClosing(true)
+    setTimeout(() => {
+      setClosing(false)
+      onCloseRef.current()
+    }, 200)
+  }, [])
 
   // 打开时聚焦确定按钮，关闭时还原焦点
   useEffect(() => {
     if (!open) return
+    setClosing(false)
     lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     okRef.current?.focus()
     return () => { lastFocusedRef.current?.focus() }
@@ -137,31 +263,66 @@ export function AlertDialog({ open, title = i18n.t('common.alertTitle'), message
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onCloseRef.current()
+        handleClose()
       } else if (e.key === 'Enter' && !(document.activeElement instanceof HTMLButtonElement)) {
         e.preventDefault()
-        onCloseRef.current()
+        handleClose()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [open, handleClose])
+
+  // 焦点陷阱
+  useEffect(() => {
+    if (!open || !dialogRef.current) return
+    const dialog = dialogRef.current
+    const focusableSelector = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
+    const handleTabTrap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+      if (focusables.length === 0) return
+
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+
+      if (first && last) {  // 添加null检查防止undefined访问
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault()
+            last.focus()
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }
+      }
+    }
+
+    dialog.addEventListener('keydown', handleTabTrap)
+    return () => dialog.removeEventListener('keydown', handleTabTrap)
   }, [open])
 
-  if (!open) return null
+  if (!open && !closing) return null
 
   return (
-    <div className="cd-overlay" onClick={onClose}>
+    <div className={`cd-overlay${closing ? ' cd-overlay-closing' : ''}`} onClick={handleClose}>
       <div
-        className="cd-dialog"
-        role="dialog"
+        ref={dialogRef}
+        className={`cd-dialog${closing ? ' cd-dialog-closing' : ''}`}
+        role="alertdialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={descId}
         onClick={e => e.stopPropagation()}
       >
         <h3 className="cd-title" id={titleId}>{title}</h3>
-        <p className="cd-message">{message}</p>
+        <p className="cd-message" id={descId}>{message}</p>
         <div className="cd-actions">
-          <button ref={okRef} className="cd-btn cd-btn-confirm" onClick={onClose}>
+          <button ref={okRef} className={`cd-btn cd-btn-${okVariant}`} onClick={handleClose}>
             {okText}
           </button>
         </div>

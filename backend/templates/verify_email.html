@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>邮箱验证成功</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+            background: #0a0a0e;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .card {
+            background: #15151a;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 16px;
+            padding: 48px;
+            text-align: center;
+            max-width: 420px;
+            width: 90%;
+        }
+        
+        .icon {
+            font-size: 64px;
+            margin-bottom: 24px;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        
+        p {
+            color: #9a9aa6;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+        
+        a {
+            display: inline-block;
+            background: #ff4433;
+            color: #fff;
+            padding: 12px 32px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 15px;
+            transition: background 0.2s;
+        }
+        
+        a:hover {
+            background: #ff6655;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">✅</div>
+        <h1>邮箱验证成功</h1>
+        <p>您的邮箱已成功验证！<br>现在可以正常使用所有功能。</p>
+        <a href="{{BASE_URL}}/webapp/">进入 Atmos Video</a>
+    </div>
+</body>
+</html>

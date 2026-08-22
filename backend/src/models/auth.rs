@@ -44,3 +44,45 @@ pub struct UserProfileResponse {
     #[serde(rename = "recentHistory")]
     pub recent_history: Vec<super::playback::RecentWatchItem>,
 }
+
+// ── Password reset / forgot password ──
+
+#[derive(Debug, Deserialize)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ForgotPasswordResponse {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordToken {
+    pub token: String,
+}
+
+// ── Email management ──
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEmailRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SendVerificationEmailResponse {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyEmailRequest {
+    pub token: String,
+}

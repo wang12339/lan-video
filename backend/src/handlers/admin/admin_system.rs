@@ -1,8 +1,8 @@
 use axum::{extract::State, http::StatusCode, Extension, Json};
-use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
+use crate::models::admin::{RegistrationToggleRequest, TrackRequest};
 use crate::models::video::OkResponse;
 use crate::state::AppState;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
@@ -21,13 +21,6 @@ pub async fn track_action(
         "用户操作"
     );
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(serde::Deserialize)]
-pub struct TrackRequest {
-    pub action: String,
-    pub target: Option<String>,
-    pub page: Option<String>,
 }
 
 /// GET /admin/stats — 数据统计面板
@@ -107,10 +100,6 @@ pub async fn get_registration_enabled(
 }
 
 /// PUT /admin/config/registration — 开关注册功能
-#[derive(Deserialize)]
-pub struct RegistrationToggleRequest {
-    pub enabled: bool,
-}
 
 pub async fn set_registration_enabled(
     State(state): State<Arc<AppState>>,

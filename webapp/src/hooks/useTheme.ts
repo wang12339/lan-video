@@ -6,31 +6,51 @@ const THEME_KEY = 'atmos.theme'
 
 function getSystemTheme(): 'dark' | 'light' {
   if (typeof window === 'undefined') return 'dark'
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  try {
+    const mm = (window as any).matchMedia
+    if (typeof mm !== 'function') return 'dark'
+    return mm.call(window, '(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  } catch {
+    return 'dark'
+  }
+}
+
+function isValidTheme(v: string | null): v is Theme {
+  return v === 'dark' || v === 'light' || v === 'system'
 }
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window === 'undefined') return 'system'
-    return (localStorage.getItem(THEME_KEY) as Theme) || 'system'
+    try {
+      const raw = localStorage.getItem(THEME_KEY)
+      return isValidTheme(raw) ? raw : 'system'
+    } catch {
+      return 'system'
+    }
   })
 
   const [resolvedTheme, setResolvedTheme] = useState<'dark' | 'light'>(() => {
     if (theme === 'system') return getSystemTheme()
-    return theme
+    // theme is guaranteed to be 'dark'|'light' here after validation
+    return theme as 'dark' | 'light'
   })
 
   // 监听系统主题变化
   useEffect(() => {
     if (theme !== 'system') return
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (e: MediaQueryListEvent) => {
-      setResolvedTheme(e.matches ? 'dark' : 'light')
+    try {
+      const mm = (window as any).matchMedia
+      if (typeof mm !== 'function') return
+      const mediaQuery = mm.call(window, '(prefers-color-scheme: dark)')
+      const handler = (e: MediaQueryListEvent) => {
+        setResolvedTheme(e.matches ? 'dark' : 'light')
+      }
+      mediaQuery.addEventListener('change', handler)
+      return () => mediaQuery.removeEventListener('change', handler)
+    } catch {
+      return
     }
-
-    mediaQuery.addEventListener('change', handler)
-    return () => mediaQuery.removeEventListener('change', handler)
   }, [theme])
 
   // 应用主题到DOM
@@ -47,7 +67,7 @@ export function useTheme() {
 
   const setTheme = useCallback((newTheme: Theme) => {
     setThemeState(newTheme)
-    localStorage.setItem(THEME_KEY, newTheme)
+    try { localStorage.setItem(THEME_KEY, newTheme) } catch {}
     
     if (newTheme === 'system') {
       setResolvedTheme(getSystemTheme())

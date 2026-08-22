@@ -9,6 +9,7 @@
   --text3: #9a9aa6;
   --accent: #ff4433;
   --accent2: #ff6655;
+  --accent-rgb: 255, 68, 51;
   --green: #22c55e;
   --radius: 12px;
   --radius-sm: 8px;
@@ -35,6 +36,31 @@
     --text3: #424245;
     --nav-bg: rgba(255, 255, 255, 0.92);
   }
+}
+
+/* Explicit data-theme overrides — must come after prefers-color-scheme so they win when user toggles */
+:root[data-theme="light"] {
+  --bg: #f2f2f7;
+  --bg2: #ffffff;
+  --bg3: #e5e5ea;
+  --surface: #e8e8ed;
+  --border: rgba(0, 0, 0, 0.18);
+  --text: #0a0a0e;
+  --text2: #1c1c1e;
+  --text3: #424245;
+  --nav-bg: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a0a0e;
+  --bg2: #15151a;
+  --bg3: #1e1e25;
+  --surface: #24242c;
+  --border: rgba(255,255,255,0.12);
+  --text: #ffffff;
+  --text2: #d4d4dc;
+  --text3: #9a9aa6;
+  --nav-bg: rgba(12, 12, 16, 0.92);
 }
 
 * {
@@ -355,3 +381,25 @@ img {
 .hidden { display: none; }
 .w-full { width: 100%; }
 .h-full { height: 100%; }
+
+/* Empty state CTA — used by Home/Gallery/Profile */
+.empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 10px 22px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.empty-cta:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3); color: #fff; }
+.empty-cta:active { transform: translateY(0) scale(0.97); }
+@media (prefers-reduced-motion: reduce) { .empty-cta { transition: none; } }

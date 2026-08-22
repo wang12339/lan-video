@@ -1,13 +1,101 @@
-import { useState, useEffect, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef, useMemo, memo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { listVideos, mapImage } from '../../api'
+import { getToken } from '../../api/client'
 import type { MappedImage } from '../../api/types'
 import './Gallery.css'
 
 const PAGE_SIZE = 40
 const SEARCH_DEBOUNCE_MS = 300
+/** IntersectionObserver rootMargin：提前 300px 触发加载 */
+const INTERSECTION_ROOT_MARGIN = '0px 0px 300px 0px'
+/** 灯箱预加载前后各 2 张图片 */
+const LIGHTBOX_PRELOAD_RANGE = 2
 
+// ── API 响应缓存 ──────────────────────────────────────────────────────────────
+interface CacheEntry {
+  items: MappedImage[]
+  total: number
+  timestamp: number
+}
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 分钟
+const apiCache = new Map<string, CacheEntry>()
+
+function getCacheKey(type: string, query: string, page: number, size: number): string {
+  // 隔离登录态，避免跨账号串读（与 api/client.ts LRU 的 anon/token 隔离一致）
+  const tokenPart = getToken() ?? 'anon'
+  return `${tokenPart}:${type}:${query}:${page}:${size}`
+}
+
+function getCachedData(key: string): CacheEntry | null {
+  const entry = apiCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    apiCache.delete(key)
+    return null
+  }
+  return entry
+}
+
+function setCacheData(key: string, items: MappedImage[], total: number): void {
+  // 限制缓存大小，防止内存泄漏
+  if (apiCache.size > 200) {
+    const oldestKey = apiCache.keys().next().value
+    if (oldestKey !== undefined) apiCache.delete(oldestKey)
+  }
+  apiCache.set(key, { items, total, timestamp: Date.now() })
+}
+
+/** 清空 API 缓存（仅供测试使用） */
+export function clearGalleryCache(): void {
+  apiCache.clear()
+}
+
+// ── 图片卡片组件（memo 优化） ─────────────────────────────────────────────────
+interface GalleryCardProps {
+  img: MappedImage
+  index: number
+  onClick: (idx: number) => void
+  onKeyDown: (e: ReactKeyboardEvent, idx: number) => void
+  t: (key: string, opts?: Record<string, unknown>) => string
+}
+
+const GalleryCard = memo(function GalleryCard({ img, index, onClick, onKeyDown, t }: GalleryCardProps) {
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState(false)
+
+  return (
+    <div
+      className="gallery-card"
+      role="button"
+      tabIndex={0}
+      aria-label={t('gallery.viewLarge', { title: img.title })}
+      onClick={() => onClick(index)}
+      onKeyDown={(e) => onKeyDown(e, index)}
+    >
+      {!error && img.thumb && (
+        <>
+          {!loaded && <div className="gallery-card-placeholder" aria-hidden="true" />}
+          <img
+            src={img.thumb}
+            alt={img.title}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={() => {
+              setError(true)
+              setLoaded(true)
+            }}
+            style={loaded ? undefined : { opacity: 0 }}
+          />
+        </>
+      )}
+    </div>
+  )
+})
+
+// ── 主组件 ────────────────────────────────────────────────────────────────────
 export default function Gallery() {
   const { t } = useTranslation()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -33,6 +121,7 @@ export default function Gallery() {
   const lightboxRef = useRef<HTMLDivElement>(null)
   const prevFocusRef = useRef<HTMLElement | null>(null)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
 
   const loadImages = useCallback(async (pageNum: number, append: boolean) => {
     // 每次调用递增 generation：作废在途请求，旧响应到达时直接丢弃
@@ -43,9 +132,24 @@ export default function Gallery() {
     setAppendError(false)
     if (!append) setTotal(0)
     try {
-      const res = await listVideos({ type: 'local_image', query, page: pageNum, size: PAGE_SIZE })
-      if (gen !== loadGenRef.current) return
-      const mapped = res.items.map(mapImage).filter((v): v is MappedImage => !!v)
+      // 检查缓存
+      const cacheKey = getCacheKey('local_image', query, pageNum, PAGE_SIZE)
+      const cached = getCachedData(cacheKey)
+
+      let mapped: MappedImage[]
+      let newTotal: number
+
+      if (cached) {
+        mapped = cached.items
+        newTotal = cached.total
+      } else {
+        const res = await listVideos({ type: 'local_image', query, page: pageNum, size: PAGE_SIZE })
+        if (gen !== loadGenRef.current) return
+        mapped = res.items.map(mapImage).filter((v): v is MappedImage => !!v)
+        newTotal = res.total
+        setCacheData(cacheKey, mapped, newTotal)
+      }
+
       if (append) {
         // 追加去重，防止重试/翻页异常产生重复卡片
         setImages((prev) => {
@@ -55,7 +159,7 @@ export default function Gallery() {
       } else {
         setImages(mapped)
       }
-      setTotal(res.total)
+      setTotal(newTotal)
       // 本页数量不足一页即视为最后一页，之后不再发起追加请求
       hasMoreRef.current = mapped.length >= PAGE_SIZE
       pageRef.current = pageNum + 1
@@ -80,21 +184,27 @@ export default function Gallery() {
     window.scrollTo({ top: 0 })
   }, [query, loadImages])
 
-  // 滚动接近底部时追加下一页（loadingRef 防止重复触发）
+  // ── IntersectionObserver 替代 scroll 事件（虚拟滚动触发器） ───────────────
   useEffect(() => {
-    const onScroll = () => {
-      if (loadingRef.current || !hasMoreRef.current) return
-      const doc = document.documentElement
-      const scrollTop = window.pageYOffset || doc.scrollTop || document.body.scrollTop || 0
-      const scrollHeight = Math.max(doc.scrollHeight, document.body.scrollHeight)
-      const clientHeight = window.innerHeight || doc.clientHeight
-      if (scrollTop + clientHeight >= scrollHeight - 300) {
-        loadImages(pageRef.current, true)
-      }
-    }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [loadImages])
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    // 哨兵不可见时（无更多数据或正在加载）不创建 observer
+    if (!hasMoreRef.current || loadingRef.current) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (!entry) return
+        if (entry.isIntersecting && !loadingRef.current && hasMoreRef.current) {
+          loadImages(pageRef.current, true)
+        }
+      },
+      { rootMargin: INTERSECTION_ROOT_MARGIN }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [loadImages, images.length, loading])
 
   // 首屏内容不足一屏时自动补页，避免"无限追加"停摆
   useEffect(() => {
@@ -126,6 +236,36 @@ export default function Gallery() {
   const lbNext = useCallback(() => {
     setLbIndex((i) => Math.min(images.length - 1, i + 1))
   }, [images.length])
+
+  // ── 灯箱预加载相邻图片 ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!lbOpen || lbIndex < 0) return
+
+    const preloadIndices: number[] = []
+    for (let offset = -LIGHTBOX_PRELOAD_RANGE; offset <= LIGHTBOX_PRELOAD_RANGE; offset++) {
+      const targetIdx = lbIndex + offset
+      if (targetIdx >= 0 && targetIdx < images.length && targetIdx !== lbIndex) {
+        preloadIndices.push(targetIdx)
+      }
+    }
+
+    const preloaded: HTMLImageElement[] = []
+    for (const idx of preloadIndices) {
+      const img = images[idx]
+      if (img?.thumb) {
+        const imgEl = new Image()
+        imgEl.src = img.thumb
+        preloaded.push(imgEl)
+      }
+    }
+
+    return () => {
+      // 清理预加载的 Image 对象引用
+      for (const el of preloaded) {
+        el.src = ''
+      }
+    }
+  }, [lbOpen, lbIndex, images])
 
   // 灯箱：焦点进入、Esc/方向键、Tab 循环，关闭后焦点归还触发元素
   useEffect(() => {
@@ -211,17 +351,24 @@ export default function Gallery() {
     window.scrollTo({ top: 0 })
   }
 
-  const onCardKeyDown = (e: ReactKeyboardEvent, idx: number) => {
+  const onCardKeyDown = useCallback((e: ReactKeyboardEvent, idx: number) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       openLightbox(idx)
     }
-  }
+  }, [openLightbox])
 
-  const currentImage = lbIndex >= 0 && lbIndex < images.length ? images[lbIndex] : null
+  // ── Memoized values ──────────────────────────────────────────────────────
+  const currentImage = useMemo(
+    () => (lbIndex >= 0 && lbIndex < images.length ? images[lbIndex] : null),
+    [lbIndex, images]
+  )
   const showInitialError = error && images.length === 0 && !loading
   const showEmpty = !loading && !error && images.length === 0
   const showEnd = images.length > 0 && !loading && images.length >= total
+
+  // 骨架屏数量：根据布局响应式调整
+  const skeletonCount = layout === 'wide' ? 8 : PAGE_SIZE
 
   return (
     <div className="gallery-page">
@@ -276,36 +423,42 @@ export default function Gallery() {
       ) : images.length > 0 ? (
         <div className={`gallery-grid ${layout === 'wide' ? 'wide' : ''}`}>
           {images.map((img, idx) => (
-            <div
+            <GalleryCard
               key={img.id}
-              className="gallery-card"
-              role="button"
-              tabIndex={0}
-              aria-label={t('gallery.viewLarge', { title: img.title })}
-              onClick={() => openLightbox(idx)}
-              onKeyDown={(e) => onCardKeyDown(e, idx)}
-            >
-              {img.thumb && (
-                <img
-                  src={img.thumb}
-                  alt={img.title}
-                  loading="lazy"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                />
-              )}
-            </div>
+              img={img}
+              index={idx}
+              onClick={openLightbox}
+              onKeyDown={onCardKeyDown}
+              t={t}
+            />
           ))}
         </div>
       ) : showEmpty ? (
-        <div className="gallery-empty">
-          <div className="gallery-empty-icon">📷</div>
-          <div className="gallery-empty-text">{t('gallery.empty')}</div>
+        <div className="gallery-empty" role="status" aria-live="polite">
+          <div className="gallery-empty-icon" aria-hidden="true">📷</div>
+          <div className="gallery-empty-text">{query ? t('home.searchEmpty', { query }) : t('gallery.empty')}</div>
+          {query ? (
+            <button
+              className="empty-cta gallery-empty-cta"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams)
+                next.delete('q')
+                setSearchParams(next, { replace: true })
+              }}
+            >
+              {t('common.clearSearch') !== 'common.clearSearch' ? t('common.clearSearch') : '清空搜索'}
+            </button>
+          ) : (
+            <Link to="/upload" className="empty-cta gallery-empty-cta">
+              {t('common.goUpload') !== 'common.goUpload' ? t('common.goUpload') : '去上传图片'} →
+            </Link>
+          )}
         </div>
       ) : null}
 
       {loading && images.length === 0 && (
         <div className="gallery-skeleton-grid" aria-hidden="true">
-          {Array.from({ length: PAGE_SIZE }).map((_, i) => (
+          {Array.from({ length: skeletonCount }).map((_, i) => (
             <div key={i} className="gallery-skeleton-card" />
           ))}
         </div>
@@ -326,6 +479,11 @@ export default function Gallery() {
 
       {showEnd && <div className="gallery-end">{t('common.noMore')}</div>}
 
+      {/* IntersectionObserver 哨兵元素：替代 scroll 事件监听 */}
+      {hasMoreRef.current && !loading && images.length > 0 && (
+        <div ref={sentinelRef} className="gallery-sentinel" aria-hidden="true" />
+      )}
+
       {/* Lightbox */}
       {lbOpen && currentImage && (
         <div
@@ -341,6 +499,7 @@ export default function Gallery() {
             className="lightbox-img"
             src={currentImage.thumb || ''}
             alt={currentImage.title}
+            decoding="async"
             onClick={(e) => e.stopPropagation()}
           />
           <button className="lightbox-close" onClick={closeLightbox} aria-label={t('gallery.close')}>✕</button>

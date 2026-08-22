@@ -7,10 +7,12 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::middleware::auth::AuthUser;
+use crate::models::recommendation::{RecommendationItem, RecommendationResponse};
 use crate::services::recommendation_service::VideoRecommendation;
 use crate::state::AppState;
 use crate::util::hashid;
-use crate::util::response::{error_response, internal_error_log, ErrorResponse};
+use crate::util::error::ServiceError;
+use crate::util::response::{error_response, ErrorResponse};
 
 fn map_to_recommendation(r: VideoRecommendation) -> RecommendationItem {
     RecommendationItem {
@@ -49,7 +51,7 @@ async fn get_cached_recommendations<F, Fut>(
 ) -> Result<Vec<VideoRecommendation>, (StatusCode, Json<ErrorResponse>)>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<VideoRecommendation>, String>>,
+    Fut: std::future::Future<Output = Result<Vec<VideoRecommendation>, ServiceError>>,
 {
     if let Some(cached) = state.recommendation_cache.get(key) {
         return Ok(cached);
@@ -59,32 +61,11 @@ where
     if let Some(cached) = state.recommendation_cache.get(key) {
         return Ok(cached);
     }
-    let items = loader().await.map_err(|e| {
-        tracing::error!("recommendation load failed ({}): {}", key, e);
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
-    })?;
+    let items = loader().await.map_err(|e| e.into_tuple())?;
     state
         .recommendation_cache
         .insert(key.to_string(), items.clone());
     Ok(items)
-}
-
-#[derive(serde::Serialize)]
-pub struct RecommendationResponse {
-    pub items: Vec<RecommendationItem>,
-    pub total: usize,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecommendationItem {
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub id: i64,
-    pub title: String,
-    pub category: Option<String>,
-    pub thumb_url: Option<String>,
-    pub score: f64,
-    pub reason: String,
 }
 
 /// GET /recommendations
@@ -99,7 +80,7 @@ pub async fn get_recommendations(
         .recommendation
         .get_recommendations(&auth_user.username, 0, 20)
         .await
-        .map_err(|e| internal_error_log("get_recommendations failed", &e))?;
+        .map_err(|e| e.into_tuple())?;
 
     let items: Vec<RecommendationItem> = recommendations
         .into_iter()

@@ -71,9 +71,49 @@
   background: var(--bg3);
 }
 
+/* ─── Conflict Warning ─────────────────────────────────────────────────────── */
+
+.shortcuts-conflict {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 24px;
+  background: rgba(234, 179, 8, 0.08);
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-conflict-icon {
+  font-size: 1rem;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.shortcuts-conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shortcuts-conflict-item {
+  font-size: 0.8125rem;
+  color: var(--text2);
+}
+
+.shortcuts-conflict-item kbd {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.75rem;
+}
+
+/* ─── Content ──────────────────────────────────────────────────────────────── */
+
 .shortcuts-content {
   padding: 20px 24px;
   overflow-y: auto;
+  flex: 1;
 }
 
 .shortcuts-section {
@@ -112,9 +152,27 @@
   font-size: 0.9375rem;
 }
 
+/* ─── Key Display & Editor ─────────────────────────────────────────────────── */
+
 .shortcuts-keys {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+.shortcuts-keys.conflict {
+  position: relative;
+}
+
+.shortcuts-keys.conflict::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #eab308;
+  border-radius: 1px;
 }
 
 .shortcuts-key {
@@ -130,6 +188,17 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
+.shortcuts-key.editing {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb, 59, 130, 246), 0.1);
+  animation: keyPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes keyPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 .shortcuts-plus {
   color: var(--text3);
   font-size: 0.8125rem;
@@ -137,10 +206,82 @@
   align-items: center;
 }
 
+.shortcuts-key-placeholder {
+  color: var(--text3);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+/* ─── Key Editor Container ─────────────────────────────────────────────────── */
+
+.shortcuts-key-editor {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  outline: none;
+}
+
+.shortcuts-key-editor.conflict {
+  border-color: #eab308;
+}
+
+/* ─── Action Buttons ───────────────────────────────────────────────────────── */
+
+.shortcuts-key-action {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  margin-left: 4px;
+  font-size: 0.75rem;
+  color: var(--text3);
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-fast) ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+}
+
+.shortcuts-key-action:hover {
+  color: var(--text);
+  background: var(--bg2);
+}
+
+.shortcuts-key-action.edit {
+  opacity: 0;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.shortcuts-item:hover .shortcuts-key-action.edit {
+  opacity: 1;
+}
+
+.shortcuts-key-action.reset {
+  color: #eab308;
+}
+
+.shortcuts-key-action.reset:hover {
+  color: #f59e0b;
+}
+
+/* ─── Footer ───────────────────────────────────────────────────────────────── */
+
 .shortcuts-footer {
   padding: 16px 24px;
   border-top: 1px solid var(--border);
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shortcuts-footer-hint {
   color: var(--text3);
   font-size: 0.8125rem;
 }
@@ -152,4 +293,21 @@
   padding: 2px 6px;
   font-family: inherit;
   font-size: 0.8125rem;
+}
+
+.shortcuts-reset-all {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  font-size: 0.8125rem;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.shortcuts-reset-all:hover {
+  color: var(--text);
+  border-color: var(--text3);
+  background: var(--bg3);
 }

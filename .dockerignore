@@ -1,37 +1,8 @@
-# 构建上下文过滤：缺失 target/dist/node_modules 会拖慢上传、撑大镜像层
-# ── 版本控制 ──
-.git
-.gitignore
-
-# ── 构建产物（体积大，必须排除）──
 **/target
 **/node_modules
 **/dist
-
-# ── 密钥与本地配置（backend/.env 含 SMTP 口令，严禁进镜像）──
-**/.env
-**/.env.*
-
-# ── 本地运行数据 ──
-media
-backend/media
-backend/data
-backend/logs
-data
-logs
-backend/*.log
-backend/*.pid
-
-# ── 本地证书（仅开发用）──
-backend/certs
-backend/gen-cert.sh
-
-# ── 文档与截图 ──
+.git
+.github
 *.md
-*.png
-*.jpg
-
-# ── OS / 编辑器杂项 ──
-.DS_Store
-.idea
-.vscode
+.env
+.env.*

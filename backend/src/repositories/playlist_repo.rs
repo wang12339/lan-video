@@ -213,6 +213,42 @@ impl PlaylistRepository {
         .fetch_all(&self.pool)
         .await
     }
+
+    /// Reorder all videos in a playlist by assigning sequential positions
+    /// (0, 1, 2, …) in the caller-supplied order.
+    ///
+    /// Uses the same per-playlist advisory lock as `add_video` / `remove_video`
+    /// so concurrent mutations are serialized.
+    pub async fn reorder_videos(
+        &self,
+        playlist_id: i64,
+        video_ids: &[i64],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('playlist_items:' || $1::text))")
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for (pos, video_id) in video_ids.iter().enumerate() {
+            sqlx::query(
+                "UPDATE playlist_items SET position = $3 WHERE playlist_id = $1 AND video_id = $2",
+            )
+            .bind(playlist_id)
+            .bind(video_id)
+            .bind(pos as i32)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        sqlx::query("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1")
+            .bind(playlist_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]

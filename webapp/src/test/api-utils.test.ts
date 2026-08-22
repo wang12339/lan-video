@@ -49,6 +49,7 @@ describe('mapVideo', () => {
       category: '科技',
       description: '描述',
       thumb: '/media/v1.jpg',
+      thumbnail_url: '/media/v1.jpg',
       stream: '/media/v1.mp4',
       cover: null,
       sourceType: 'local_video',

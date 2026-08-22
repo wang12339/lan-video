@@ -11,14 +11,14 @@ use axum::{
 };
 use dashmap::DashMap;
 
-const MAX_BYTES_PER_SEC_PER_IP: u64 = 200 * 1024 * 1024;
+const MAX_BYTES_PER_SEC_PER_IP: u64 = 500 * 1024 * 1024;
 const WINDOW_SECS: u64 = 1;
 const CLEANUP_INTERVAL: usize = 10_000;
 
 /// Charge for a request with no Range header: a full-file GET, so assume at
 /// least this much will be transferred. The previous flat 256 KiB charge let
 /// a single connection stream an arbitrarily large file for one token.
-const NO_RANGE_CHARGE_BYTES: u64 = 2 * 1024 * 1024;
+const NO_RANGE_CHARGE_BYTES: u64 = 512 * 1024;
 /// Charge for an open-ended range (`bytes=N-`): the response size is
 /// unbounded and unknowable up front, so charge the upper clamp.
 const OPEN_ENDED_RANGE_CHARGE_BYTES: u64 = 8 * 1024 * 1024;

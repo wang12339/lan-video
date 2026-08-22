@@ -1,13 +1,16 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
-import { listVideos, mapVideo, getTrendingVideos } from '../../api'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { listVideos } from '../../api/videos'
+import { mapVideo } from '../../api/utils'
+import { getTrendingVideos } from '../../api/recommendations'
 import type { MappedVideo } from '../../api/types'
 import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
 import AuthDialog from '../../components/AuthDialog/AuthDialog'
 import { useAuth } from '../../context/AuthContext'
 import { trackClick } from '../../utils/track'
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 import './Home.css'
 
 const CATEGORIES = ['全部', '科技', '设计', '音乐', '教程', '娱乐', '运动', '记录', '外部']
@@ -35,10 +38,12 @@ function buildParams(category: string, query: string, page: number): VideoListPa
   return params
 }
 
+// 使用 React.memo 优化视频卡片组件，避免不必要的重渲染
+const VideoCardMemo = React.memo(VideoCard)
+
 export default function Home() {
   const { t } = useTranslation()
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
   const { user } = useAuth()
   const [category, setCategory] = useState(() => searchParams.get('cat') || '全部')
   const [emailVerified, setEmailVerified] = useState<boolean | null>(() => {
@@ -47,7 +52,7 @@ export default function Home() {
     if (param === 'false') return false
     return null
   })
-  const query = searchParams.get('q') || ''
+  const query = (searchParams.get('q') || '').trim()
 
   // URL 分类与 state 同步（支持浏览器前进/后退）
   useEffect(() => {
@@ -85,15 +90,15 @@ export default function Home() {
       return loaded < lastPage.total ? allPages.length : undefined
     },
     enabled: !!user,
-    placeholderData: keepPreviousData,
+    placeholderData: (prev) => prev,
     staleTime: 30_000,
   })
 
-  // 热门推荐（登录后、无搜索关键词时展示）
+  // 热门推荐（无搜索时展示，游客可看 3 条作试看）
   const { data: trendingData } = useQuery({
-    queryKey: ['trending-videos'],
+    queryKey: ['trending-videos', query ? 'q' : 'all'],
     queryFn: getTrendingVideos,
-    enabled: !!user && !query,
+    enabled: !query,
     staleTime: 60_000,
   })
 
@@ -103,21 +108,52 @@ export default function Home() {
   )
   const trendingIds = useMemo(() => new Set(trending.map((v) => v.id)), [trending])
 
-  // 展平所有分页，并按 id 去重（热门推荐不重复出现在下方列表）
+  // 增量映射：缓存已映射结果，只对新增页面执行 mapVideo
+  const mappedCacheRef = useRef<Map<string, MappedVideo>>(new Map())
+  const lastPageCountRef = useRef(0)
+
   const videos = useMemo(() => {
     const pages = data?.pages ?? []
+    const cache = mappedCacheRef.current
+
+    // 如果页数减少（切换分类/搜索），清空缓存
+    if (pages.length < lastPageCountRef.current) {
+      cache.clear()
+    }
+    lastPageCountRef.current = pages.length
+
+    // 只处理新增的页面
+    const startPage = cache.size === 0 ? 0 : Math.max(0, pages.length - 1)
+    for (let pi = startPage; pi < pages.length; pi++) {
+      const page = pages[pi]
+      if (!page) continue
+      for (const raw of page.items) {
+        const v = mapVideo(raw)
+        if (v && !cache.has(v.id)) {
+          cache.set(v.id, v)
+        }
+      }
+    }
+
+    // 过滤 trending 并保持顺序
     const seen = new Set<string>()
     const list: MappedVideo[] = []
     for (const page of pages) {
       for (const raw of page.items) {
-        const v = mapVideo(raw)
-        if (!v || seen.has(v.id) || trendingIds.has(v.id)) continue
-        seen.add(v.id)
-        list.push(v)
+        const id = raw.id
+        if (!id || seen.has(id) || trendingIds.has(id)) continue
+        const v = cache.get(id)
+        if (v) {
+          seen.add(id)
+          list.push(v)
+        }
       }
     }
     return list
   }, [data, trendingIds])
+
+  // 后端已按 query 过滤，无需前端二次过滤（避免分页 total 错位）
+  const filteredVideos = videos
 
   const total = data?.pages[0]?.total ?? 0
 
@@ -150,37 +186,29 @@ export default function Home() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
-  // 底部哨兵：滚动接近末尾时加载下一页
+  // 底部哨兵：统一 useInfiniteScroll
   const sentinelRef = useRef<HTMLDivElement>(null)
-  const hasVideosRef = useRef(false)
-  hasVideosRef.current = videos.length > 0
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (hasVideosRef.current && entries.some((e) => e.isIntersecting)) {
-          fetchNextPage()
-        }
-      },
-      { rootMargin: '300px 0px' }
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [fetchNextPage])
+  useInfiniteScroll(sentinelRef, {
+    hasMore: !!hasNextPage && filteredVideos.length > 0,
+    loading: isFetchingNextPage,
+    onLoadMore: fetchNextPage,
+  })
 
+  // 使用 useCallback 缓存事件处理函数
   const handleCategoryClick = useCallback((cat: string) => {
     if (cat === category) return
     setCategory(cat)
-    const next = new URLSearchParams(searchParams)
-    if (cat === '全部') next.delete('cat')
-    else next.set('cat', cat)
-    navigate(`?${next.toString()}`)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (cat === '全部') next.delete('cat')
+      else next.set('cat', cat)
+      return next
+    })
     trackClick('切换分类', cat)
-  }, [category, navigate, searchParams])
+  }, [category, setSearchParams])
 
-  const showInitialError = isError && videos.length === 0 && !isPending
-  const showEmpty = !isPending && !isError && videos.length === 0
+  const showInitialError = isError && filteredVideos.length === 0 && !isPending
+  const showEmpty = !isPending && !isError && filteredVideos.length === 0
 
   return (
     <div className="home">
@@ -200,6 +228,22 @@ export default function Home() {
             <span className="hero-dot hero-dot--3" />
           </div>
         </div>
+      )}
+
+      {!user && trending.length > 0 && (
+        <section className="trending-section guest-preview" aria-label={t('home.trending')}>
+          <h2 className="trending-title">{t('home.trending')} · 试看</h2>
+          <div className="video-grid">
+            {trending.slice(0, 3).map((video, i) => (
+              <div key={`guest-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
+                <VideoCardMemo video={video} eager={i < 2} />
+              </div>
+            ))}
+          </div>
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Link to="/profile" className="empty-cta">登录查看更多 →</Link>
+          </div>
+        </section>
       )}
 
       {user && (
@@ -224,18 +268,18 @@ export default function Home() {
               <div className="video-grid">
                 {trending.map((video, i) => (
                   <div key={`trend-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
-                    <VideoCard video={video} />
+                    <VideoCardMemo video={video} eager={i < 4} />
                   </div>
                 ))}
               </div>
             </section>
           )}
 
-          {videos.length > 0 ? (
+          {filteredVideos.length > 0 ? (
             <div className="video-grid">
-              {videos.map((video, i) => (
+              {filteredVideos.map((video, i) => (
                 <div key={video.id} style={{ '--card-index': i } as React.CSSProperties}>
-                  <VideoCard video={video} />
+                  <VideoCardMemo video={video} eager={i < 4} />
                 </div>
               ))}
             </div>
@@ -252,15 +296,31 @@ export default function Home() {
               </button>
             </div>
           ) : showEmpty ? (
-            <div className="empty-state">
-              <div className="empty-icon">🎬</div>
+            <div className="empty-state" role="status" aria-live="polite">
+              <div className="empty-icon" aria-hidden="true">🎬</div>
               <div className="empty-text">
                 {query ? t('home.searchEmpty', { query }) : t('home.empty')}
               </div>
+              {query ? (
+                <button
+                  className="empty-cta"
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams)
+                    next.delete('q')
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  {t('common.clearSearch') !== 'common.clearSearch' ? t('common.clearSearch') : '清空搜索'}
+                </button>
+              ) : (
+                <Link to="/upload" className="empty-cta">
+                  {t('common.goUpload') !== 'common.goUpload' ? t('common.goUpload') : '去上传第一个视频'} →
+                </Link>
+              )}
             </div>
           ) : null}
 
-          {isError && videos.length > 0 && (
+          {isError && filteredVideos.length > 0 && (
             <div className="load-more-error">
               <span>{t('errors.network')}</span>
               <button className="retry-btn" onClick={() => refetch()}>
@@ -273,7 +333,7 @@ export default function Home() {
             <div className="loading-more" role="status">{t('common.loading')}</div>
           )}
 
-          {!isError && !isFetchingNextPage && !hasNextPage && videos.length > 0 && (
+          {!isError && !isFetchingNextPage && !hasNextPage && filteredVideos.length > 0 && (
             <div className="no-more">{t('common.noMore')}</div>
           )}
         </>

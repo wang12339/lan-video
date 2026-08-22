@@ -10,10 +10,28 @@ use uuid::Uuid;
 use crate::middleware::auth::AuthUser;
 use crate::models::video::*;
 use crate::services::media_service::is_safe_external_url;
+use crate::services::media_service::upload::stream_multipart_to_file;
 use crate::state::AppState;
 use crate::util::hashid;
+use crate::util::error::ServiceError;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 use serde::Deserialize;
+
+/// 将 `ServiceError` 映射为 handler 错误元组（上传场景专用）。
+///
+/// 与通用 `ServiceError::into_tuple` 的区别：`BadRequest` 映射到
+/// `PAYLOAD_TOO_LARGE`（当消息包含"超过"时）或保持 `BAD_REQUEST`；
+/// `Internal` 映射到具体的上传失败文案。
+fn map_upload_service_error(e: &ServiceError) -> (StatusCode, &'static str) {
+    match e {
+        ServiceError::BadRequest(msg) if msg.contains("超过") => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "文件大小超过限制")
+        }
+        ServiceError::BadRequest(_) => (StatusCode::BAD_REQUEST, "请求格式错误"),
+        ServiceError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "上传失败"),
+    }
+}
 
 /// POST /admin/videos/external
 pub async fn add_external_video(
@@ -91,7 +109,7 @@ pub async fn upload_video(
     let mut category = "local".to_string();
     let mut temp_path: Option<std::path::PathBuf> = None;
 
-    while let Some(mut field) = multipart
+    while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "无效的请求格式"))?
@@ -104,50 +122,23 @@ pub async fn upload_video(
                 let fname = crate::services::media_service::sanitize_filename(&raw_name);
                 file_name = Some(fname);
 
-                // 流式写入临时文件
+                // 流式写入临时文件（复用公共函数）
                 let tmp = state
                     .config
                     .media_root
                     .join(format!(".upload_{}", Uuid::new_v4()));
-                let mut f = tokio::fs::File::create(&tmp).await.map_err(|_| {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "创建临时文件失败")
-                })?;
-                let mut total: u64 = 0;
-                loop {
-                    let chunk = field
-                        .chunk()
-                        .await
-                        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "读取文件数据失败"))?;
-                    match chunk {
-                        Some(data) => {
-                            total += data.len() as u64;
-                            if total > MAX_UPLOAD_SIZE {
-                                let _ = tokio::fs::remove_file(&tmp).await;
-                                return Err(error_response(
-                                    StatusCode::PAYLOAD_TOO_LARGE,
-                                    "文件大小超过 50GB 限制",
-                                ));
-                            }
-                            f.write_all(&data).await.map_err(|_| {
-                                error_response(StatusCode::INTERNAL_SERVER_ERROR, "写入文件失败")
-                            })?;
-                        }
-                        None => break,
-                    }
-                }
-                f.flush().await.map_err(|_| {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "保存文件失败")
-                })?;
-                drop(f);
-
-                if total == 0 {
-                    let _ = tokio::fs::remove_file(&tmp).await;
-                    return Err(error_response(StatusCode::BAD_REQUEST, "文件为空"));
-                }
+                stream_multipart_to_file(field, &tmp, MAX_UPLOAD_SIZE)
+                    .await
+                    .map_err(|e| {
+                        let (status, body) = map_upload_service_error(&e);
+                        error_response(status, body)
+                    })?;
                 temp_path = Some(tmp);
             }
             "category" => {
-                category = field.text().await.unwrap_or_default();
+                // category 不是文件字段，手动读取文本
+                let text = field.text().await.unwrap_or_default();
+                category = text;
             }
             _ => {}
         }
@@ -163,14 +154,15 @@ pub async fn upload_video(
         .await
     {
         Ok(id) => id,
+        Err(ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_)) => {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            tracing::warn!(actor = %auth_user.username, "upload conflict");
+            return Err(error_response(StatusCode::CONFLICT, "文件重复或存储配额已用尽"));
+        }
         Err(e) => {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             tracing::warn!(actor = %auth_user.username, "upload failed: {}", e);
-            return Err(if e.starts_with("重复") || e.starts_with("存储配额") {
-                error_response(StatusCode::CONFLICT, e)
-            } else {
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败")
-            });
+            return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败"));
         }
     };
 
@@ -305,10 +297,14 @@ pub async fn upload_resume(
                 tokio::spawn(async move {
                     let _ = tokio::fs::remove_file(&tmp_for_cleanup).await;
                 });
-                if e.starts_with("重复") || e.starts_with("存储配额") {
-                    error_response(StatusCode::CONFLICT, e)
-                } else {
-                    error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败")
+                match &e {
+                    ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_) => {
+                        error_response(StatusCode::CONFLICT, "文件重复或存储配额已用尽")
+                    }
+                    _ => {
+                        tracing::warn!("upload_resume failed: {}", e);
+                        error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败")
+                    }
                 }
             })?;
         state.upload_locks.remove(&hash);
@@ -560,7 +556,7 @@ pub async fn backfill_thumbnails(State(state): State<Arc<AppState>>) -> Json<ser
             state.invalidate_caches();
             Json(serde_json::json!({"ok": true, "generated": generated, "errors": errors}))
         }
-        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
     }
 }
 

@@ -1,23 +1,63 @@
+/* Base skeleton styles */
 .skeleton-line {
   background: linear-gradient(90deg, var(--bg3, #1e1e25) 25%, var(--surface, #24242c) 50%, var(--bg3, #1e1e25) 75%);
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
   border-radius: 4px;
 }
 
+/* Shape variants */
+.skeleton-shape-rect {
+  border-radius: 4px;
+}
+
+.skeleton-shape-circle {
+  border-radius: 50%;
+}
+
+.skeleton-shape-rounded {
+  border-radius: 12px;
+}
+
+/* Animation variants */
+.skeleton-animate-shimmer {
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.skeleton-animate-wave {
+  animation: wave 2s ease-in-out infinite;
+}
+
+/* Animation keyframes */
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-line {
-    animation: none;
-  }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
+@keyframes wave {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+
+/* Custom skeleton container */
+.skeleton-custom {
+  display: inline-block;
+}
+
+/* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-line {
+  .skeleton-animate-shimmer,
+  .skeleton-animate-pulse,
+  .skeleton-animate-wave {
     animation: none;
   }
 }
@@ -132,4 +172,67 @@
 
 .skeleton-text .skeleton-line {
   height: 16px;
+}
+
+/* Video card skeleton */
+.skeleton-video-card {
+  background: var(--bg2, #15151a);
+  border-radius: var(--radius, 12px);
+  overflow: hidden;
+}
+
+.skeleton-video-thumb {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border-radius: 0;
+}
+
+.skeleton-video-info {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-video-title {
+  height: 14px;
+  width: 80%;
+}
+
+.skeleton-video-meta {
+  height: 12px;
+  width: 50%;
+}
+
+/* Video card skeleton in history/favorites list (horizontal layout) */
+.history-list .skeleton-video-card {
+  display: flex;
+  flex-direction: row;
+  background: transparent;
+  border-radius: 0;
+  padding: 8px;
+  gap: 12px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.history-list .skeleton-video-thumb {
+  width: 180px;
+  min-width: 180px;
+  aspect-ratio: auto;
+  height: 100px;
+  border-radius: 6px;
+}
+
+.history-list .skeleton-video-info {
+  flex: 1;
+  padding: 0;
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .history-list .skeleton-video-thumb {
+    width: 120px;
+    min-width: 120px;
+    height: 72px;
+  }
 }

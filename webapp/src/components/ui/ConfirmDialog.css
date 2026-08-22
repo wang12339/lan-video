@@ -7,8 +7,12 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: fadeIn 0.15s ease;
+  animation: fadeIn 0.2s ease forwards;
   padding: 16px;
+}
+
+.cd-overlay-closing {
+  animation: fadeOut 0.2s ease forwards;
 }
 
 .cd-dialog {
@@ -18,7 +22,12 @@
   padding: 24px;
   width: 400px;
   max-width: 100%;
-  animation: modalIn 0.2s ease;
+  animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.cd-dialog-closing {
+  animation: modalOut 0.2s ease forwards;
 }
 
 .cd-title {
@@ -39,8 +48,10 @@
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
+/* 按钮基础样式 */
 .cd-btn {
   padding: 11px 20px;
   border-radius: var(--radius-sm, 8px);
@@ -49,8 +60,16 @@
   cursor: pointer;
   border: none;
   transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
 }
 
+.cd-btn:focus-visible {
+  outline: 2px solid var(--accent, #ff4433);
+  outline-offset: 2px;
+}
+
+/* 取消按钮 */
 .cd-btn-cancel {
   background: var(--bg3, #1e1e25);
   color: var(--text);
@@ -60,15 +79,17 @@
   background: var(--surface, #24242c);
 }
 
-.cd-btn-confirm {
+/* 主要按钮 */
+.cd-btn-primary {
   background: var(--accent, #ff4433);
   color: #fff;
 }
 
-.cd-btn-confirm:hover:not(:disabled) {
+.cd-btn-primary:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 
+/* 危险按钮 */
 .cd-btn-danger {
   background: #ef4444;
   color: #fff;
@@ -78,21 +99,68 @@
   background: #dc2626;
 }
 
+/* 幽灵按钮 */
+.cd-btn-ghost {
+  background: transparent;
+  color: var(--text);
+}
+
+.cd-btn-ghost:hover:not(:disabled) {
+  background: var(--bg3, #1e1e25);
+}
+
+/* 轮廓按钮 */
+.cd-btn-outline {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+}
+
+.cd-btn-outline:hover:not(:disabled) {
+  background: var(--bg3, #1e1e25);
+  border-color: var(--border-hover, rgba(255, 255, 255, 0.2));
+}
+
+/* 禁用状态 */
 .cd-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
+/* 动画 */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-@keyframes modalIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+}
+
+/* 移动端适配 */
 @media (max-width: 480px) {
   .cd-dialog {
     padding: 20px;
@@ -104,5 +172,15 @@
 
   .cd-btn {
     width: 100%;
+  }
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .cd-overlay,
+  .cd-dialog,
+  .cd-overlay-closing,
+  .cd-dialog-closing {
+    animation-duration: 0.01ms;
   }
 }

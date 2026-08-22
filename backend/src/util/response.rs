@@ -1,7 +1,6 @@
 use axum::{
     extract::{FromRequest, Request},
     http::{HeaderName, StatusCode},
-    response::{IntoResponse, Response},
     Json,
 };
 use serde::de::DeserializeOwned;
@@ -11,69 +10,6 @@ use std::fmt::Display;
 #[derive(Serialize, Debug)]
 pub struct ErrorResponse {
     pub error: String,
-}
-
-/// Type alias for handler results — the standard axum error tuple.
-/// Use this instead of writing `(StatusCode, Json<ErrorResponse>)` everywhere.
-pub type HandlerResult<T> = Result<T, (StatusCode, Json<ErrorResponse>)>;
-
-/// Generic handler error that can carry a status code + message.
-/// Use this in new handlers instead of `(StatusCode, String)` to keep
-/// the API error envelope consistent.
-#[derive(Debug)]
-pub struct ApiHandlerError {
-    pub status: StatusCode,
-    pub message: String,
-}
-
-impl ApiHandlerError {
-    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-        }
-    }
-    pub fn bad_request(msg: impl Into<String>) -> Self {
-        Self::new(StatusCode::BAD_REQUEST, msg)
-    }
-    pub fn not_found(msg: impl Into<String>) -> Self {
-        Self::new(StatusCode::NOT_FOUND, msg)
-    }
-    pub fn internal(msg: impl Into<String>) -> Self {
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, msg)
-    }
-    pub fn forbidden(msg: impl Into<String>) -> Self {
-        Self::new(StatusCode::FORBIDDEN, msg)
-    }
-}
-
-impl From<sqlx::Error> for ApiHandlerError {
-    fn from(e: sqlx::Error) -> Self {
-        match e {
-            // A missing row is an expected condition, not an internal error.
-            // Log at debug (not error) so operations isn't spammed by 404s.
-            sqlx::Error::RowNotFound => {
-                tracing::debug!("sqlx RowNotFound in handler");
-                Self::not_found("资源不存在")
-            }
-            other => {
-                tracing::error!("sqlx error in handler: {}", other);
-                Self::internal("数据库错误")
-            }
-        }
-    }
-}
-
-impl From<(StatusCode, String)> for ApiHandlerError {
-    fn from((status, msg): (StatusCode, String)) -> Self {
-        Self::new(status, msg)
-    }
-}
-
-impl IntoResponse for ApiHandlerError {
-    fn into_response(self) -> Response {
-        error_response(self.status, self.message).into_response()
-    }
 }
 
 /// Helper to produce a consistent JSON error body across all handlers.
@@ -253,27 +189,5 @@ mod tests {
         let (status, body) = internal_error("something broke");
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body.0.error, "something broke");
-    }
-
-    #[test]
-    fn test_handler_result_type_alias() {
-        fn example() -> HandlerResult<String> {
-            Ok("hello".to_string())
-        }
-        let result = example();
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "hello");
-    }
-
-    #[test]
-    fn test_handler_result_error() {
-        fn example() -> HandlerResult<String> {
-            Err(not_found("not here"))
-        }
-        let result = example();
-        assert!(result.is_err());
-        let (status, body) = result.unwrap_err();
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body.0.error, "not here");
     }
 }

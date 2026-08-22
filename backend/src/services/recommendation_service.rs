@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::repositories::video_repo::VideoRepository;
+use crate::util::error::ServiceError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoRecommendation {
@@ -28,7 +29,7 @@ impl RecommendationService {
         username: &str,
         exclude_video_id: i64,
         limit: i64,
-    ) -> Result<Vec<VideoRecommendation>, String> {
+    ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let pool = self.video_repo.pool();
 
         // Get user's watched categories (non-NULL only — NULL categories would
@@ -47,7 +48,7 @@ impl RecommendationService {
         .bind(exclude_video_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("获取观看历史失败: {}", e))?;
+        .map_err(|e| ServiceError::internal(format!("获取观看历史失败: {}", e)))?;
 
         let watched_categories: Vec<String> = watched_categories.into_iter().flatten().collect();
 
@@ -98,7 +99,7 @@ impl RecommendationService {
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("获取推荐视频失败: {}", e))?;
+        .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
 
         // Cold/edge case: user has watched everything in their categories.
         // Fall back to trending so the feed is never empty.
@@ -140,7 +141,7 @@ impl RecommendationService {
             .bind(remaining)
             .fetch_all(pool)
             .await
-            .map_err(|e| format!("获取推荐视频失败: {}", e))?;
+            .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
             rows.extend(fill_rows);
         }
 
@@ -185,7 +186,7 @@ impl RecommendationService {
         &self,
         video_id: i64,
         limit: i64,
-    ) -> Result<Vec<VideoRecommendation>, String> {
+    ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let pool = self.video_repo.pool();
 
         // Get the video's category
@@ -193,8 +194,8 @@ impl RecommendationService {
             .bind(video_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| format!("获取视频信息失败: {}", e))?
-            .ok_or_else(|| "视频不存在".to_string())?;
+            .map_err(|e| ServiceError::internal(format!("获取视频信息失败: {}", e)))?
+            .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
         let category: Option<String> = video.get("category");
 
@@ -214,7 +215,7 @@ impl RecommendationService {
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("获取相似视频失败: {}", e))?;
+        .map_err(|e| ServiceError::internal(format!("获取相似视频失败: {}", e)))?;
 
         let recommendations = rows
             .into_iter()
@@ -234,7 +235,7 @@ impl RecommendationService {
     pub async fn get_trending_videos(
         &self,
         limit: i64,
-    ) -> Result<Vec<VideoRecommendation>, String> {
+    ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let pool = self.video_repo.pool();
 
         // Uses pre-computed trending_score column with index for fast ORDER BY
@@ -252,7 +253,7 @@ impl RecommendationService {
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("获取热门视频失败: {}", e))?;
+        .map_err(|e| ServiceError::internal(format!("获取热门视频失败: {}", e)))?;
 
         let recommendations = rows
             .into_iter()
@@ -272,7 +273,7 @@ impl RecommendationService {
         Ok(recommendations)
     }
 
-    pub async fn get_recent_videos(&self, limit: i64) -> Result<Vec<VideoRecommendation>, String> {
+    pub async fn get_recent_videos(&self, limit: i64) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let pool = self.video_repo.pool();
 
         let rows = sqlx::query(
@@ -287,7 +288,7 @@ impl RecommendationService {
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("获取最新视频失败: {}", e))?;
+        .map_err(|e| ServiceError::internal(format!("获取最新视频失败: {}", e)))?;
 
         let recommendations = rows
             .into_iter()

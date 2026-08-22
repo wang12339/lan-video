@@ -42,28 +42,35 @@ describe('ConfirmDialog', () => {
   })
 
   it('calls onCancel when the cancel button is clicked', () => {
+    vi.useFakeTimers()
     const { props } = renderDialog()
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    act(() => { vi.advanceTimersByTime(250) })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
     expect(props.onConfirm).not.toHaveBeenCalled()
   })
 
   it('calls onCancel when the overlay is clicked', () => {
+    vi.useFakeTimers()
     const { props, container } = renderDialog()
     fireEvent.click(container.querySelector('.cd-overlay') as HTMLElement)
+    act(() => { vi.advanceTimersByTime(250) })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
   it('calls onConfirm when the confirm button is clicked', async () => {
+    vi.useFakeTimers()
     const { props } = renderDialog()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '确定' }))
     })
+    act(() => { vi.advanceTimersByTime(250) })
     expect(props.onConfirm).toHaveBeenCalledTimes(1)
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
   it('shows loading state while the async confirm is pending and blocks Esc', async () => {
+    vi.useFakeTimers()
     let resolveConfirm!: () => void
     const onConfirm = vi.fn(() => new Promise<void>(r => { resolveConfirm = r }))
     const { props } = renderDialog({ onConfirm })
@@ -73,12 +80,15 @@ describe('ConfirmDialog', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(props.onCancel).not.toHaveBeenCalled()
     await act(async () => { resolveConfirm() })
+    act(() => { vi.advanceTimersByTime(250) })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
   it('calls onCancel when Esc is pressed', () => {
+    vi.useFakeTimers()
     const { props } = renderDialog()
     fireEvent.keyDown(window, { key: 'Escape' })
+    act(() => { vi.advanceTimersByTime(250) })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
@@ -119,20 +129,24 @@ describe('AlertDialog', () => {
 
   it('renders message with default title and ok text', () => {
     render(<AlertDialog open message="操作成功" onClose={() => {}} />)
-    expect(screen.getByRole('dialog', { name: '提示' })).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog', { name: '提示' })).toBeInTheDocument()
     expect(screen.getByText('操作成功')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确定' })).toBeInTheDocument()
   })
 
   it('closes on ok click, Esc, and Enter', () => {
+    vi.useFakeTimers()
     const onClose = vi.fn()
     render(<AlertDialog open message="x" onClose={onClose} />)
     fireEvent.click(screen.getByRole('button', { name: '确定' }))
+    act(() => { vi.advanceTimersByTime(250) })
     expect(onClose).toHaveBeenCalledTimes(1)
     fireEvent.keyDown(window, { key: 'Escape' })
+    act(() => { vi.advanceTimersByTime(250) })
     expect(onClose).toHaveBeenCalledTimes(2)
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     fireEvent.keyDown(window, { key: 'Enter' })
+    act(() => { vi.advanceTimersByTime(250) })
     expect(onClose).toHaveBeenCalledTimes(3)
   })
 })

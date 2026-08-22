@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+/// Query parameter for list endpoints (e.g. playback history limit).
+#[derive(Deserialize)]
+pub struct ListQuery {
+    pub limit: Option<i64>,
+}
+
+/// Request body for playback session start/heartbeat/stop.
+#[derive(Deserialize)]
+pub struct SessionRequest {
+    #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]
+    pub video_id: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlaybackHistoryRequest {
     #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]

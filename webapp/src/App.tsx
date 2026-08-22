@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { AuthProvider } from './context/AuthContext'
 import Layout from './components/Layout/Layout'
 import ErrorBoundary from './components/ui/ErrorBoundary'
+import { RequireAuth, RequireAdmin } from './components/ProtectedRoute'
 
 const Home = lazy(() => import('./pages/Home/Home'))
 const Player = lazy(() => import('./pages/Player/Player'))
@@ -35,9 +36,13 @@ function App() {
               <Route element={<Layout />}>
                 <Route path="/" element={<Home />} />
                 <Route path="/gallery" element={<Gallery />} />
-                <Route path="/upload" element={<Upload />} />
                 <Route path="/profile" element={<Profile />} />
-                <Route path="/admin" element={<Admin />} />
+                <Route element={<RequireAuth />}>
+                  <Route path="/upload" element={<Upload />} />
+                </Route>
+                <Route element={<RequireAdmin />}>
+                  <Route path="/admin" element={<Admin />} />
+                </Route>
                 <Route path="*" element={<NotFound />} />
               </Route>
               <Route path="/player" element={<Player />} />

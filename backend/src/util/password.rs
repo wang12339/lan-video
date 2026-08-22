@@ -4,6 +4,11 @@ use argon2::{
 };
 use std::fmt;
 
+/// 最小密码长度
+pub const MIN_PASSWORD_LEN: usize = 8;
+/// 最大密码长度
+pub const MAX_PASSWORD_LEN: usize = 128;
+
 #[derive(Debug)]
 pub enum PasswordError {
     Hash(argon2::password_hash::Error),

@@ -185,7 +185,7 @@
 .video-grid > * {
   opacity: 0;
   animation: cardFadeIn 0.4s ease-out forwards;
-  animation-delay: calc(var(--card-index, 0) * 60ms);
+  animation-delay: calc(min(var(--card-index, 0), 19) * 60ms);
 }
 
 @keyframes cardFadeIn {
@@ -320,6 +320,33 @@
   max-width: 320px;
   margin: 0 auto;
   line-height: 1.5;
+}
+
+.empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 10px 22px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.empty-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
+  color: #fff;
+}
+.empty-cta:active { transform: translateY(0) scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  .empty-cta { transition: none; }
 }
 
 .trending-section {

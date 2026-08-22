@@ -2,6 +2,7 @@
 # 顺序（与 AGENTS.md 约定一致）：fmt → clippy → build → test
 # 后端含 DB 集成测试（postgres service 容器）；前端跑 tsc + vitest + build
 # 另有: 安全审计(cargo-audit / cargo-deny) 与 Docker 镜像构建验证
+# 新增: 代码覆盖率检查、增强安全审计、Docker 构建与推送、自动部署
 
 name: CI
 
@@ -19,9 +20,15 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
+  security-events: write
+  actions: read
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # ─── 后端: fmt → clippy → build → test（含 DB 集成测试）─────────────
@@ -79,6 +86,26 @@ jobs:
           DATABASE_URL: postgres://atmos_video:atmos_video@localhost:5432/atmos_video
         run: cargo test --locked -- --test-threads=1
 
+      # 代码覆盖率收集（仅 main 分支）
+      - name: Install cargo-llvm-cov
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage report
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgres://atmos_video:atmos_video@localhost:5432/atmos_video
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
   # ─── 前端: tsc 类型检查 + vitest + 构建 ────────────────────────────
   frontend:
     name: Frontend (React)
@@ -130,6 +157,48 @@ jobs:
       - name: Run cargo audit
         working-directory: ./backend
         run: cargo audit
+
+  # ─── 前端安全审计 (npm audit) ─────────────────────────────────────
+  frontend-audit:
+    name: Security Audit (npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install dependencies
+        working-directory: ./webapp
+        run: npm ci --no-audit --no-fund
+      - name: Run npm audit
+        working-directory: ./webapp
+        run: npm audit --audit-level=high
+
+  # ─── 容器镜像扫描 (Trivy) ─────────────────────────────────────────
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'atmos-video:ci'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
 
   # ─── 许可证/依赖策略 (cargo-deny, 使用 backend/deny.toml) ──────────
   deny:
@@ -186,3 +255,84 @@ jobs:
           echo "OK: 进程存活且配置解析通过（无 PUBLIC_URL panic），进入 DB 重试"
           docker logs atmos-ci 2>&1 | tail -3
           docker rm -f atmos-ci
+
+      # 保存镜像供后续 job 使用
+      - name: Save Docker image
+        run: docker save atmos-video:ci | gzip > /tmp/atmos-video-ci.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/atmos-video-ci.tar.gz
+          retention-days: 3
+
+  # ─── Docker 镜像构建与推送（仅 main 分支）────────────────────────────
+  docker-publish:
+    name: Docker Build & Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [backend, frontend, audit, docker]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─── 自动部署到生产环境（仅 main 分支）────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [docker-publish, container-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://atmos-video.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/atmos-video
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+            docker-compose down
+            docker-compose up -d
+            docker system prune -f

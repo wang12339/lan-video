@@ -1,17 +1,27 @@
 use axum::{
-    extract::{ConnectInfo, Multipart, State},
+    extract::{Multipart, Request, State},
     http::{HeaderValue, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::middleware::auth::{self as auth_mw, AuthUser};
 use crate::middleware::tenant::TenantContext;
-use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfileResponse};
+use crate::models::auth::{
+    AuthRequest, AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse,
+    ResetPasswordRequest, ResetPasswordToken, SendVerificationEmailResponse, UpdateEmailRequest,
+    UserInfoResponse, UserProfileResponse, VerifyEmailRequest,
+};
 use crate::state::AppState;
+use crate::util::net::client_ip;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse};
+
+/// 邮箱验证成功页面模板
+const VERIFY_EMAIL_HTML: &str = include_str!("../../templates/verify_email.html");
+
+/// 邮箱验证失败页面模板
+const VERIFY_EMAIL_ERROR_HTML: &str = include_str!("../../templates/verify_email_error.html");
 
 /// Build an auth response, setting the token cookie if present
 fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
@@ -38,50 +48,85 @@ fn handle_auth_result(
     state: &AppState,
 ) -> axum::response::Response {
     match result {
-        Ok(resp) => auth_response(resp, state).into_response(),
+        Ok(resp) if resp.ok => auth_response(resp, state).into_response(),
+        Ok(resp) => {
+            // Auth failure (e.g. wrong password, user not found) — return 401
+            (StatusCode::UNAUTHORIZED, Json(resp)).into_response()
+        }
         Err(crate::util::error::ServiceError::RateLimited) => {
             tracing::warn!("Auth request rate limited");
-            Json(AuthResponse {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(AuthResponse {
+                    ok: false,
+                    token: None,
+                    error: Some("请求过于频繁，请稍后再试".into()),
+                }),
+            )
+                .into_response()
+        }
+        Err(crate::util::error::ServiceError::BadRequest(msg)) => {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(AuthResponse {
+                    ok: false,
+                    token: None,
+                    error: Some(msg),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let (status, msg) = e.into_tuple();
+            (status, Json(AuthResponse {
                 ok: false,
                 token: None,
-                error: Some("尝试次数过多，请稍后再试".into()),
-            })
-            .into_response()
+                error: Some(msg.0.error),
+            }))
+                .into_response()
         }
-        Err(crate::util::error::ServiceError::Internal(e)) => {
-            tracing::error!("Auth internal error: {}", e);
-            Json(AuthResponse {
-                ok: false,
-                token: None,
-                error: Some("服务器内部错误".into()),
-            })
-            .into_response()
-        }
-        Err(other) => other.into_response(),
     }
 }
 
 /// POST /auth/register
 pub async fn register(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
     Extension(tenant): Extension<TenantContext>,
-    body: axum::body::Bytes,
+    req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     // SECURITY (API F-002): the registration toggle is checked *before* JSON
     // parsing so that the error response is uniform regardless of payload
     // shape. Previously, `SafeJson` rejected empty/invalid bodies with 400
     // while the toggle check returned 404, leaking both the endpoint's
     // existence and the registration state.
-    if !state.config.registration_enabled() {
+    
+    // 检查全局配置或租户设置
+    let global_enabled = state.config.registration_enabled();
+    let tenant_enabled = state.repos.tenant.get_by_id(tenant.tenant_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.settings.registration_enabled)
+        .unwrap_or(false);
+    
+    if !global_enabled && !tenant_enabled {
         return Err(error_response(StatusCode::NOT_FOUND, "Not Found"));
     }
+    
     // Real client IP from Cloudflare if available — falls back to socket peer.
-    let client_ip = client_ip_from_headers(&headers, addr);
+    let ip = client_ip(&req);
+
+    // Extract the body bytes from the request.
+    let body = req.into_body();
+    let body = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read request body: {}", e);
+            error_response(StatusCode::BAD_REQUEST, "invalid request body")
+        })?;
 
     // Manually parse the JSON body so we control the error message.
-    let req: AuthRequest = match serde_json::from_slice(&body) {
+    let auth_req: AuthRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(_) => {
             return Err(error_response(
@@ -93,7 +138,7 @@ pub async fn register(
 
     let svc = state.services.auth.clone();
     Ok(handle_auth_result(
-        svc.register(&req, &client_ip, tenant.tenant_id).await,
+        svc.register(&auth_req, &ip, tenant.tenant_id).await,
         &state,
     ))
 }
@@ -101,13 +146,22 @@ pub async fn register(
 /// POST /auth/login
 pub async fn login(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: axum::http::HeaderMap,
     Extension(tenant): Extension<TenantContext>,
-    body: axum::body::Bytes,
+    req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
-    let client_ip = client_ip_from_headers(&headers, addr);
-    let req: AuthRequest = match serde_json::from_slice(&body) {
+    // Real client IP from Cloudflare if available — falls back to socket peer.
+    let ip = client_ip(&req);
+
+    // Extract the body bytes from the request.
+    let body = req.into_body();
+    let body = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read request body: {}", e);
+            error_response(StatusCode::BAD_REQUEST, "invalid request body")
+        })?;
+
+    let auth_req: AuthRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(_) => {
             return Err(error_response(
@@ -118,7 +172,7 @@ pub async fn login(
     };
     let svc = state.services.auth.clone();
     Ok(handle_auth_result(
-        svc.login(&req, &client_ip, tenant.tenant_id).await,
+        svc.login(&auth_req, &ip, tenant.tenant_id).await,
         &state,
     ))
 }
@@ -162,121 +216,6 @@ pub async fn logout(
             .expect("valid cookie header"),
     );
     resp
-}
-
-/// Resolve the real client IP from proxy headers and fall back to the direct
-/// socket peer. SECURITY: this is the IP we feed into per-IP rate limiters, so
-/// trusting the wrong header would let attackers evade limits. The header is
-/// only honoured when the direct peer is a trusted proxy:
-///
-/// - `cf-connecting-ip` is accepted only when the peer is inside Cloudflare's
-///   published ranges (origin sits behind Cloudflare in production), or
-///   unconditionally when `TRUSTED_PROXY=1` is set for custom proxies.
-/// - `X-Forwarded-For` is accepted only when `TRUSTED_PROXY=1` is set.
-///
-/// A peer connecting straight to the origin can therefore never spoof the
-/// client IP used for rate limiting.
-fn client_ip_from_headers(headers: &axum::http::HeaderMap, peer: SocketAddr) -> String {
-    let trusted_proxy = std::env::var("TRUSTED_PROXY")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    if trusted_proxy {
-        // X-Forwarded-For is "client, proxy1, proxy2" — the leftmost entry is
-        // the client. cf-connecting-ip (Cloudflare) may also be present.
-        for name in ["cf-connecting-ip", "x-forwarded-for"] {
-            if let Some(ip) = headers
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.split(',').next())
-                .map(str::trim)
-                .and_then(|s| s.parse::<std::net::IpAddr>().ok())
-            {
-                return ip.to_string();
-            }
-        }
-    } else if is_cloudflare_peer(peer.ip()) {
-        if let Some(ip) = headers
-            .get("cf-connecting-ip")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<std::net::IpAddr>().ok())
-        {
-            return ip.to_string();
-        }
-    }
-    peer.ip().to_string()
-}
-
-/// Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips/).
-/// Only peers in these ranges may send `cf-connecting-ip` when
-/// `TRUSTED_PROXY` is not set.
-const CLOUDFLARE_IPV4: &[(&str, u8)] = &[
-    ("173.245.48.0", 20),
-    ("103.21.244.0", 22),
-    ("103.22.200.0", 22),
-    ("103.31.4.0", 22),
-    ("141.101.64.0", 18),
-    ("108.162.192.0", 18),
-    ("190.93.240.0", 20),
-    ("188.114.96.0", 20),
-    ("197.234.240.0", 22),
-    ("198.41.128.0", 17),
-    ("162.158.0.0", 15),
-    ("104.16.0.0", 13),
-    ("104.24.0.0", 14),
-    ("172.64.0.0", 13),
-    ("131.0.72.0", 22),
-];
-
-/// Cloudflare's published IPv6 ranges.
-const CLOUDFLARE_IPV6: &[(&str, u8)] = &[
-    ("2400:cb00::", 32),
-    ("2606:4700::", 32),
-    ("2803:f800::", 32),
-    ("2405:b500::", 32),
-    ("2405:8100::", 32),
-    ("2a06:98c0::", 29),
-    ("2c0f:f248::", 32),
-];
-
-fn ipv4_in_network(ip: u32, network: u32, prefix: u8) -> bool {
-    let mask = if prefix >= 32 {
-        u32::MAX
-    } else {
-        u32::MAX << (32 - prefix)
-    };
-    (ip & mask) == (network & mask)
-}
-
-fn ipv6_in_network(ip: u128, network: u128, prefix: u8) -> bool {
-    let mask = if prefix >= 128 {
-        u128::MAX
-    } else {
-        u128::MAX << (128 - prefix)
-    };
-    (ip & mask) == (network & mask)
-}
-
-fn is_cloudflare_peer(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            let ip = u32::from(v4);
-            CLOUDFLARE_IPV4.iter().any(|(net, prefix)| {
-                net.parse::<std::net::Ipv4Addr>()
-                    .map(|n| ipv4_in_network(ip, u32::from(n), *prefix))
-                    .unwrap_or(false)
-            })
-        }
-        std::net::IpAddr::V6(v6) => {
-            let ip = u128::from(v6);
-            CLOUDFLARE_IPV6.iter().any(|(net, prefix)| {
-                net.parse::<std::net::Ipv6Addr>()
-                    .map(|n| ipv6_in_network(ip, u128::from(n), *prefix))
-                    .unwrap_or(false)
-            })
-        }
-    }
 }
 
 /// GET /auth/user
@@ -429,29 +368,41 @@ pub async fn upload_avatar(
     })))
 }
 
-#[derive(serde::Deserialize)]
-pub struct ForgotPasswordRequest {
-    pub email: String,
-}
-
-#[derive(serde::Serialize)]
-pub struct ForgotPasswordResponse {
-    pub ok: bool,
-    pub message: String,
-}
-
 /// POST /auth/forgot-password
 pub async fn forgot_password(
     State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(req): Json<ForgotPasswordRequest>,
+    req: Request,
 ) -> Json<ForgotPasswordResponse> {
+    // Extract the real client IP for rate limiting.
+    let ip = client_ip(&req);
+
+    // Extract the JSON body from the request.
+    let body = req.into_body();
+    let body = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(_) => {
+            return Json(ForgotPasswordResponse {
+                ok: false,
+                message: "请求无效".into(),
+            });
+        }
+    };
+    let forgot_req: ForgotPasswordRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return Json(ForgotPasswordResponse {
+                ok: false,
+                message: "请求无效".into(),
+            });
+        }
+    };
+
     // Emails are stored lowercased (see update_email), so normalise before
     // both the rate-limit key and the lookup to stay consistent.
-    let email = req.email.trim().to_lowercase();
+    let email = forgot_req.email.trim().to_lowercase();
 
     // IP 级速率限制：每分钟最多 5 次请求
-    let ip_key = format!("forgot_pwd:ip:{}", addr.ip());
+    let ip_key = format!("forgot_pwd:ip:{}", ip);
     if state
         .ip_rate_limiter
         .check_with(&ip_key, 5, 60, 300)
@@ -514,12 +465,6 @@ pub async fn forgot_password(
     })
 }
 
-#[derive(serde::Deserialize)]
-pub struct ResetPasswordRequest {
-    pub token: String,
-    pub password: String,
-}
-
 /// POST /auth/reset-password
 pub async fn reset_password(
     State(state): State<Arc<AppState>>,
@@ -578,11 +523,6 @@ pub async fn reset_password(
     ))
 }
 
-#[derive(serde::Deserialize)]
-pub struct ResetPasswordToken {
-    pub token: String,
-}
-
 /// GET /auth/reset-password?token=xxx
 ///
 /// Handles password reset links from emails. Redirects to the frontend
@@ -595,11 +535,6 @@ pub async fn reset_password_get(
     // Redirect to frontend with token in query params
     // The frontend AuthDialog will detect this and show the reset password form
     axum::response::Redirect::to(&format!("{}/webapp/?reset_token={}", base, params.token))
-}
-
-#[derive(serde::Deserialize)]
-pub struct UpdateEmailRequest {
-    pub email: String,
 }
 
 /// PUT /auth/user/email
@@ -667,12 +602,6 @@ fn is_valid_email(email: &str) -> bool {
     true
 }
 
-#[derive(serde::Serialize)]
-pub struct SendVerificationEmailResponse {
-    pub ok: bool,
-    pub message: String,
-}
-
 /// POST /auth/send-verification-email
 pub async fn send_verification_email(
     State(state): State<Arc<AppState>>,
@@ -738,11 +667,6 @@ pub async fn send_verification_email(
     }
 }
 
-#[derive(serde::Deserialize)]
-pub struct VerifyEmailRequest {
-    pub token: String,
-}
-
 /// GET /auth/verify-email?token=xxx
 ///
 /// Handles email verification links from emails. Verifies the token
@@ -775,67 +699,11 @@ pub async fn verify_email_get(
     let base = state.config.public_url.trim_end_matches('/');
     match result {
         Ok(_) => {
-            let html = format!(
-                r#"<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>邮箱验证成功</title>
-  <style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; background: #0a0a0e; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; }}
-    .card {{ background: #15151a; border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 48px; text-align: center; max-width: 420px; width: 90%; }}
-    .icon {{ font-size: 64px; margin-bottom: 24px; }}
-    h1 {{ font-size: 24px; margin-bottom: 12px; }}
-    p {{ color: #9a9aa6; font-size: 15px; line-height: 1.6; margin-bottom: 32px; }}
-    a {{ display: inline-block; background: #ff4433; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 15px; transition: background 0.2s; }}
-    a:hover {{ background: #ff6655; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">✅</div>
-    <h1>邮箱验证成功</h1>
-    <p>您的邮箱已成功验证！<br>现在可以正常使用所有功能。</p>
-    <a href="{}/webapp/">进入 Atmos Video</a>
-  </div>
-</body>
-</html>"#,
-                base
-            );
+            let html = VERIFY_EMAIL_HTML.replace("{{BASE_URL}}", base);
             axum::response::Html(html).into_response()
         }
         Err(_) => {
-            let html = format!(
-                r#"<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>邮箱验证失败</title>
-  <style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; background: #0a0a0e; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; }}
-    .card {{ background: #15151a; border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 48px; text-align: center; max-width: 420px; width: 90%; }}
-    .icon {{ font-size: 64px; margin-bottom: 24px; }}
-    h1 {{ font-size: 24px; margin-bottom: 12px; }}
-    p {{ color: #9a9aa6; font-size: 15px; line-height: 1.6; margin-bottom: 32px; }}
-    a {{ display: inline-block; background: #ff4433; color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 15px; transition: background 0.2s; }}
-    a:hover {{ background: #ff6655; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">❌</div>
-    <h1>邮箱验证失败</h1>
-    <p>验证链接无效或已过期。<br>请登录后重新发送验证邮件。</p>
-    <a href="{}/webapp/">进入 Atmos Video</a>
-  </div>
-</body>
-</html>"#,
-                base
-            );
+            let html = VERIFY_EMAIL_ERROR_HTML.replace("{{BASE_URL}}", base);
             axum::response::Html(html).into_response()
         }
     }

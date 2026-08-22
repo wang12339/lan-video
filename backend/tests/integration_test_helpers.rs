@@ -30,6 +30,7 @@ use atmos_video_backend::services::search_service::SearchService;
 use atmos_video_backend::services::share_service::ShareService;
 use atmos_video_backend::services::tag_service::TagService;
 use atmos_video_backend::services::task_queue::TaskQueue;
+use atmos_video_backend::services::tenant_service::TenantService;
 use atmos_video_backend::services::transcoder::Transcoder;
 use atmos_video_backend::services::video_service::VideoService;
 use atmos_video_backend::state::{
@@ -105,6 +106,7 @@ pub async fn test_app_state() -> Arc<AppState> {
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
     let email_service = EmailService::new(config.clone());
+    let playlist_service = atmos_video_backend::services::playlist_service::PlaylistService::new(playlist_repo.clone());
 
     let video_cache = VideoListCache::builder()
         .time_to_live(Duration::from_secs(10))
@@ -134,12 +136,13 @@ pub async fn test_app_state() -> Arc<AppState> {
             comment: comment_repo,
             share: share_repo,
             tag: tag_repo,
-            tenant: tenant_repo,
+            tenant: tenant_repo.clone(),
         },
         services: ServiceLayer {
             video: video_service,
             media: media_service,
             playback: playback_service.clone(),
+            playlist: playlist_service,
             auth: AuthService::new(
                 user_repo,
                 playback_service,
@@ -154,6 +157,7 @@ pub async fn test_app_state() -> Arc<AppState> {
             comment: comment_service,
             share: share_service,
             admin: admin_service,
+            tenant: TenantService::new(tenant_repo),
         },
         config,
         rate_limiter: RateLimiter::new(),

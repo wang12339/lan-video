@@ -37,6 +37,7 @@ function mapRecommendation(item: RecommendationItem): MappedVideo {
     // 推荐接口不返回流地址，置 null（而非空串），避免 <video src=""> 之类的边界情况
     stream: null,
     thumb: mediaUrl(item.thumbUrl),
+    thumbnail_url: mediaUrl(item.thumbUrl) || undefined,  // 添加此字段
     category: item.category || '',
     views: 0,
     duration: 0,

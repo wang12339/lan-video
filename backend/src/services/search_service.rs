@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::repositories::video_repo::VideoRepository;
+use crate::util::error::ServiceError;
 
 /// Hard limits applied defensively inside the service; the handlers already
 /// enforce the same bounds, this is just defense in depth so a future caller
@@ -62,7 +63,7 @@ impl SearchService {
         query: &str,
         page: i64,
         size: i64,
-    ) -> Result<(Vec<SearchResult>, i64), String> {
+    ) -> Result<(Vec<SearchResult>, i64), ServiceError> {
         // Empty/whitespace query: nothing matches a tsquery, short-circuit
         // instead of running a pointless scan (handlers do this too, this is
         // defense in depth).
@@ -107,7 +108,7 @@ impl SearchService {
         .bind(offset)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("搜索失败: {}", e))?;
+        .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))?;
 
         let total: i64 = rows.first().map(|r| r.get("total")).unwrap_or(0);
         let results = rows
@@ -135,7 +136,7 @@ impl SearchService {
         Ok((results, total))
     }
 
-    pub async fn search_suggest(&self, query: &str, limit: i64) -> Result<Vec<String>, String> {
+    pub async fn search_suggest(&self, query: &str, limit: i64) -> Result<Vec<String>, ServiceError> {
         let query = normalize_query(query);
         if query.is_empty() {
             return Ok(Vec::new());
@@ -191,7 +192,7 @@ impl SearchService {
         .bind(limit)
         .fetch_all(pool)
         .await
-        .map_err(|e| format!("搜索建议失败: {}", e))?;
+        .map_err(|e| ServiceError::Internal(format!("搜索建议失败: {}", e)))?;
 
         suggest_cache().insert(cache_key, rows.clone());
         Ok(rows)

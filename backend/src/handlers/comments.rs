@@ -1,54 +1,15 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
+use crate::models::comment::{CommentListResponse, CommentQuery, CommentResponse, CreateCommentRequest};
 use crate::state::AppState;
 use crate::util::error::ServiceError;
 use crate::util::hashid;
+use crate::util::pagination::PaginationParams;
 use crate::util::response::{error_response, ErrorResponse, SafeJson};
-
-#[derive(Deserialize)]
-pub struct CreateCommentRequest {
-    pub content: String,
-    #[serde(
-        default,
-        deserialize_with = "crate::util::hashid_serde::deserialize_option_id"
-    )]
-    pub parent_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-pub struct CommentQuery {
-    pub page: Option<i64>,
-    pub size: Option<i64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommentResponse {
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub id: i64,
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub video_id: i64,
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub user_id: i64,
-    pub username: String,
-    pub avatar_url: Option<String>,
-    pub content: String,
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_option_id")]
-    pub parent_id: Option<i64>,
-    pub created_at: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommentListResponse {
-    pub comments: Vec<CommentResponse>,
-    pub total: i64,
-}
 
 fn map_comment(c: crate::repositories::comment_repo::CommentRow) -> CommentResponse {
     CommentResponse {
@@ -71,8 +32,9 @@ pub async fn list_comments(
 ) -> Result<Json<CommentListResponse>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = hashid::decode_id_or_numeric(&video_id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
-    let page = q.page.unwrap_or(0);
-    let size = q.size.unwrap_or(20).min(100);
+    let pagination = PaginationParams::new(q.page, q.size);
+    let page = pagination.page;
+    let size = pagination.page_size;
     let (comments, total) = state
         .services
         .comment

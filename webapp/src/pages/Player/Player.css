@@ -606,6 +606,79 @@
   color: var(--text3);
 }
 
+/* Gesture Area */
+.gesture-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 60px; /* 避开底部控制栏 */
+  z-index: 5;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Gesture Indicator */
+.gesture-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 24px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  pointer-events: none;
+  animation: gesture-indicator-fade 700ms ease forwards;
+}
+
+.gesture-indicator-icon {
+  opacity: 0.9;
+}
+
+.gesture-indicator-text {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes gesture-indicator-fade {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(0.9); }
+  10% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+}
+
+/* Long Press Speed Indicator */
+.long-press-indicator {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  padding: 8px 20px;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+  animation: long-press-pulse 1s ease-in-out infinite;
+  box-shadow: 0 2px 12px rgba(255, 68, 51, 0.4);
+}
+
+@keyframes long-press-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
 /* Responsive */
 @media (max-width: 1000px) {
   .player-detail {
@@ -650,6 +723,25 @@
 
   .volume-wrap:hover .volume-slider {
     width: 56px;
+  }
+
+  /* Gesture indicator larger on touch */
+  .gesture-indicator {
+    padding: 20px 28px;
+  }
+
+  .gesture-indicator-icon svg {
+    width: 40px;
+    height: 40px;
+  }
+
+  .gesture-indicator-text {
+    font-size: 22px;
+  }
+
+  .long-press-indicator {
+    padding: 10px 24px;
+    font-size: 16px;
   }
 
   /* Speed/Quality menu items larger */

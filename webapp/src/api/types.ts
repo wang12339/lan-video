@@ -1,14 +1,46 @@
 // API 类型定义
 
+// 通用 API 响应
+export interface ApiResponse<T> {
+  data: T;
+  message?: string;
+}
+
+// 分页响应
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+// 错误响应
+export interface ApiError {
+  error: string;
+  code?: string;
+  details?: Record<string, unknown>;
+}
+
+// 认证响应
+export interface AuthResponse {
+  ok: boolean;
+  token?: string;
+  error?: string;
+}
+
+export type SourceType = 'local_video' | 'local_image' | 'external'
+export type Category = '科技' | '设计' | '音乐' | '教程' | '娱乐' | '运动' | '记录' | '外部' | '全部' | 'general'
+
 export interface Video {
   id: string;
   title: string;
   description: string;
-  sourceType: string;
+  sourceType: SourceType;
   coverUrl: string | null;
   streamUrl: string;
   thumbUrl: string | null;
-  category: string;
+  category: Category | string;
   views: number;
   duration: number;
   createdAt: string;
@@ -70,12 +102,6 @@ export interface UserProfile extends UserInfo {
   recentHistory: PlaybackHistory[];
 }
 
-export interface AuthResponse {
-  ok: boolean;
-  token?: string;
-  error?: string;
-}
-
 export interface ServerInfo {
   version: string;
 }
@@ -90,12 +116,13 @@ export interface HealthResponse {
 export interface MappedVideo {
   id: string;
   title: string;
-  category: string;
+  category: Category | string;
   description: string;
   thumb: string | null;
+  thumbnail_url?: string;  // 可选字段，兼容Video接口
   stream: string | null;
   cover: string | null;
-  sourceType: string;
+  sourceType: SourceType;
   duration: number;
   views: number;
   date: string;
@@ -107,9 +134,9 @@ export interface MappedVideo {
 export interface MappedImage {
   id: string;
   title: string;
-  category: string;
+  category: Category | string;
   thumb: string | null;
-  sourceType: string;
+  sourceType: SourceType;
 }
 
 export interface MappedHistory {

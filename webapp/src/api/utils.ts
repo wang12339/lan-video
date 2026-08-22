@@ -70,12 +70,14 @@ export const formatCount = formatViews
 // 数据映射
 export function mapVideo(v: Video | null): MappedVideo | null {
   if (!v) return null;
+  const thumb = mediaUrl(v.thumbUrl) || mediaUrl(v.coverUrl) || placeholderDataURL(v.id, 'local_video');
   return {
     id: v.id,
     title: v.title || i18n.t('common.untitled'),
     category: v.category || 'general',
     description: v.description || '',
-    thumb: mediaUrl(v.thumbUrl) || mediaUrl(v.coverUrl) || placeholderDataURL(v.id, 'local_video'),
+    thumb: thumb,
+    thumbnail_url: thumb,  // 添加此字段以兼容Video接口
     stream: mediaUrl(v.streamUrl),
     cover: mediaUrl(v.coverUrl),
     sourceType: v.sourceType || 'local_video',

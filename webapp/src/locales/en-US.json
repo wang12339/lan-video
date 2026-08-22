@@ -68,6 +68,7 @@
     "close": "Dismiss notification"
   },
   "common": {
+    "skipToContent": "Skip to content",
     "loading": "Loading...",
     "loadMore": "Load more",
     "noMore": "No more",
@@ -629,6 +630,9 @@
     "rateLimit": "Too many requests, please try again later",
     "componentError": "Component failed to load",
     "unknownError": "An unknown error occurred",
+    "reloadPage": "Reload page",
+    "details": "View error details",
+    "retrying": "Retrying ({{current}}/{{max}})...",
     "loadFailed": "Failed to load",
     "loadFailedNetwork": "Failed to load. Please check your network and retry",
     "videoLoadFailed": "Failed to load the video. Please check your network and retry",
@@ -643,7 +647,22 @@
     "recentSearches": "Recent Searches",
     "clear": "Clear",
     "clearHistory": "Clear search history",
-    "delete": "Delete"
+    "delete": "Delete",
+    "justNow": "Just now",
+    "minutesAgo": "{{count}} minutes ago",
+    "hoursAgo": "{{count}} hours ago",
+    "noHistory": "No search history",
+    "privacyModeOn": "Privacy mode enabled",
+    "privacyModeOff": "Privacy mode disabled",
+    "enablePrivacy": "Enable privacy mode",
+    "disablePrivacy": "Disable privacy mode",
+    "privacyModeActive": "Privacy mode: searches won't be saved",
+    "confirmClearTitle": "Confirm Clear",
+    "confirmClearMessage": "Are you sure you want to clear all search history? This action cannot be undone.",
+    "recordsWillBeDeleted": "{{count}} records will be deleted",
+    "clearAll": "Clear All",
+    "showStats": "Show stats",
+    "hideStats": "Hide stats"
   },
   "shortcuts": {
     "title": "Keyboard Shortcuts",
@@ -669,7 +688,12 @@
     "general": "General",
     "closeDialog": "Close dialog",
     "scrollToTop": "Scroll to top",
-    "scrollToBottom": "Scroll to bottom"
+    "scrollToBottom": "Scroll to bottom",
+    "editKey": "Edit shortcut",
+    "resetKey": "Reset to default",
+    "resetAll": "Reset all to defaults",
+    "pressNewKey": "Press a new key…",
+    "conflictAssigned": "assigned to multiple actions: {{names}}"
   },
   "stats": {
     "title": "Watch Statistics",
@@ -689,6 +713,36 @@
     "2hours": "2 hours",
     "cancel": "Cancel timer",
     "set": "Set",
-    "after": "to stop playback"
+    "after": "to stop playback",
+    "pause": "Pause",
+    "resume": "Resume",
+    "remaining": "Remaining",
+    "paused": "Paused",
+    "customTime": "Custom time",
+    "minUnit": "min",
+    "hourUnit": "hr",
+    "expired": "Timer expired, playback stopped"
+  },
+  "offline": {
+    "disconnected": "Network connection lost",
+    "reconnected": "Network restored",
+    "online": "Network connected",
+    "close": "Close",
+    "duration": "Offline duration",
+    "reconnectAttempts": "Reconnect attempts",
+    "connectionType": "Connection type",
+    "reconnecting": "Reconnecting...",
+    "retryConnection": "Retry connection",
+    "slowConnection": "Slow network connection",
+    "availableOffline": "Available offline",
+    "playCachedVideos": "Play cached videos",
+    "viewHistory": "View watch history",
+    "browseFavorites": "Browse favorites",
+    "managePlaylists": "Manage playlists",
+    "syncing": "Syncing data...",
+    "synced": "Data synced",
+    "syncNow": "Sync now",
+    "seconds": "s",
+    "minutes": "m"
   }
 }

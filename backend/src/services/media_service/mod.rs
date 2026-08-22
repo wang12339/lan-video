@@ -8,8 +8,11 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::repositories::video_repo::VideoRepository;
+use crate::util::error::ServiceError;
 
 mod validate;
+pub mod sweeper;
+pub mod upload;
 
 use validate::{extract_duration, sweep_upload_temps_blocking};
 pub use validate::{
@@ -96,11 +99,12 @@ impl MediaService {
     ///
     /// 只删除 mtime 超过 [`UPLOAD_TEMP_TTL`] 的文件；进行中的上传每次写入都会
     /// 刷新 mtime，因此不会误删。幂等，可重复执行。返回删除的文件数。
-    pub async fn sweep_stale_upload_temps(&self) -> Result<usize, String> {
+    pub async fn sweep_stale_upload_temps(&self) -> Result<usize, ServiceError> {
         let root = self.config.media_root.clone();
         tokio::task::spawn_blocking(move || sweep_upload_temps_blocking(&root, UPLOAD_TEMP_TTL))
             .await
-            .map_err(|e| format!("临时文件清理任务失败: {}", e))?
+            .map_err(|e| ServiceError::Internal(format!("临时文件清理任务失败: {}", e)))?
+            .map_err(|e| ServiceError::Internal(e))
     }
 
     /// 流式上传：从临时文件读取，计算 SHA-256，移动到最终位置
@@ -110,20 +114,20 @@ impl MediaService {
         temp_path: &std::path::Path,
         category: &str,
         uploader_id: i64,
-    ) -> Result<i64, String> {
+    ) -> Result<i64, ServiceError> {
         // SECURITY (L-03): 上传入口（multipart 字段 / x-upload-category 头）此前
         // 无 category 校验。在读取文件前快速失败——50GB 文件不应为错误分类
         // 浪费一次全量读取；临时文件由调用方与下方错误路径共同清理。
         if let Err(e) = validate_category(category) {
             let _ = tokio::fs::remove_file(temp_path).await;
-            return Err(e);
+            return Err(ServiceError::BadRequest(e));
         }
 
         // Compute SHA-256 hash by streaming the file
         use tokio::io::AsyncReadExt;
         let mut file = tokio::fs::File::open(temp_path)
             .await
-            .map_err(|e| format!("打开临时文件失败: {}", e))?;
+            .map_err(|e| ServiceError::Internal(format!("打开临时文件失败: {}", e)))?;
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 65536];
         let mut file_size: i64 = 0;
@@ -131,7 +135,7 @@ impl MediaService {
             let n = file
                 .read(&mut buf)
                 .await
-                .map_err(|e| format!("读取临时文件失败: {}", e))?;
+                .map_err(|e| ServiceError::Internal(format!("读取临时文件失败: {}", e)))?;
             if n == 0 {
                 break;
             }
@@ -152,15 +156,12 @@ impl MediaService {
                 Err(e) => {
                     // DB failure: clean up the temp file before propagating.
                     let _ = tokio::fs::remove_file(temp_path).await;
-                    return Err(e.to_string());
+                    return Err(ServiceError::Internal(e.to_string()));
                 }
             };
             if used + file_size > quota {
                 let _ = tokio::fs::remove_file(temp_path).await;
-                return Err(format!(
-                    "存储配额已用完：已用 {} 字节，本次 {} 字节，配额 {} 字节",
-                    used, file_size, quota
-                ));
+                return Err(ServiceError::QuotaExceeded("存储配额已用尽".into()));
             }
         }
 
@@ -168,12 +169,12 @@ impl MediaService {
         match self.repo.find_video_by_file_hash(&hash).await {
             Ok(Some(_)) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
-                return Err("重复：视频已存在".into());
+                return Err(ServiceError::Duplicate("文件已存在".into()));
             }
             Ok(None) => {}
             Err(e) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
-                return Err(e.to_string());
+                return Err(ServiceError::Internal(e.to_string()));
             }
         }
 
@@ -194,10 +195,10 @@ impl MediaService {
         let validation =
             tokio::task::spawn_blocking(move || validate_file_type(&temp_path_clone, &ext_clone))
                 .await
-                .map_err(|e| format!("文件验证任务失败: {}", e))?;
+                .map_err(|e| ServiceError::Internal(format!("文件验证任务失败: {}", e)))?;
         if let Err(e) = validation {
             let _ = tokio::fs::remove_file(temp_path).await;
-            return Err(format!("文件验证失败: {}", e));
+            return Err(ServiceError::BadRequest(format!("文件验证失败: {}", e)));
         }
         // Re-open temp_path after spawn_blocking
         let temp_path = temp_path.to_path_buf();
@@ -231,13 +232,13 @@ impl MediaService {
             Ok(f) => f,
             Err(e) => {
                 let _ = tokio::fs::remove_file(&temp_path).await;
-                return Err(format!("打开临时文件失败: {}", e));
+                return Err(ServiceError::Internal(format!("打开临时文件失败: {}", e)));
             }
         };
         if let Err(e) = sync_file.sync_all().await {
             drop(sync_file);
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(format!("同步临时文件失败: {}", e));
+            return Err(ServiceError::Internal(format!("同步临时文件失败: {}", e)));
         }
         drop(sync_file);
 
@@ -263,7 +264,7 @@ impl MediaService {
             // rename failed — the upload still lives at the temp path; clean
             // it up so we don't leak the temp file.
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(format!("移动文件失败: {}", e));
+            return Err(ServiceError::Internal(format!("移动文件失败: {}", e)));
         }
 
         let stream_url = format!("/media/{}", dest_file_name);
@@ -291,7 +292,7 @@ impl MediaService {
                 // DB row references it — remove it to avoid an orphaned file
                 // that will never be cleaned up or served.
                 let _ = tokio::fs::remove_file(&dest_path).await;
-                return Err(e.to_string());
+                return Err(ServiceError::Internal(e.to_string()));
             }
         };
 
@@ -341,13 +342,13 @@ impl MediaService {
     }
 
     /// Generate a thumbnail from a video file using ffmpeg
-    pub async fn generate_thumbnail(&self, video_id: i64) -> Result<bool, String> {
+    pub async fn generate_thumbnail(&self, video_id: i64) -> Result<bool, ServiceError> {
         let video = self
             .repo
             .find_by_id(video_id)
             .await
-            .map_err(|e| e.to_string())?;
-        let video = video.ok_or_else(|| "not found".to_string())?;
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        let video = video.ok_or_else(|| ServiceError::Internal("not found".to_string()))?;
 
         // Only generate for local video files
         if !video.source_type.starts_with("local_video") {
@@ -387,10 +388,10 @@ impl MediaService {
         let video_path = match safe_media_path(&video.stream_url, &self.config.media_root) {
             Some(p) => p,
             None => {
-                return Err(format!(
+                return Err(ServiceError::Internal(format!(
                     "video file not found or invalid path: {}",
                     video.stream_url
-                ))
+                )))
             }
         };
         let video_path_exists = tokio::task::spawn_blocking({
@@ -400,14 +401,14 @@ impl MediaService {
         .await
         .unwrap_or(false);
         if !video_path_exists {
-            return Err(format!("video file not found: {}", video_path.display()));
+            return Err(ServiceError::Internal(format!("video file not found: {}", video_path.display())));
         }
 
         // Limit concurrent ffmpeg thumbnail jobs and give each one a hard
         // timeout, so a hung process can't pin a blocking worker forever.
         let _permit = match thumbnail_semaphore().acquire().await {
             Ok(p) => p,
-            Err(_) => return Err("thumbnail semaphore closed".to_string()),
+            Err(_) => return Err(ServiceError::Internal("thumbnail semaphore closed".to_string())),
         };
 
         // Extract frame at 1 second using ffmpeg
@@ -434,12 +435,12 @@ impl MediaService {
         )
         .await
         .map_err(|_| {
-            format!(
+            ServiceError::Internal(format!(
                 "ffmpeg thumbnail generation timed out after {}s",
                 THUMBNAIL_FFMPEG_TIMEOUT_SECS
-            )
+            ))
         })?
-        .map_err(|e| format!("ffmpeg not found: {}", e))?;
+        .map_err(|e| ServiceError::Internal(format!("ffmpeg not found: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -451,10 +452,10 @@ impl MediaService {
             .await
             .unwrap_or(false);
             if !cover_exists {
-                return Err(format!(
+                return Err(ServiceError::Internal(format!(
                     "ffmpeg failed: {}",
                     stderr.lines().next().unwrap_or("unknown error")
-                ));
+                )));
             }
         }
 
@@ -462,7 +463,7 @@ impl MediaService {
         self.repo
             .update_cover_url(video_id, &cover_url)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
 
         // Generate a smaller thumbnail (320x180) for grid use
         let thumb_file_name = format!("thumb_{}.jpg", video_id);
@@ -496,7 +497,7 @@ impl MediaService {
     }
 
     /// Backfill thumbnails for local videos without a cover (paginated to avoid memory spike)
-    pub async fn backfill_thumbnails(&self) -> Result<(i64, Vec<String>), String> {
+    pub async fn backfill_thumbnails(&self) -> Result<(i64, Vec<String>), ServiceError> {
         let mut generated = 0i64;
         let mut errors = Vec::new();
         let mut last_id: i64 = 0;
@@ -506,7 +507,7 @@ impl MediaService {
                 .repo
                 .find_videos_without_cover(last_id, 100)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ServiceError::Internal(e.to_string()))?;
             if rows.is_empty() {
                 break;
             }
@@ -523,7 +524,7 @@ impl MediaService {
         Ok((generated, errors))
     }
 
-    pub async fn update_cover(&self, id: i64, file_name: &str, bytes: Bytes) -> Result<(), String> {
+    pub async fn update_cover(&self, id: i64, file_name: &str, bytes: Bytes) -> Result<(), ServiceError> {
         let ext = Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())
@@ -550,7 +551,7 @@ impl MediaService {
         let tmp_path = self.config.media_root.join(&tmp_file_name);
         tokio::fs::write(&tmp_path, &bytes)
             .await
-            .map_err(|e| format!("写入临时封面失败: {}", e))?;
+            .map_err(|e| ServiceError::Internal(format!("写入临时封面失败: {}", e)))?;
 
         // Validate the uploaded file using magic bytes
         let validation = tokio::task::spawn_blocking({
@@ -564,11 +565,11 @@ impl MediaService {
             tokio::spawn(async move {
                 let _ = tokio::fs::remove_file(&tp).await;
             });
-            format!("验证任务失败: {}", e)
+            ServiceError::Internal(format!("验证任务失败: {}", e))
         })?;
         if let Err(e) = validation {
             let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(format!("封面上传验证失败: {}", e));
+            return Err(ServiceError::BadRequest(format!("封面上传验证失败: {}", e)));
         }
 
         let cover_file_name = format!(
@@ -581,7 +582,7 @@ impl MediaService {
 
         if let Err(e) = tokio::fs::rename(&tmp_path, &cover_path).await {
             let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(format!("移动封面失败: {}", e));
+            return Err(ServiceError::Internal(format!("移动封面失败: {}", e)));
         }
 
         let cover_url = format!("/media/{}", cover_file_name);
@@ -589,7 +590,7 @@ impl MediaService {
             // The cover was moved to its final name but no DB row points to
             // it — remove it so we don't leak an unreferenced file.
             let _ = tokio::fs::remove_file(&cover_path).await;
-            return Err(e.to_string());
+            return Err(ServiceError::Internal(e.to_string()));
         }
         Ok(())
     }

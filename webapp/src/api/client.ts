@@ -30,6 +30,8 @@ const API_TIMEOUT = 15000;
 const CACHE_TTL = 30000;
 const ERROR_LOG_KEY = 'atmos_error_log';
 const MAX_ERRORS = 50;
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1秒基础延迟
 
 // 错误日志（仅存储消息和状态码，不包含URL和堆栈等敏感信息）
 function logError({ message, url, status }: {
@@ -252,6 +254,21 @@ export class AuthError extends APIError {
 let onAuthRequiredCb: ((msg?: string) => void) | null = null;
 export function setOnAuthRequired(cb: (msg?: string) => void) { onAuthRequiredCb = cb; }
 
+// 重试延迟计算（指数退避）
+function getRetryDelay(attempt: number): number {
+  return RETRY_DELAY * Math.pow(2, attempt) + Math.random() * 1000;
+}
+
+// 判断是否应该重试
+function shouldRetry(status: number, attempt: number): boolean {
+  if (attempt >= MAX_RETRIES) return false;
+  // 只重试网络错误和服务器错误
+  if (status === 0 || status >= 500) return true;
+  // 429 Too Many Requests 也重试
+  if (status === 429) return true;
+  return false;
+}
+
 // 请求核心
 interface RequestOptions {
   method?: string;
@@ -265,11 +282,24 @@ interface RequestOptions {
   silent?: boolean;
   // 写请求后跳过缓存失效（分片上传等高频写不清理 /videos 缓存）
   noInvalidate?: boolean;
+  // 重试次数（默认 3 次）
+  retries?: number;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = BASE + path;
-  const { method = 'GET', body, headers = {}, auth = true, skipCache = false, timeout, signal, silent = false, noInvalidate = false } = options;
+  const { 
+    method = 'GET', 
+    body, 
+    headers = {}, 
+    auth = true, 
+    skipCache = false, 
+    timeout, 
+    signal, 
+    silent = false, 
+    noInvalidate = false,
+    retries = MAX_RETRIES 
+  } = options;
 
   const cacheKey = method === 'GET' && !skipCache ? getCacheKey(url, method) : null;
   if (cacheKey) {
@@ -290,104 +320,118 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (token) requestHeaders['Authorization'] = 'Bearer ' + token;
   }
 
-  // 超时 + 调用方取消信号组合：手动 AbortController，
-  // 可区分"超时"与"主动取消"两种 AbortError
-  const controller = new AbortController();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeout || API_TIMEOUT);
-  const onAbort = () => controller.abort();
-  if (signal) {
-    if (signal.aborted) controller.abort();
-    else signal.addEventListener('abort', onAbort, { once: true });
-  }
+  // 重试逻辑
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    // 超时 + 调用方取消信号组合：手动 AbortController，
+    // 可区分"超时"与"主动取消"两种 AbortError
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeout || API_TIMEOUT);
+    const onAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
 
-  const fetchOpts: RequestInit = {
-    method,
-    headers: requestHeaders,
-    credentials: 'same-origin',
-    signal: controller.signal,
-  };
-  if (body !== undefined) {
-    fetchOpts.body = body instanceof Blob || body instanceof FormData ? body : JSON.stringify(body);
-  }
+    const fetchOpts: RequestInit = {
+      method,
+      headers: requestHeaders,
+      credentials: 'same-origin',
+      signal: controller.signal,
+    };
+    if (body !== undefined) {
+      fetchOpts.body = body instanceof Blob || body instanceof FormData ? body : JSON.stringify(body);
+    }
 
-  try {
-    let res: Response;
     try {
-      res = await fetch(url, fetchOpts);
-    } catch (e) {
-      // 调用方主动取消：原样抛出 AbortError，由 react-query/组件决定如何处理
-      if (signal?.aborted) throw e;
-      if (timedOut) {
-        const msg = i18n.t?.('errors.timeout') || '请求超时';
+      let res: Response;
+      try {
+        res = await fetch(url, fetchOpts);
+      } catch (e) {
+        // 调用方主动取消：原样抛出 AbortError，由 react-query/组件决定如何处理
+        if (signal?.aborted) throw e;
+        if (timedOut) {
+          const msg = i18n.t?.('errors.timeout') || '请求超时';
+          if (!silent) logError({ message: msg, url, status: 0 });
+          throw new APIError(msg, 0);
+        }
+        if ((e as Error)?.name === 'AbortError') throw e;
+        const msg = i18n.t?.('errors.network') || '网络连接失败';
         if (!silent) logError({ message: msg, url, status: 0 });
         throw new APIError(msg, 0);
       }
-      if ((e as Error)?.name === 'AbortError') throw e;
-      const msg = i18n.t?.('errors.network') || '网络连接失败';
-      if (!silent) logError({ message: msg, url, status: 0 });
-      throw new APIError(msg, 0);
-    }
 
-    // 204 No Content (or 205 Reset Content) — short-circuit before JSON parse.
-    if (res.status === 204 || res.status === 205) {
-      if (method !== 'GET' && !noInvalidate) invalidateCacheForPath(path, body);
-      return null as T;
-    }
-
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch (e) {
-      // 读取响应体期间超时/取消
-      if (signal?.aborted || ((e as Error)?.name === 'AbortError' && !timedOut)) throw e;
-      if (timedOut) {
-        const msg = i18n.t?.('errors.timeout') || '请求超时';
-        if (!silent) logError({ message: msg, url, status: 0 });
-        throw new APIError(msg, 0);
+      // 204 No Content (or 205 Reset Content) — short-circuit before JSON parse.
+      if (res.status === 204 || res.status === 205) {
+        if (method !== 'GET' && !noInvalidate) invalidateCacheForPath(path, body);
+        return null as T;
       }
-      // Response is not JSON
+
+      let data: unknown;
+      try {
+        data = await res.json();
+      } catch (e) {
+        // 读取响应体期间超时/取消
+        if (signal?.aborted || ((e as Error)?.name === 'AbortError' && !timedOut)) throw e;
+        if (timedOut) {
+          const msg = i18n.t?.('errors.timeout') || '请求超时';
+          if (!silent) logError({ message: msg, url, status: 0 });
+          throw new APIError(msg, 0);
+        }
+        // Response is not JSON
+        if (res.status === 401 && auth) {
+          clearToken();
+          if (onAuthRequiredCb) onAuthRequiredCb();
+          throw new AuthError();
+        }
+        const errorMsg = resolveErrorMessage(res.status);
+        logError({ message: errorMsg, url, status: res.status });
+        const apiErr = new APIError(errorMsg, res.status);
+        if (!silent && onErrorCb) onErrorCb(apiErr);
+        throw apiErr;
+      }
+
       if (res.status === 401 && auth) {
         clearToken();
-        if (onAuthRequiredCb) onAuthRequiredCb();
-        throw new AuthError();
+        const dataObj = data as Record<string, unknown>;
+        const rawMsg = dataObj && typeof dataObj.error === 'string' ? dataObj.error : undefined;
+        const msg = localizeAuthMessage(rawMsg);
+        if (onAuthRequiredCb) onAuthRequiredCb(msg);
+        throw new AuthError(msg);
       }
-      const errorMsg = resolveErrorMessage(res.status);
-      logError({ message: errorMsg, url, status: res.status });
-      const apiErr = new APIError(errorMsg, res.status);
-      if (!silent && onErrorCb) onErrorCb(apiErr);
-      throw apiErr;
-    }
 
-    if (res.status === 401 && auth) {
-      clearToken();
-      const dataObj = data as Record<string, unknown>;
-      const rawMsg = dataObj && typeof dataObj.error === 'string' ? dataObj.error : undefined;
-      const msg = localizeAuthMessage(rawMsg);
-      if (onAuthRequiredCb) onAuthRequiredCb(msg);
-      throw new AuthError(msg);
-    }
+      if (!res.ok) {
+        const dataObj = data as Record<string, unknown>;
+        const rawMsg = dataObj && typeof dataObj.error === 'string' ? dataObj.error : undefined;
+        const msg = resolveErrorMessage(res.status, rawMsg);
+        
+        // 判断是否重试
+        if (shouldRetry(res.status, attempt)) {
+          const delay = getRetryDelay(attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        logError({ message: msg, url, status: res.status });
+        const apiErr = new APIError(msg, res.status);
+        if (!silent && onErrorCb) onErrorCb(apiErr);
+        throw apiErr;
+      }
 
-    if (!res.ok) {
-      const dataObj = data as Record<string, unknown>;
-      const rawMsg = dataObj && typeof dataObj.error === 'string' ? dataObj.error : undefined;
-      const msg = resolveErrorMessage(res.status, rawMsg);
-      logError({ message: msg, url, status: res.status });
-      const apiErr = new APIError(msg, res.status);
-      if (!silent && onErrorCb) onErrorCb(apiErr);
-      throw apiErr;
+      if (cacheKey) cacheSet(cacheKey, data);
+      if (method !== 'GET' && !noInvalidate) invalidateCacheForPath(path, body);
+      return data as T;
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
     }
-
-    if (cacheKey) cacheSet(cacheKey, data);
-    if (method !== 'GET' && !noInvalidate) invalidateCacheForPath(path, body);
-    return data as T;
-  } finally {
-    clearTimeout(timer);
-    if (signal) signal.removeEventListener('abort', onAbort);
   }
+
+  // 如果所有重试都失败，抛出最后一个错误
+  throw new APIError(i18n.t?.('errors.network') || '网络连接失败', 0);
 }
 
 // 健康检查

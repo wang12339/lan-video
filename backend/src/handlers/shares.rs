@@ -3,44 +3,15 @@ use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
+use crate::models::share::{CreateShareRequest, CreateShareResponse, ShareListItem};
 use crate::services::share_service::is_valid_share_token;
 use crate::state::AppState;
 use crate::util::error::ServiceError;
 use crate::util::hashid;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
-
-#[derive(Deserialize)]
-pub struct CreateShareRequest {
-    pub expires_in_days: Option<i32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateShareResponse {
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub id: i64,
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub video_id: i64,
-    /// Raw share token — shown ONCE on creation. Never returned by any other endpoint.
-    pub token: String,
-    pub share_url: String,
-    pub expires_at: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShareListItem {
-    #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
-    pub id: i64,
-    pub expires_at: Option<String>,
-    pub created_at: String,
-    pub active: bool,
-}
 
 /// Build the share URL from the configured PUBLIC_URL.
 fn build_share_url(config: &crate::config::AppConfig, token: &str) -> String {

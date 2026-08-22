@@ -185,6 +185,14 @@ fn is_cloudflare_peer(ip: IpAddr) -> bool {
 /// Includes `frame-ancestors 'none'` to redundantly block framing (defence in
 /// depth alongside X-Frame-Options: DENY), and `object-src`/`frame-src 'none'`
 /// to close the classic plugin-embedding and iframe-sandbox escape hatches.
+///
+/// Security notes:
+/// - `upgrade-insecure-requests` tells the browser to rewrite http:// sub-resource
+///   URLs to https:// before fetching, preventing mixed-content warnings.
+/// - `block-all-mixed-content` is the legacy equivalent (deprecated but harmless
+///   as defence-in-depth for older browsers).
+/// - `script-src` and `connect-src` allow Cloudflare Web Analytics (Beacon)
+///   endpoint only; `unsafe-inline` and `unsafe-eval` are deliberately omitted.
 const CSP_POLICY: &str = "default-src 'self'; \
     base-uri 'self'; \
     form-action 'self'; \
@@ -196,7 +204,9 @@ const CSP_POLICY: &str = "default-src 'self'; \
     style-src 'self'; \
     font-src 'self' data:; \
     script-src 'self' https://static.cloudflareinsights.com; \
-    connect-src 'self' https://static.cloudflareinsights.com";
+    connect-src 'self' https://static.cloudflareinsights.com; \
+    upgrade-insecure-requests; \
+    block-all-mixed-content";
 
 /// Create CORS layer with configured origins (comma-separated).
 ///
@@ -256,6 +266,39 @@ mod tests {
         assert!(CSP_POLICY.contains("frame-ancestors"));
         assert!(CSP_POLICY.contains("object-src 'none'"));
         assert!(CSP_POLICY.contains("frame-src 'none'"));
+    }
+
+    #[test]
+    fn test_csp_policy_no_unsafe_directives() {
+        // unsafe-inline and unsafe-eval weaken XSS protections
+        assert!(
+            !CSP_POLICY.contains("'unsafe-inline'"),
+            "CSP must not allow unsafe-inline"
+        );
+        assert!(
+            !CSP_POLICY.contains("'unsafe-eval'"),
+            "CSP must not allow unsafe-eval"
+        );
+    }
+
+    #[test]
+    fn test_csp_policy_has_mixed_content_protections() {
+        assert!(
+            CSP_POLICY.contains("upgrade-insecure-requests"),
+            "CSP should upgrade insecure requests"
+        );
+        assert!(
+            CSP_POLICY.contains("block-all-mixed-content"),
+            "CSP should block mixed content (legacy browsers)"
+        );
+    }
+
+    #[test]
+    fn test_csp_policy_restricts_critical_directives() {
+        assert!(CSP_POLICY.contains("default-src 'self'"));
+        assert!(CSP_POLICY.contains("base-uri 'self'"));
+        assert!(CSP_POLICY.contains("form-action 'self'"));
+        assert!(CSP_POLICY.contains("frame-ancestors 'none'"));
     }
 
     #[test]
@@ -412,6 +455,37 @@ mod tests {
         // Response body is untouched by the middleware
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"hi");
+    }
+
+    #[tokio::test]
+    async fn all_security_headers_set_on_http_requests() {
+        // Even without HTTPS, most security headers should still be present
+        // (only HSTS is omitted for plain HTTP per RFC 6797).
+        let res = run_with_proto(None, false).await;
+        assert_eq!(
+            res.headers().get("x-content-type-options").unwrap(),
+            "nosniff"
+        );
+        assert_eq!(res.headers().get("x-frame-options").unwrap(), "DENY");
+        assert_eq!(res.headers().get("referrer-policy").unwrap(), "no-referrer");
+        assert_eq!(
+            res.headers().get("permissions-policy").unwrap(),
+            "geolocation=(), microphone=(), camera=()"
+        );
+        assert_eq!(
+            res.headers().get("content-security-policy").unwrap(),
+            CSP_POLICY
+        );
+        assert_eq!(
+            res.headers().get("cross-origin-opener-policy").unwrap(),
+            "same-origin"
+        );
+        assert_eq!(
+            res.headers().get("cross-origin-resource-policy").unwrap(),
+            "same-origin"
+        );
+        // HSTS must NOT be present on plain HTTP
+        assert!(res.headers().get("strict-transport-security").is_none());
     }
 
     #[tokio::test]

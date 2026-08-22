@@ -32,13 +32,10 @@ use atmos_video_backend::services::task_queue::{TaskQueue, TaskStatus, Transcode
 use atmos_video_backend::services::transcoder::Transcoder;
 use atmos_video_backend::util::hashid::{decode_id, decode_id_or_numeric, encode_id};
 use atmos_video_backend::util::net::client_ip;
-use atmos_video_backend::util::response::{
-    internal_error_log, ApiHandlerError, ErrorResponse, SafeJson,
-};
+use atmos_video_backend::util::response::{internal_error_log, ErrorResponse, SafeJson};
 use axum::body::Body;
 use axum::extract::{ConnectInfo, FromRequest};
 use axum::http::{header, Request, StatusCode};
-use axum::response::IntoResponse;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
@@ -139,60 +136,6 @@ fn hashid_or_numeric_fallback() {
 // ══════════════════════════════════════════════════════════════════════
 // 二、util::response — 错误映射与脱敏
 // ══════════════════════════════════════════════════════════════════════
-
-#[test]
-fn response_sqlx_row_not_found_maps_to_404() {
-    let e = ApiHandlerError::from(sqlx::Error::RowNotFound);
-    assert_eq!(e.status, StatusCode::NOT_FOUND);
-    assert_eq!(e.message, "资源不存在");
-}
-
-#[test]
-fn response_sqlx_other_errors_map_to_generic_500() {
-    // 预期条件之外的 DB 错误 → 500 + 通用文案，不泄漏 SQL/连接细节
-    for err in [sqlx::Error::PoolClosed, sqlx::Error::PoolTimedOut] {
-        let e = ApiHandlerError::from(err);
-        assert_eq!(e.status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(e.message, "数据库错误");
-    }
-}
-
-#[test]
-fn response_api_handler_error_constructors() {
-    assert_eq!(
-        ApiHandlerError::bad_request("m").status,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        ApiHandlerError::not_found("m").status,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        ApiHandlerError::internal("m").status,
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        ApiHandlerError::forbidden("m").status,
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        ApiHandlerError::new(StatusCode::CONFLICT, "m").status,
-        StatusCode::CONFLICT
-    );
-    let from_tuple: ApiHandlerError = (StatusCode::BAD_REQUEST, "手工消息".into()).into();
-    assert_eq!(from_tuple.message, "手工消息");
-}
-
-#[tokio::test]
-async fn response_api_handler_error_into_response_body() {
-    let res = ApiHandlerError::new(StatusCode::NOT_FOUND, "视频不存在").into_response();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
-    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(json["error"], "视频不存在");
-}
 
 #[test]
 fn response_internal_error_log_redacts_details() {
@@ -385,9 +328,9 @@ async fn search_nonempty_query_reaches_db() {
     // 证明上面的短路只发生在 normalize 后为空时，防止"假短路"掩盖查询。
     let svc = SearchService::new(VideoRepository::new(dead_pool()));
     let err = svc.full_text_search("hello", 1, 10).await.unwrap_err();
-    assert!(err.contains("搜索失败"), "got: {err}");
+    assert!(format!("{}", err).contains("搜索失败"), "got: {err}");
     let err = svc.search_suggest("hello", 5).await.unwrap_err();
-    assert!(err.contains("搜索建议失败"), "got: {err}");
+    assert!(format!("{}", err).contains("搜索建议失败"), "got: {err}");
 }
 
 // ══════════════════════════════════════════════════════════════════════
