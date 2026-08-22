@@ -58,6 +58,7 @@ function NavBar() {
   const [showAuth, setShowAuth] = useState(false)
   const suggestTimer = useRef<ReturnType<typeof setTimeout>>()
   const suggestSeq = useRef(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
   const linksRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
@@ -150,13 +151,16 @@ function NavBar() {
     setConfirmLogout(false)
   }, [location.pathname])
 
-  // Esc 收起菜单
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setMenuOpen(false)
         setUserMenuOpen(false)
         setConfirmLogout(false)
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -196,6 +200,7 @@ function NavBar() {
           <form onSubmit={handleSearch} className="nav-search-form">
             <span className="nav-search-icon" aria-hidden="true">🔍</span>
             <input
+              ref={searchInputRef}
               type="text"
               placeholder={t('nav.search')}
               value={searchQuery}
@@ -204,6 +209,9 @@ function NavBar() {
               onKeyDown={handleKeyDown}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
             />
+            <kbd className="search-shortcut" aria-hidden="true">
+              {/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl+'}K
+            </kbd>
           </form>
           {showSuggestions && (
             <div className="search-suggestions" role="listbox">

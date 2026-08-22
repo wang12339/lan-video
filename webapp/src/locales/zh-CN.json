@@ -98,7 +98,9 @@
     "createFailed": "创建失败",
     "deleteFailed": "删除失败",
     "scrollToTop": "回到顶部",
-    "close": "关闭"
+    "close": "关闭",
+    "clearSearch": "清空搜索",
+    "goUpload": "去上传第一个视频"
   },
   "home": {
     "heroTitle": "Atmos Video",
@@ -119,9 +121,13 @@
     "emailVerified": "✓ 邮箱验证成功",
     "emailVerifyFailed": "✗ 邮箱验证失败，链接无效或已过期",
     "searchEmpty": "未找到与「{{query}}」相关的视频",
+    "hotSearch": "热搜",
     "guestCta": "登录后浏览全部视频",
     "guestPreview": "试看",
     "errorHint": "请检查网络连接后重试",
+    "step1": "注册账号",
+    "step2": "上传视频",
+    "step3": "分享播放",
     "categories": {
       "all": "全部",
       "tech": "科技",

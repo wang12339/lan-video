@@ -23,6 +23,14 @@ interface VideoCardProps {
   eager?: boolean; // 首屏前4张设为 eager + high priority，优化 LCP
 }
 
+function getCategoryKey(cat: string): string {
+  const map: Record<string, string> = {
+    '科技': 'tech', '设计': 'design', '音乐': 'music',
+    '教程': 'tutorial', '娱乐': 'entertainment', '运动': 'sports', '记录': 'record'
+  }
+  return map[cat] || cat
+}
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
@@ -122,14 +130,14 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
         )}
       </div>
       <div className="video-info">
-        {video.category && (
+        {video.category && !['local_video', 'local', 'external'].includes(video.category) && (
           <span className="cat-badge" data-cat={video.category}>
-            {video.category}
+            {t('home.categories.' + getCategoryKey(video.category), { defaultValue: video.category })}
           </span>
         )}
         <h3>{video.title}</h3>
         <div className="video-meta">
-          {viewsText
+          {video.views > 0
             ? <span className="views" aria-label={`${video.views} views`}>
                 <svg className="views-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                   <path d="M8 3C4.5 3 1.5 5.5 0.5 8c1 2.5 4 5 7.5 5s6.5-2.5 7.5-5c-1-2.5-4-5-7.5-5zm0 8a3 3 0 110-6 3 3 0 010 6zm0-5a2 2 0 100 4 2 2 0 000-4z"/>

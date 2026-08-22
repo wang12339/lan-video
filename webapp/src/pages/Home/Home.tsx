@@ -218,18 +218,12 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [category, query])
 
-  // 记录滚动位置
+  // Unified scroll handler
   useEffect(() => {
     const onScroll = () => {
       homeScrollY = window.scrollY
+      setShowScrollTop(window.scrollY > 400)
     }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
-
-  // Scroll-to-top button visibility
-  useEffect(() => {
-    const onScroll = () => setShowScrollTop(window.scrollY > 400)
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
@@ -245,6 +239,18 @@ export default function Home() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Pause animations when tab is hidden to save CPU
+  useEffect(() => {
+    const handleVisibility = () => {
+      document.documentElement.style.setProperty(
+        '--animation-play-state',
+        document.hidden ? 'paused' : 'running'
+      )
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [])
 
   // Arrow key navigation between video cards
@@ -314,8 +320,25 @@ export default function Home() {
   const showInitialError = isError && filteredVideos.length === 0 && !isPending
   const showEmpty = !isPending && !isError && filteredVideos.length === 0
 
+  const structuredData = useMemo(() => ({
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: 'Atmos Video',
+    description: t('home.heroDesc'),
+    url: window.location.origin,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${window.location.origin}/webapp/?q={search_term_string}`,
+      'query-input': 'required name=search_term_string',
+    },
+  }), [t])
+
   return (
     <div className="home">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       {isPending && <div className="home-progress" role="progressbar" aria-label={t('common.loading')} />}
       {emailVerified !== null && (
         <div className={`email-verify-banner ${emailVerified ? 'success' : 'error'}`}>
@@ -332,28 +355,28 @@ export default function Home() {
           <p className="hero-sub">{t('home.heroSub')}</p>
           <p className="hero-desc">{t('home.heroDesc')}</p>
           <div className="hero-features">
-            <div className="hero-feature">
+            <div className="hero-feature" title={t('home.featureHlsDesc')}>
               <span className="hero-feature-icon">⚡</span>
               <div className="hero-feature-text">
                 <span className="hero-feature-name">{t('home.featureHls')}</span>
                 <span className="hero-feature-desc">{t('home.featureHlsDesc')}</span>
               </div>
             </div>
-            <div className="hero-feature">
+            <div className="hero-feature" title={t('home.featureUploadDesc')}>
               <span className="hero-feature-icon">📦</span>
               <div className="hero-feature-text">
                 <span className="hero-feature-name">{t('home.featureUpload')}</span>
                 <span className="hero-feature-desc">{t('home.featureUploadDesc')}</span>
               </div>
             </div>
-            <div className="hero-feature">
+            <div className="hero-feature" title={t('home.featureShareDesc')}>
               <span className="hero-feature-icon">🔒</span>
               <div className="hero-feature-text">
                 <span className="hero-feature-name">{t('home.featureShare')}</span>
                 <span className="hero-feature-desc">{t('home.featureShareDesc')}</span>
               </div>
             </div>
-            <div className="hero-feature">
+            <div className="hero-feature" title={t('home.featurePrivateDesc')}>
               <span className="hero-feature-icon">🏠</span>
               <div className="hero-feature-text">
                 <span className="hero-feature-name">{t('home.featurePrivate')}</span>
@@ -375,8 +398,37 @@ export default function Home() {
               <span className="hero-stat-label">{t('home.featureUpload')}</span>
             </div>
           </div>
+          <div className="hero-steps">
+            <div className="hero-step">
+              <span className="hero-step-num">1</span>
+              <span className="hero-step-text">{t('home.step1')}</span>
+            </div>
+            <div className="hero-step-arrow" aria-hidden="true">→</div>
+            <div className="hero-step">
+              <span className="hero-step-num">2</span>
+              <span className="hero-step-text">{t('home.step2')}</span>
+            </div>
+            <div className="hero-step-arrow" aria-hidden="true">→</div>
+            <div className="hero-step">
+              <span className="hero-step-num">3</span>
+              <span className="hero-step-text">{t('home.step3')}</span>
+            </div>
+          </div>
           <div className="hero-scroll-hint" aria-hidden="true">
             <span className="hero-scroll-arrow">↓</span>
+          </div>
+        </div>
+      )}
+
+      {!user && (
+        <div className="trending-searches">
+          <span className="trending-searches-label">{t('home.hotSearch')}</span>
+          <div className="trending-search-tags">
+            {['科技', '教程', '音乐', '设计'].map(tag => (
+              <Link key={tag} to={`/?q=${encodeURIComponent(tag)}`} className="trending-search-tag">
+                {tag}
+              </Link>
+            ))}
           </div>
         </div>
       )}
@@ -482,14 +534,16 @@ export default function Home() {
             <div className="empty-state">
               <div className="empty-icon">⚠️</div>
               <div className="empty-text">{t('errors.network')}</div>
-              <p className="empty-hint">{t('home.errorHint', { defaultValue: '请检查网络连接后重试' })}</p>
+              <p className="empty-hint">{t('home.errorHint')}</p>
               <button className="retry-btn" onClick={() => refetch()}>
                 {t('common.retry')}
               </button>
             </div>
           ) : showEmpty ? (
             <div className="empty-state" role="status" aria-live="polite">
-              <div className="empty-icon" aria-hidden="true">🎬</div>
+              <div className="empty-icon" aria-hidden="true">
+                {query ? '🔍' : '🎬'}
+              </div>
               <div className="empty-text">
                 {query ? t('home.searchEmpty', { query }) : t('home.empty')}
               </div>
@@ -502,15 +556,23 @@ export default function Home() {
                     setSearchParams(next, { replace: true })
                   }}
                 >
-                  {t('common.clearSearch') !== 'common.clearSearch' ? t('common.clearSearch') : '清空搜索'}
+                  {t('common.clearSearch')}
                 </button>
               ) : (
                 <Link to="/upload" className="empty-cta">
-                  {t('common.goUpload') !== 'common.goUpload' ? t('common.goUpload') : '去上传第一个视频'} →
+                  {t('common.goUpload')} →
                 </Link>
               )}
             </div>
           ) : null}
+
+          {!isError && hasNextPage && !isFetchingNextPage && filteredVideos.length > 0 && (
+            <div className="load-more-wrap">
+              <button className="load-more-btn" onClick={() => fetchNextPage()}>
+                {t('common.loadMore')}
+              </button>
+            </div>
+          )}
 
           {isError && filteredVideos.length > 0 && (
             <div className="load-more-error">
@@ -522,7 +584,9 @@ export default function Home() {
           )}
 
           {!isError && isFetchingNextPage && (
-            <div className="loading-more" role="status">{t('common.loading')}</div>
+            <div className="video-grid loading-grid" aria-label={t('common.loading')}>
+              <VideoCardSkeleton count={skeletonCount} />
+            </div>
           )}
 
           {!isError && !isFetchingNextPage && !hasNextPage && filteredVideos.length > 0 && (

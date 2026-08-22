@@ -98,7 +98,9 @@
     "createFailed": "Failed to create",
     "deleteFailed": "Failed to delete",
     "scrollToTop": "Scroll to top",
-    "close": "Close"
+    "close": "Close",
+    "clearSearch": "Clear search",
+    "goUpload": "Upload your first video"
   },
   "home": {
     "heroTitle": "Atmos Video",
@@ -119,9 +121,13 @@
     "emailVerified": "✓ Email verified",
     "emailVerifyFailed": "✗ Email verification failed — the link is invalid or has expired",
     "searchEmpty": "No videos found for \"{{query}}\"",
+    "hotSearch": "Trending",
     "guestCta": "Sign in to browse all videos",
     "guestPreview": "Preview",
     "errorHint": "Please check your network and try again",
+    "step1": "Sign up",
+    "step2": "Upload",
+    "step3": "Share",
     "categories": {
       "all": "All",
       "tech": "Tech",
