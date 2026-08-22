@@ -477,6 +477,13 @@ export default function Player() {
 
     if (!videoId) { setError(t('errors.missingVideoId')); setLoading(false); return }
 
+    // 未登录且非分享链接时，提示登录
+    if (!user && !isShared) {
+      setError(t('player.loginRequired', { defaultValue: '请先登录后观看视频' }))
+      setLoading(false)
+      return
+    }
+
     const load = async () => {
       setLoading(true)
       try {

@@ -54,7 +54,7 @@ export default function Comments({ videoId }: Props) {
       const loaded = allPages.reduce((n, p) => n + p.comments.length, 0)
       return loaded < lastPage.total ? allPages.length : undefined
     },
-    enabled: !!videoId,
+    enabled: !!videoId && !!user,
     staleTime: 30_000,
   })
 

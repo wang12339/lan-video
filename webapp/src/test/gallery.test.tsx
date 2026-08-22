@@ -67,8 +67,11 @@ vi.mock('../api', async (importOriginal) => {
 vi.mock('../api/client', () => ({
   request: vi.fn(),
   mediaUrl: vi.fn((path: string) => path),
-  getToken: vi.fn(() => 'mock-token'),
-  BASE: '',
+  getToken: vi.fn(() => 'test-token'),
+}))
+
+vi.mock('../context/AuthContext', () => ({
+  useAuth: vi.fn(),
 }))
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -109,14 +112,40 @@ function scrollToBottom() {
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
 const { listVideos, mapImage } = await import('../api')
+const { useAuth } = await import('../context/AuthContext')
 
 const mockListVideos = vi.mocked(listVideos)
 const mockMapImage = vi.mocked(mapImage)
+const mockUseAuth = vi.mocked(useAuth)
+
+function makeUser() {
+  return {
+    id: 1,
+    username: 'testuser',
+    email: 'test@example.com',
+    isAdmin: false,
+    role: 1 as const,
+    avatarUrl: null,
+  }
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   ioCallback = null
   clearGalleryCache()
+
+  // 默认：已登录用户
+  mockUseAuth.mockReturnValue({
+    user: makeUser(),
+    loading: false,
+    kickedMsg: null,
+    clearKickedMsg: vi.fn(),
+    login: vi.fn(),
+    register: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+    setUser: vi.fn(),
+  })
 
   // 默认：空结果
   mockListVideos.mockResolvedValue(makeImageResponse([], 0))

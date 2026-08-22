@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { listVideos, mapImage } from '../../api'
 import { getToken } from '../../api/client'
+import { useAuth } from '../../context/AuthContext'
 import type { MappedImage } from '../../api/types'
 import './Gallery.css'
 
@@ -98,6 +99,7 @@ const GalleryCard = memo(function GalleryCard({ img, index, onClick, onKeyDown, 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 export default function Gallery() {
   const { t } = useTranslation()
+  const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
   // 筛选/排序状态以 URL 为准：刷新后保留，浏览器前进/后退可同步
@@ -124,6 +126,11 @@ export default function Gallery() {
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const loadImages = useCallback(async (pageNum: number, append: boolean) => {
+    // 未登录时不调用 API
+    if (!user) {
+      setLoading(false)
+      return
+    }
     // 每次调用递增 generation：作废在途请求，旧响应到达时直接丢弃
     const gen = ++loadGenRef.current
     loadingRef.current = true
@@ -171,7 +178,7 @@ export default function Gallery() {
       loadingRef.current = false
       if (gen === loadGenRef.current) setLoading(false)
     }
-  }, [query])
+  }, [query, user])
 
   // 切换搜索条件：作废在途请求、重置页码、清空旧列表、回到顶部
   useEffect(() => {
@@ -372,6 +379,15 @@ export default function Gallery() {
 
   return (
     <div className="gallery-page">
+      {!user ? (
+        <div className="gallery-auth-required">
+          <div className="gallery-auth-icon">🔐</div>
+          <h2>{t('gallery.authRequired', { defaultValue: '请先登录' })}</h2>
+          <p>{t('gallery.authHint', { defaultValue: '登录后即可浏览图片库' })}</p>
+          <Link to="/profile" className="empty-cta">{t('nav.login', { defaultValue: '登录' })}</Link>
+        </div>
+      ) : (
+      <>
       <div className="gallery-header">
         <span className="gallery-label">GALLERY</span>
         <h1 className="gallery-title">{t('gallery.title')}</h1>
@@ -514,6 +530,8 @@ export default function Gallery() {
             <span>（{lbIndex + 1} / {images.length}）</span>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   )

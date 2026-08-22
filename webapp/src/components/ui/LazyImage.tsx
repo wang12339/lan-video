@@ -28,30 +28,30 @@ export function isWebPSupported(): boolean {
 /**
  * 为图片 URL 添加 WebP 格式后缀（如果浏览器支持且 URL 为本地路径）
  * 示例：/media/cover_123.jpg → /media/cover_123.webp
+ *
+ * 当前后端不生成 WebP 文件，因此暂时禁用自动转换。
+ * 待后端支持 WebP 转码后再启用：去掉下面的 return url 即可。
  */
 function getWebPUrl(url: string | null | undefined): string | null | undefined {
   if (!url) return url
 
-  // 只对本地媒体路径转换（/media/xxx.jpg → /media/xxx.webp）
-  if (url.startsWith('/media/') && /\.(jpg|jpeg|png)$/i.test(url)) {
-    return url.replace(/\.(jpg|jpeg|png)$/i, '.webp')
-  }
-
+  // 后端未生成 .webp 文件，直接返回原始 URL 避免 404
   return url
 }
 
 /**
  * 生成响应式图片的 srcSet 字符串
  * 假设后端支持通过查询参数获取不同尺寸：/media/cover_123.jpg?w=320
+ *
+ * 当前后端不支持图片调整大小，srcSet 的 ?w= 参数无意义，暂时禁用。
+ * 待后端支持图片代理/调整大小后再启用。
  */
 function generateSrcSet(
-  baseUrl: string,
-  sizes: number[] = [320, 640, 960, 1280]
+  _baseUrl: string,
+  _sizes: number[] = [320, 640, 960, 1280]
 ): string | undefined {
-  // 只对本地媒体路径生成 srcSet
-  if (!baseUrl.startsWith('/media/')) return undefined
-
-  return sizes.map(w => `${baseUrl}?w=${w} ${w}w`).join(', ')
+  // 后端不支持图片调整大小，返回 undefined 禁用 srcSet
+  return undefined
 }
 
 /**

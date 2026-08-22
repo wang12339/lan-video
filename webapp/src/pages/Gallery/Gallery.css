@@ -4,6 +4,29 @@
   margin: 0 auto;
 }
 
+/* ── Auth Required ────────────────────────────── */
+.gallery-auth-required {
+  text-align: center;
+  padding: 80px 24px;
+}
+
+.gallery-auth-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.gallery-auth-required h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.gallery-auth-required p {
+  font-size: 14px;
+  color: var(--text3);
+  margin-bottom: 24px;
+}
+
 /* ── Header ─────────────────────────────────── */
 .gallery-header {
   text-align: center;
