@@ -9,31 +9,20 @@ import {
 import type { AdminVideo } from '../../api/admin'
 import { getTranscodeStatus, transcodeVideo } from '../../api/videos'
 import type { TranscodeStatusResponse } from '../../api/types'
-import { formatDuration } from '../../api/utils'
+import { formatDuration, formatBytes } from '../../api/utils'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useAlertDialog } from '../../hooks/useAlertDialog'
 import { ConfirmDialog, AlertDialog, SkeletonLoader } from './components'
 import EditModal from './components/EditModal'
 import AddExternalModal from './components/AddExternalModal'
 import BatchCatModal from './components/BatchCatModal'
+import AdminModal from './components/AdminModal'
+import './VideosTab.css'
 
 const PAGE_SIZE = 50
 const TRANSCODE_RESOLUTIONS = ['360p', '480p', '720p', '1080p', '2160p']
 
 type SortKey = 'newest' | 'oldest' | 'views' | 'duration' | 'title'
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
-  return `${(bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0)} ${units[i]!}`
-}
-
-interface ConfirmState {
-  open: boolean
-  title: string
-  message: string
-  danger?: boolean
-  onConfirm: () => void | Promise<void>
-}
 
 export default function VideosTab({ sourceType }: { sourceType: string }) {
   const { t } = useTranslation()
@@ -64,8 +53,8 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
   const [txLoading, setTxLoading] = useState(false)
   const [txTriggering, setTxTriggering] = useState(false)
 
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmState>({ open: false, title: '', message: '', onConfirm: () => {} })
-  const [alertMsg, setAlertMsg] = useState('')
+  const { confirmDialog, askConfirm, handleCancel } = useConfirmDialog()
+  const { alertMsg, showAlert, closeAlert } = useAlertDialog()
 
   const isImage = sourceType === 'local_image'
 
@@ -93,29 +82,25 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
     }
   }, [videos, loading, page, total])
 
-  const askConfirm = useCallback((state: Omit<ConfirmState, 'open'>) => {
-    setConfirmDialog({ open: true, ...state })
-  }, [])
-
   const refreshList = useCallback(() => {
     loadVideos(page, query)
   }, [loadVideos, page, query])
 
-  const handleSearch = () => { setPage(0); setQuery(searchInput.trim()) }
+  const handleSearch = useCallback(() => { setPage(0); setQuery(searchInput.trim()) }, [searchInput])
 
-  const clearSearch = () => { setSearchInput(''); setQuery(''); setPage(0) }
+  const clearSearch = useCallback(() => { setSearchInput(''); setQuery(''); setPage(0) }, [])
 
-  const handleSelect = (id: string) => {
+  const handleSelect = useCallback((id: string) => {
     setSelected(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id); else next.add(id)
       return next
     })
-  }
+  }, [])
 
-  const handleSelectAll = () => {
+  const handleSelectAll = useCallback(() => {
     setSelected(selected.size === videos.length ? new Set() : new Set(videos.map(v => v.id)))
-  }
+  }, [selected.size, videos])
 
   const handleBatchDelete = () => {
     askConfirm({
@@ -127,7 +112,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
           await deleteVideos([...selected])
           setSelected(new Set())
           refreshList()
-        } catch { setAlertMsg(t('admin.media.batchDeleteFailed')) }
+        } catch { showAlert(t('admin.media.batchDeleteFailed')) }
       },
     })
   }
@@ -139,7 +124,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
       danger: true,
       onConfirm: async () => {
         try { await deleteVideo(v.id); refreshList() }
-        catch { setAlertMsg(t('admin.media.deleteFailed')) }
+        catch { showAlert(t('admin.media.deleteFailed')) }
       },
     })
   }
@@ -150,14 +135,14 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
       await updateVideo(editing.id, { title, description: desc || undefined, category: cat || undefined })
       setEditing(null)
       refreshList()
-    } catch { setAlertMsg(t('admin.media.saveFailed')) }
+    } catch { showAlert(t('admin.media.saveFailed')) }
   }
 
   const handleAddExternal = async (data: { title: string; description?: string; category?: string; stream_url: string; cover_url?: string }) => {
     try {
       await addExternalVideo(data)
       setShowAddExternal(false); setPage(0); loadVideos(0, query)
-    } catch (e: unknown) { setAlertMsg(e instanceof Error ? e.message : t('admin.media.addFailed')) }
+    } catch (e: unknown) { showAlert(e instanceof Error ? e.message : t('admin.media.addFailed')) }
   }
 
   const handleBatchCat = async (cat: string) => {
@@ -165,7 +150,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
     try {
       await batchUpdateCategory([...selected], cat)
       setShowBatchCat(false); setSelected(new Set()); refreshList()
-    } catch { setAlertMsg(t('admin.media.editFailed')) }
+    } catch { showAlert(t('admin.media.editFailed')) }
   }
 
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -173,7 +158,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
     if (!file || coverTargetId === null) return
     setCoverUploading(true)
     try { await uploadCover(coverTargetId, file); refreshList() }
-    catch { setAlertMsg(t('admin.media.coverUploadFailed')) }
+    catch { showAlert(t('admin.media.coverUploadFailed')) }
     finally { setCoverUploading(false); setCoverTargetId(null); e.target.value = '' }
   }
 
@@ -190,7 +175,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
     setTxStatus(null)
     setTxLoading(true)
     try { setTxStatus(await getTranscodeStatus(v.id)) }
-    catch { setAlertMsg(t('admin.media.transcodeStatusFailed')) }
+    catch { showAlert(t('admin.media.transcodeStatusFailed')) }
     finally { setTxLoading(false) }
   }
 
@@ -198,7 +183,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
     if (!txTarget) return
     setTxLoading(true)
     try { setTxStatus(await getTranscodeStatus(txTarget.id)) }
-    catch { setAlertMsg(t('admin.media.transcodeStatusFailed')) }
+    catch { showAlert(t('admin.media.transcodeStatusFailed')) }
     finally { setTxLoading(false) }
   }
 
@@ -212,7 +197,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
         try {
           await transcodeVideo(txTarget.id, [res])
           setTxStatus(await getTranscodeStatus(txTarget.id))
-        } catch { setAlertMsg(t('admin.media.transcodeTriggerFailed')) }
+        } catch { showAlert(t('admin.media.transcodeTriggerFailed')) }
         finally { setTxTriggering(false) }
       },
     })
@@ -296,7 +281,7 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
                   <tr key={v.id} className={selected.has(v.id) ? 'admin-row-selected' : ''}>
                     <td className="admin-col-check"><input type="checkbox" checked={selected.has(v.id)} onChange={() => handleSelect(v.id)} aria-label={t('admin.media.select', { title: v.title })} /></td>
                     <td className="admin-col-cover">
-                      <div className="admin-cover-thumb" role="button" tabIndex={0} title={t('admin.media.uploadCoverTitle')} style={{ opacity: coverUploading && coverTargetId === v.id ? 0.5 : undefined, cursor: 'pointer' }}
+                      <div className={`admin-cover-thumb ${coverUploading && coverTargetId === v.id ? 'admin-videos__cover-uploading' : 'admin-videos__cover-default'}`} role="button" tabIndex={0} title={t('admin.media.uploadCoverTitle')}
                         onClick={() => openCoverPicker(v)}
                         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCoverPicker(v) } }}>
                         {v.thumbUrl ? <img src={mediaUrl(v.thumbUrl) || undefined} alt="" /> : <span className="admin-cover-placeholder">{coverUploading && coverTargetId === v.id ? '…' : '+'}</span>}
@@ -355,58 +340,60 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
       )}
 
       {txTarget && (
-        <div className="admin-modal-overlay" onClick={() => { setTxTarget(null); setTxStatus(null) }}>
-          <div className="admin-modal" onClick={e => e.stopPropagation()}>
-            <h3>{t('admin.media.transcodeTitle', { title: txTarget.title })}</h3>
-            {txLoading ? (
-              <div className="admin-empty">{t('common.loading')}</div>
-            ) : (
-              <>
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 6 }}>{t('admin.media.generatedVersions')}</div>
-                  {txStatus && txStatus.variants.length > 0 ? (
-                    txStatus.variants.map(variant => (
-                      <div key={variant.resolution} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg3)', borderRadius: 6, marginBottom: 4, fontSize: 13 }}>
-                        <span style={{ fontFamily: 'monospace' }}>{variant.resolution}</span>
-                        <span style={{ color: 'var(--text3)' }}>{formatBytes(variant.fileSize)}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ color: 'var(--text3)', fontSize: 13 }}>{t('admin.media.noTranscodeYet')}</div>
-                  )}
-                </div>
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 6 }}>{t('admin.media.pendingJobs')}</div>
-                  {txStatus && txStatus.pendingJobs.length > 0 ? (
-                    txStatus.pendingJobs.map(job => (
-                      <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg3)', borderRadius: 6, marginBottom: 4, fontSize: 13 }}>
-                        <span style={{ fontFamily: 'monospace' }}>{job.resolution} · {job.status}</span>
-                        <span style={{ color: 'var(--text3)' }}>{job.progress}%</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ color: 'var(--text3)', fontSize: 13 }}>{t('admin.media.noPendingJobs')}</div>
-                  )}
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 8 }}>{t('admin.media.triggerTranscode')}</div>
-                <div className="admin-pending-actions" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
-                  {TRANSCODE_RESOLUTIONS.map(res => {
-                    const done = txStatus?.variants.some(v => v.resolution === res)
-                    return (
-                      <button key={res} className="admin-btn admin-btn-sm" disabled={txTriggering || !!done} onClick={() => handleTxTrigger(res)}>
-                        {done ? `${res} ✓` : res}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="admin-modal-actions">
-                  <button className="admin-btn" onClick={() => { setTxTarget(null); setTxStatus(null) }}>{t('admin.media.close')}</button>
-                  <button className="admin-btn admin-btn-primary" onClick={refreshTxStatus} disabled={txLoading}>{t('admin.media.refreshStatus')}</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <AdminModal
+          title={t('admin.media.transcodeTitle', { title: txTarget.title })}
+          onClose={() => { setTxTarget(null); setTxStatus(null) }}
+          actions={
+            <>
+              <button className="admin-btn" onClick={() => { setTxTarget(null); setTxStatus(null) }}>{t('admin.media.close')}</button>
+              <button className="admin-btn admin-btn-primary" onClick={refreshTxStatus} disabled={txLoading}>{t('admin.media.refreshStatus')}</button>
+            </>
+          }
+        >
+          {txLoading ? (
+            <div className="admin-empty">{t('common.loading')}</div>
+          ) : (
+            <>
+              <div className="admin-videos__section">
+                <div className="admin-videos__section-label">{t('admin.media.generatedVersions')}</div>
+                {txStatus && txStatus.variants.length > 0 ? (
+                  txStatus.variants.map(variant => (
+                    <div key={variant.resolution} className="admin-videos__variant-row">
+                      <span className="admin-videos__variant-resolution">{variant.resolution}</span>
+                      <span className="admin-videos__variant-size">{formatBytes(variant.fileSize)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="admin-videos__empty-text">{t('admin.media.noTranscodeYet')}</div>
+                )}
+              </div>
+              <div className="admin-videos__section">
+                <div className="admin-videos__section-label">{t('admin.media.pendingJobs')}</div>
+                {txStatus && txStatus.pendingJobs.length > 0 ? (
+                  txStatus.pendingJobs.map(job => (
+                    <div key={job.id} className="admin-videos__variant-row">
+                      <span className="admin-videos__variant-resolution">{job.resolution} · {job.status}</span>
+                      <span className="admin-videos__variant-size">{job.progress}%</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="admin-videos__empty-text">{t('admin.media.noPendingJobs')}</div>
+                )}
+              </div>
+              <div className="admin-videos__trigger-label">{t('admin.media.triggerTranscode')}</div>
+              <div className="admin-pending-actions admin-videos__resolution-actions">
+                {TRANSCODE_RESOLUTIONS.map(res => {
+                  const done = txStatus?.variants.some(v => v.resolution === res)
+                  return (
+                    <button key={res} className="admin-btn admin-btn-sm" disabled={txTriggering || !!done} onClick={() => handleTxTrigger(res)}>
+                      {done ? `${res} ✓` : res}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </AdminModal>
       )}
 
       <ConfirmDialog
@@ -416,13 +403,13 @@ export default function VideosTab({ sourceType }: { sourceType: string }) {
         danger={confirmDialog.danger}
         confirmText={t('common.confirm')}
         onConfirm={confirmDialog.onConfirm}
-        onCancel={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
+        onCancel={handleCancel}
       />
 
       <AlertDialog
         open={!!alertMsg}
         message={alertMsg}
-        onClose={() => setAlertMsg('')}
+        onClose={closeAlert}
       />
     </div>
   )

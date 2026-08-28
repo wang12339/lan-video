@@ -9,10 +9,6 @@ use std::sync::Arc;
 use crate::state::AppState;
 use crate::util::net::client_ip;
 
-/// SECURITY (H-06): rate-limit the public share-token endpoint to neutralise
-/// the size-based side channel that would otherwise let an attacker enumerate
-/// valid tokens. 30 req/min per IP is generous for legitimate use (one user
-/// opening the shared link, plus range-request retries).
 const SHARE_RL_MAX: u32 = 30;
 const SHARE_RL_WINDOW_SECS: u64 = 60;
 const SHARE_RL_BLOCK_SECS: u64 = 0;
@@ -65,10 +61,12 @@ mod tests {
     use crate::metrics::Metrics;
     use crate::middleware::rate_limit::RateLimiter;
     use crate::repositories::comment_repo::CommentRepository;
+    use crate::repositories::plan_repo::PlanRepository;
     use crate::repositories::playback_repo::PlaybackRepository;
     use crate::repositories::playlist_repo::PlaylistRepository;
     use crate::repositories::registration_repo::RegistrationRepository;
     use crate::repositories::share_repo::ShareRepository;
+    use crate::repositories::danmaku_repo::DanmakuRepository;
     use crate::repositories::tag_repo::TagRepository;
     use crate::repositories::tenant_repo::TenantRepository;
     use crate::repositories::user_repo::UserRepository;
@@ -78,6 +76,7 @@ mod tests {
     use crate::services::comment_service::CommentService;
     use crate::services::email_service::EmailService;
     use crate::services::media_service::MediaService;
+    use crate::services::plan_service::PlanService;
     use crate::services::playback_service::PlaybackService;
     use crate::services::playlist_service::PlaylistService;
     use crate::services::recommendation_service::RecommendationService;
@@ -125,9 +124,11 @@ mod tests {
             playback: PlaybackRepository::new(pool.clone()),
             playlist: PlaylistRepository::new(pool.clone()),
             comment: CommentRepository::new(pool.clone()),
+            danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
             tenant: TenantRepository::new(pool.clone()),
+            plan: PlanRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
         let playlist_service = PlaylistService::new(repos.playlist.clone());
@@ -138,6 +139,7 @@ mod tests {
             playlist: playlist_service,
             auth: AuthService::new(
                 repos.user.clone(),
+                repos.tenant.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -151,6 +153,7 @@ mod tests {
             share: ShareService::new(repos.share.clone()),
             admin: AdminService::new(repos.user.clone()),
             tenant: TenantService::new(repos.tenant.clone()),
+            plan: PlanService::new(repos.plan.clone()),
         };
         let transcoder = Transcoder::new(&std::env::temp_dir());
         Arc::new(AppState {

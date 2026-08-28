@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import './ScrollToTop.css'
 
@@ -9,7 +9,7 @@ interface ScrollToTopProps {
   showProgress?: boolean
 }
 
-export default function ScrollToTop({
+function ScrollToTopImpl({
   threshold = 300,
   showProgress = true,
 }: ScrollToTopProps) {
@@ -33,12 +33,12 @@ export default function ScrollToTop({
     return () => window.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
-  const scrollToTop = () => {
+  const scrollToTop = useCallback(() => {
     window.scrollTo({
       top: 0,
       behavior: 'smooth',
     })
-  }
+  }, [])
 
   // Calculate progress ring values
   const radius = 20
@@ -80,3 +80,5 @@ export default function ScrollToTop({
     </button>
   )
 }
+
+export default memo(ScrollToTopImpl)

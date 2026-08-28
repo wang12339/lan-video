@@ -8,16 +8,7 @@ use tracing::{info, warn};
 /// Threshold above which a SQL query is considered slow and logged as a warning.
 pub const SLOW_QUERY_THRESHOLD: Duration = Duration::from_millis(100);
 
-/// Run a SQL operation and emit a `tracing::warn!` if it takes longer than
-/// `SLOW_QUERY_THRESHOLD`. Use this around repository query calls to make
-/// hot paths observable in production.
-///
-/// Example:
-/// ```ignore
-/// let rows = log_slow_query("list_videos", async {
-///     sqlx::query_as::<_, VideoRow>("SELECT ...").fetch_all(&pool).await
-/// }).await?;
-/// ```
+#[inline]
 pub async fn log_slow_query<T, E, F, Fut>(label: &str, fut: F) -> Result<T, E>
 where
     F: FnOnce() -> Fut,
@@ -38,12 +29,14 @@ where
     result
 }
 
+#[allow(clippy::panic)]
 fn get_migrations_dir() -> PathBuf {
     std::env::var("MIGRATIONS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations"))
 }
 
+#[allow(clippy::panic)]
 fn discover_migrations() -> Vec<(String, String)> {
     let dir = get_migrations_dir();
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
@@ -54,33 +47,32 @@ fn discover_migrations() -> Vec<(String, String)> {
 
     entries.sort_by_key(|entry| entry.file_name());
 
-    entries
-        .into_iter()
-        .map(|entry| {
-            let mut name = entry
-                .file_name()
-                .into_string()
-                .expect("Migration filename is not valid UTF-8");
-            name.truncate(name.len() - 4);
-            let path = entry.path();
-            let sql = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("Failed to read migration file {:?}: {}", path, e));
-            (name, sql)
-        })
-        .collect()
+    let mut migrations = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let name = name.strip_suffix(".sql").unwrap_or(&name);
+        let sql = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read migration file {:?}: {}", path, e));
+        migrations.push((name.to_owned(), sql));
+    }
+    migrations
 }
 
+#[allow(clippy::panic)]
 pub async fn init_pool(database_url: &str) -> PgPool {
-    let max_connections: u32 = match std::env::var("DB_MAX_CONNECTIONS") {
-        Ok(v) => match v.parse() {
-            Ok(n) if n >= 1 => n,
-            _ => {
-                warn!("DB_MAX_CONNECTIONS '{}' invalid, defaulting to 100", v);
-                100
-            }
-        },
-        Err(_) => 100,
-    };
+    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(100);
+
+    let min_connections: u32 = std::env::var("DB_MIN_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n >= 1 && n <= max_connections)
+        .unwrap_or(2);
 
     let max_retries = 5;
     let mut attempt = 0u32;
@@ -88,10 +80,10 @@ pub async fn init_pool(database_url: &str) -> PgPool {
     let pool = loop {
         match PgPoolOptions::new()
             .max_connections(max_connections)
-            .min_connections(2)
-            .acquire_timeout(std::time::Duration::from_secs(10))
-            .idle_timeout(std::time::Duration::from_secs(300)) // 空闲连接超时5分钟
-            .max_lifetime(std::time::Duration::from_secs(1800)) // 连接最大生命周期30分钟
+            .min_connections(min_connections)
+            .acquire_timeout(Duration::from_secs(10))
+            .idle_timeout(Duration::from_secs(300))
+            .max_lifetime(Duration::from_secs(1800))
             .connect(database_url)
             .await
         {
@@ -111,7 +103,7 @@ pub async fn init_pool(database_url: &str) -> PgPool {
                     e,
                     wait_ms
                 );
-                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                tokio::time::sleep(Duration::from_millis(wait_ms)).await;
             }
         }
     };
@@ -124,6 +116,7 @@ pub async fn init_pool(database_url: &str) -> PgPool {
     pool
 }
 
+#[allow(clippy::panic)]
 async fn run_migrations(pool: &PgPool) {
     // Use a dedicated connection for the whole migration run:
     // 1. A session-level advisory lock serializes concurrent server instances
@@ -156,16 +149,15 @@ async fn run_migrations(pool: &PgPool) {
 
     let migrations = discover_migrations();
 
-    for (name, sql) in migrations {
-        let already_applied: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM _schema_migrations WHERE version = $1)",
-        )
-        .bind(&name)
-        .fetch_one(&mut *conn)
+    let applied: Vec<String> = sqlx::query_scalar("SELECT version FROM _schema_migrations")
+        .fetch_all(&mut *conn)
         .await
-        .unwrap_or_else(|e| panic!("Failed to check migration status of '{}': {}", name, e));
+        .unwrap_or_else(|e| panic!("Failed to fetch applied migrations: {}", e));
 
-        if already_applied {
+    let applied_set: std::collections::HashSet<String> = applied.into_iter().collect();
+
+    for (name, sql) in migrations {
+        if applied_set.contains(&name) {
             continue;
         }
 
@@ -233,11 +225,37 @@ mod tests {
 
     #[tokio::test]
     async fn log_slow_query_does_not_log_fast_queries() {
-        // A 1ms query should NOT trigger a warning. We can't easily inspect
-        // tracing output, but we can at least verify the future completes
-        // and the threshold is well above the operation time.
         let start = std::time::Instant::now();
         let _: Result<(), &str> = log_slow_query("fast", || async { Ok(()) }).await;
         assert!(start.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn get_migrations_dir_defaults_to_manifest_migrations() {
+        let old = std::env::var("MIGRATIONS_DIR");
+        std::env::remove_var("MIGRATIONS_DIR");
+        let dir = get_migrations_dir();
+        assert!(dir.ends_with("migrations"));
+        assert!(dir.starts_with(env!("CARGO_MANIFEST_DIR")));
+        if let Ok(v) = old {
+            std::env::set_var("MIGRATIONS_DIR", v);
+        }
+    }
+
+    #[test]
+    fn get_migrations_dir_respects_env_override() {
+        let old = std::env::var("MIGRATIONS_DIR");
+        std::env::set_var("MIGRATIONS_DIR", "/tmp/test_migrations");
+        let dir = get_migrations_dir();
+        assert_eq!(dir, PathBuf::from("/tmp/test_migrations"));
+        match old {
+            Ok(v) => std::env::set_var("MIGRATIONS_DIR", v),
+            Err(_) => std::env::remove_var("MIGRATIONS_DIR"),
+        }
+    }
+
+    #[test]
+    fn slow_query_threshold_is_100ms() {
+        assert_eq!(SLOW_QUERY_THRESHOLD, Duration::from_millis(100));
     }
 }

@@ -22,7 +22,12 @@
   line-height: 1;
 }
 
-/* 移动端 */
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle {
+    transition: none;
+  }
+}
+
 @media (max-width: 768px) {
   .theme-toggle {
     width: 44px;

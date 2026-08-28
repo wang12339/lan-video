@@ -1,6 +1,6 @@
 // 认证 API
 
-import { request, saveToken, clearToken, setOnAuthRequired, APIError } from './client';
+import { request, saveToken, clearToken, APIError } from './client';
 import type { AuthResponse, UserInfo, UserProfile } from './types';
 
 /**
@@ -192,4 +192,4 @@ export async function verifyEmail(token: string): Promise<{ ok: boolean; message
   });
 }
 
-export { setOnAuthRequired };
+

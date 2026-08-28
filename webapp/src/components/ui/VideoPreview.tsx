@@ -1,6 +1,20 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react'
 import { mediaUrl } from '../../api/client'
 import './VideoPreview.css'
+
+function formatPreviewTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+function formatPreviewViews(count?: number): string {
+  if (!count) return ''
+  if (count >= 10000) {
+    return `${(count / 10000).toFixed(1)}万`
+  }
+  return count.toLocaleString()
+}
 
 interface VideoPreviewProps {
   videoId: string
@@ -12,7 +26,7 @@ interface VideoPreviewProps {
   position?: { x: number; y: number }
 }
 
-export default function VideoPreview({
+function VideoPreviewImpl({
   videoId,
   title,
   thumbUrl,
@@ -138,25 +152,6 @@ export default function VideoPreview({
     }
   }, [])
 
-  // 使用 useMemo 缓存格式化函数
-  const formatTime = useMemo(() => {
-    return (seconds: number) => {
-      const mins = Math.floor(seconds / 60)
-      const secs = Math.floor(seconds % 60)
-      return `${mins}:${secs.toString().padStart(2, '0')}`
-    }
-  }, [])
-
-  const formatViews = useMemo(() => {
-    return (count?: number) => {
-      if (!count) return ''
-      if (count >= 10000) {
-        return `${(count / 10000).toFixed(1)}万`
-      }
-      return count.toLocaleString()
-    }
-  }, [])
-
   // 视频源 URL 缓存
   const videoSrc = useMemo(() => mediaUrl(videoId), [videoId])
 
@@ -182,6 +177,7 @@ export default function VideoPreview({
           muted
           playsInline
           preload="metadata"
+          aria-label={title}
           onLoadedData={handleLoadedData}
           onWaiting={handleWaiting}
           onPlaying={handlePlaying}
@@ -209,10 +205,12 @@ export default function VideoPreview({
       <div className="video-preview-info">
         <div className="video-preview-title">{title}</div>
         <div className="video-preview-meta">
-          {duration && <span>{formatTime(duration)}</span>}
-          {views !== undefined && <span>{formatViews(views)}次播放</span>}
+          {duration && <span>{formatPreviewTime(duration)}</span>}
+          {views !== undefined && <span>{formatPreviewViews(views)}次播放</span>}
         </div>
       </div>
     </div>
   )
 }
+
+export default memo(VideoPreviewImpl)

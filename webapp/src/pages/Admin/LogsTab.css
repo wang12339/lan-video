@@ -5,7 +5,6 @@
   height: 100%;
 }
 
-/* 头部 */
 .a-header {
   display: flex;
   justify-content: space-between;
@@ -120,7 +119,6 @@
   cursor: not-allowed;
 }
 
-/* 过滤栏 */
 .a-filter-bar {
   display: flex;
   align-items: center;
@@ -181,7 +179,6 @@
 
 .a-search button:hover { background: var(--bg3); }
 
-/* 错误提示 */
 .a-error {
   padding: 10px 14px;
   border-radius: 8px;
@@ -207,7 +204,6 @@
 
 .a-error button:hover { background: rgba(239, 68, 68, 0.1); }
 
-/* 轮询失败小提示（不弹全局 toast） */
 .a-poll-error {
   padding: 8px 14px;
   border-radius: 8px;
@@ -234,7 +230,6 @@
 
 .a-poll-error button:hover { background: rgba(245, 158, 11, 0.1); }
 
-/* 分页 */
 .a-pagination {
   display: flex;
   align-items: center;
@@ -262,7 +257,6 @@
   cursor: not-allowed;
 }
 
-/* 主布局 */
 .a-content {
   display: flex;
   gap: 16px;
@@ -270,7 +264,6 @@
   min-height: 0;
 }
 
-/* 侧边栏 */
 .a-sidebar {
   width: 280px;
   flex-shrink: 0;
@@ -382,7 +375,6 @@
   color: var(--text3);
 }
 
-/* 主内容区 */
 .a-main {
   flex: 1;
   display: flex;
@@ -391,7 +383,6 @@
   min-width: 0;
 }
 
-/* 用户概况 */
 .a-profile {
   display: flex;
   align-items: center;
@@ -435,7 +426,6 @@
   gap: 6px;
 }
 
-/* 操作分布条 */
 .a-type-bar {
   display: flex;
   height: 6px;
@@ -449,7 +439,6 @@
   min-width: 2px;
 }
 
-/* 路线视图 */
 .a-route {
   flex: 1;
   background: var(--bg2);
@@ -601,7 +590,6 @@
   color: var(--text2);
 }
 
-/* 空状态 */
 .a-empty {
   flex: 1;
   display: flex;
@@ -615,7 +603,6 @@
 .a-empty-icon { font-size: 48px; opacity: 0.3; }
 .a-empty-text { font-size: 14px; }
 
-/* 响应式 */
 @media (max-width: 768px) {
   .a-header {
     flex-wrap: wrap;

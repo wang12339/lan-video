@@ -81,37 +81,59 @@ export function useServiceWorker() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
 
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      registerSW()
+    if (!('serviceWorker' in navigator)) return
+
+    let cancelled = false
+    const cleanups: Array<() => void> = []
+
+    const registerSW = async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('/webapp/sw.js')
+        if (cancelled) return
+        setIsRegistered(true)
+
+        const onStateChange = () => {
+          if (registration.installing?.state === 'activated') {
+            setUpdateAvailable(true)
+          }
+        }
+        const onUpdateFound = () => {
+          const newWorker = registration.installing
+          if (newWorker) {
+            newWorker.addEventListener('statechange', onStateChange)
+            cleanups.push(() => {
+              if (typeof newWorker.removeEventListener === 'function') {
+                newWorker.removeEventListener('statechange', onStateChange)
+              }
+            })
+          }
+        }
+        registration.addEventListener('updatefound', onUpdateFound)
+        cleanups.push(() => {
+          if (typeof registration.removeEventListener === 'function') {
+            registration.removeEventListener('updatefound', onUpdateFound)
+          }
+        })
+      } catch (error) {
+        if (!cancelled) console.error('SW registration failed:', error)
+      }
+    }
+
+    registerSW()
+
+    return () => {
+      cancelled = true
+      for (const fn of cleanups) fn()
     }
   }, [])
 
-  const registerSW = async () => {
-    try {
-      const registration = await navigator.serviceWorker.register('/webapp/sw.js')
-      setIsRegistered(true)
-
-      // 检查更新
-      registration.addEventListener('updatefound', () => {
-        const newWorker = registration.installing
-        if (newWorker) {
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'activated') {
-              setUpdateAvailable(true)
-            }
-          })
-        }
-      })
-    } catch (error) {
-      console.error('SW registration failed:', error)
-    }
-  }
-
   const update = useCallback(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then(registration => {
-        registration.update()
-      })
+      navigator.serviceWorker.ready
+        .then(registration => {
+          registration.update()
+        })
+        .catch(() => {})
     }
   }, [])
 

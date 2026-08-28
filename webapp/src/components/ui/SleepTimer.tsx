@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import './SleepTimer.css'
 
@@ -82,7 +82,7 @@ function ProgressRing({ ratio }: { ratio: number }) {
   )
 }
 
-export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
+function SleepTimerImpl({ onExpire, onCancel }: SleepTimerProps) {
   const { t } = useTranslation()
   const [dropdownVisible, setDropdownVisible] = useState(false)
   const [activeMinutes, setActiveMinutes] = useState<number | null>(null)
@@ -162,29 +162,28 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
     [clearTimer, handleExpire],
   )
 
+  const startCountdownRef = useRef(startCountdown)
+  startCountdownRef.current = startCountdown
+
   // Restore saved timer on mount
   useEffect(() => {
     const saved = getSavedTimer()
     if (saved) {
       setActiveMinutes(saved.minutes)
       if (saved.pausedRemaining != null) {
-        // Was paused — restore paused state
         setRemainingSeconds(saved.pausedRemaining)
         setTotalSeconds(saved.minutes * 60)
         setIsPaused(true)
       } else {
-        // Was running — resume countdown
         const remaining = Math.max(0, Math.floor((saved.endTime - Date.now()) / 1000))
         setTotalSeconds(saved.minutes * 60)
-        startCountdown(remaining)
+        startCountdownRef.current(remaining)
       }
     }
 
-    // Request notification permission on mount
     if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       Notification.requestPermission()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Close dropdown when clicking outside
@@ -288,7 +287,7 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
             </>
           ) : (
             <>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <circle cx="12" cy="12" r="10" />
                 <polyline points="12,6 12,12 16,14" />
               </svg>
@@ -315,18 +314,11 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
 
           <div className="sleep-timer-options">
             {options.map((option) => (
-              <div
+              <button
                 key={option.minutes}
+                type="button"
                 className={`sleep-timer-option ${activeMinutes === option.minutes ? 'active' : ''}`}
                 onClick={() => handleSelect(option.minutes)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    handleSelect(option.minutes)
-                  }
-                }}
               >
                 <span className="sleep-timer-option-label">{option.label}</span>
                 <svg
@@ -337,10 +329,11 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
+                  aria-hidden="true"
                 >
                   <polyline points="20,6 9,17 4,12" />
                 </svg>
-              </div>
+              </button>
             ))}
           </div>
 
@@ -380,10 +373,11 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
                   </div>
                 </div>
                 <div className="sleep-timer-custom-actions">
-                  <button className="sleep-timer-custom-cancel" onClick={() => setShowCustom(false)}>
+                  <button type="button" className="sleep-timer-custom-cancel" onClick={() => setShowCustom(false)}>
                     {t('common.cancel')}
                   </button>
                   <button
+                    type="button"
                     className="sleep-timer-custom-confirm"
                     onClick={handleCustomSubmit}
                     disabled={!customValue || parseFloat(customValue) <= 0}
@@ -393,8 +387,8 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
                 </div>
               </div>
             ) : (
-              <button className="sleep-timer-custom-trigger" onClick={() => setShowCustom(true)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <button type="button" className="sleep-timer-custom-trigger" onClick={() => setShowCustom(true)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
@@ -406,17 +400,17 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
           {/* Footer: pause / resume + cancel */}
           {activeMinutes != null && (
             <div className="sleep-timer-footer">
-              <button className="sleep-timer-pause" onClick={handlePause}>
+              <button type="button" className="sleep-timer-pause" onClick={handlePause}>
                 {isPaused ? (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <polygon points="5,3 19,12 5,21" />
                     </svg>
                     {t('timer.resume')}
                   </>
                 ) : (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <rect x="6" y="4" width="4" height="16" />
                       <rect x="14" y="4" width="4" height="16" />
                     </svg>
@@ -424,7 +418,7 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
                   </>
                 )}
               </button>
-              <button className="sleep-timer-cancel" onClick={handleCancel}>
+              <button type="button" className="sleep-timer-cancel" onClick={handleCancel}>
                 {t('timer.cancel')}
               </button>
             </div>
@@ -451,3 +445,5 @@ export default function SleepTimer({ onExpire, onCancel }: SleepTimerProps) {
     </>
   )
 }
+
+export default memo(SleepTimerImpl)

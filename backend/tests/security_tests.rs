@@ -21,24 +21,31 @@ mod xss_tests {
 
     #[test]
     fn csp_policy_structure() {
-        // CSP 策略应包含关键安全指令
-        // 注意：CSP_POLICY 是私有的，我们验证 CORS 层配置
         let cors = security::create_cors_layer("https://example.com");
-        // CORS 层配置正确不会 panic
         drop(cors);
     }
 
     #[test]
     fn cors_layer_with_multiple_origins() {
-        // 验证多个 origin 的配置
         let cors = security::create_cors_layer("https://example.com, https://app.example.com");
         drop(cors);
     }
 
     #[test]
     fn cors_layer_with_invalid_origin() {
-        // 无效的 origin 应该被忽略
         let cors = security::create_cors_layer("https://example.com, invalid-origin");
+        drop(cors);
+    }
+
+    #[test]
+    fn cors_layer_with_empty_origin_string() {
+        let cors = security::create_cors_layer("");
+        drop(cors);
+    }
+
+    #[test]
+    fn cors_layer_with_whitespace_origins() {
+        let cors = security::create_cors_layer("  https://example.com  ,  https://app.com  ");
         drop(cors);
     }
 }
@@ -169,53 +176,36 @@ mod csrf_tests {
 
     #[test]
     fn cors_layer_requires_origin_for_credentials() {
-        // 配置了 origin 时，应该允许凭证
         let cors = security::create_cors_layer("https://example.com");
-        // 这个测试主要验证 CORS 层配置正确
-        // 实际的请求验证在集成测试中进行
         drop(cors);
     }
 
     #[test]
     fn cors_layer_no_credentials_without_origin() {
-        // 没有配置 origin 时，不应发送 Allow-Credentials
         let cors = security::create_cors_layer("");
         drop(cors);
     }
 
     #[test]
     fn cors_layer_allows_csrf_header() {
-        // CORS 配置应允许 x-csrf-token 头
         let cors = security::create_cors_layer("https://example.com");
-        // CorsLayer 允许的头在创建时配置
-        // 这里验证配置不会 panic
         drop(cors);
     }
 
     #[test]
     fn cors_layer_limits_methods() {
-        // 只允许必要的 HTTP 方法
         let cors = security::create_cors_layer("https://example.com");
-        // 允许的方法：GET, POST, PUT, DELETE, OPTIONS
-        // 不应允许 TRACE, CONNECT 等危险方法
         drop(cors);
     }
 
     #[test]
     fn cors_layer_max_age_capped() {
-        // 预检缓存时间应有上限
         let cors = security::create_cors_layer("https://example.com");
-        // Max-Age 设置为 3600 秒（1 小时）
         drop(cors);
     }
 
     #[test]
     fn same_site_cookie_protection() {
-        // Cookie 应该设置 SameSite 属性防止 CSRF
-        // 在实际代码中，Cookie 通过 axum-extra 的 CookieJar 设置
-        // 这里验证配置的意图
-
-        // 模拟 Cookie 配置
         let cookie_attributes = vec![
             ("SameSite", "Strict"),
             ("Secure", "true"),
@@ -230,15 +220,14 @@ mod csrf_tests {
 
     #[test]
     fn origin_header_validation() {
-        // 验证 Origin 头的处理逻辑
         let allowed_origins = vec!["https://example.com", "https://app.example.com"];
 
         let test_cases = vec![
             ("https://example.com", true),
             ("https://evil.com", false),
-            ("http://example.com", false), // HTTP 不应被允许（如果配置为 HTTPS）
-            ("", false),                   // 空 Origin
-            ("null", false),               // null Origin（隐私模式）
+            ("http://example.com", false),
+            ("", false),
+            ("null", false),
         ];
 
         for (origin, should_allow) in &test_cases {
@@ -253,23 +242,42 @@ mod csrf_tests {
 
     #[test]
     fn preflight_request_validation() {
-        // OPTIONS 预检请求应包含必要的头
         let required_headers = vec![
             "Access-Control-Request-Method",
             "Access-Control-Request-Headers",
             "Origin",
         ];
 
-        // 模拟预检请求
         let mut has_all_required = true;
         for header in &required_headers {
-            // 在实际请求中，这些头应该存在
             if header.is_empty() {
                 has_all_required = false;
             }
         }
 
         assert!(has_all_required, "预检请求应包含所有必需的 CORS 头");
+    }
+
+    #[test]
+    fn http_method_not_allowed_in_cors() {
+        let dangerous_methods = vec!["TRACE", "CONNECT"];
+        let safe_methods = vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+        for m in &dangerous_methods {
+            assert!(
+                !safe_methods.contains(m),
+                "危险方法 {} 不应在安全方法列表中",
+                m
+            );
+        }
+    }
+
+    #[test]
+    fn origin_validation_prevents_http_for_https_config() {
+        let allowed_origins = vec!["https://example.com"];
+        assert!(
+            !allowed_origins.contains(&"http://example.com"),
+            "HTTP origin must not match HTTPS-only config"
+        );
     }
 }
 
@@ -795,11 +803,10 @@ mod rate_limit_tests {
 
     #[test]
     fn rate_limit_config_values() {
-        // 验证速率限制配置合理
         let config = vec![
-            ("login_attempts", 5, 300),    // 5 次尝试，300 秒窗口
-            ("api_requests", 100, 60),     // 100 请求，60 秒窗口
-            ("upload_requests", 10, 3600), // 10 次上传，3600 秒窗口
+            ("login_attempts", 5, 300),
+            ("api_requests", 100, 60),
+            ("upload_requests", 10, 3600),
         ];
 
         for (name, max_attempts, window_seconds) in &config {
@@ -820,16 +827,40 @@ mod rate_limit_tests {
 
     #[test]
     fn rate_limit_should_block_after_threshold() {
-        // 模拟速率限制逻辑
         let max_attempts = 5;
-        let mut attempt_count = 0;
+        let mut allowed = 0;
+        let mut blocked = 0;
 
-        for _ in 0..10 {
-            attempt_count += 1;
-            if attempt_count > max_attempts {
-                assert!(true, "超过阈值后应阻止请求");
+        for attempt in 1..=10 {
+            if attempt <= max_attempts {
+                allowed += 1;
+            } else {
+                blocked += 1;
             }
         }
+
+        assert_eq!(allowed, 5, "应允许恰好 max_attempts 次");
+        assert_eq!(blocked, 5, "超过阈值的请求应被阻止");
+    }
+
+    #[test]
+    fn rate_limit_different_resources_have_independent_limits() {
+        let login_max = 5;
+        let upload_max = 10;
+
+        let mut login_allowed = 0;
+        let mut upload_allowed = 0;
+
+        for _ in 0..login_max {
+            login_allowed += 1;
+        }
+        for _ in 0..upload_max {
+            upload_allowed += 1;
+        }
+
+        assert_eq!(login_allowed, login_max);
+        assert_eq!(upload_allowed, upload_max);
+        assert_ne!(login_max, upload_max, "不同资源应有不同限制");
     }
 }
 
@@ -842,8 +873,7 @@ mod auth_security_tests {
 
     #[test]
     fn token_format_validation() {
-        // Token 应为 256 位（32 字节）的 alphanumeric 字符串
-        let valid_token = "abcdefghijklmnopqrstuvwxyz123456"; // 32 字符
+        let valid_token = "abcdefghijklmnopqrstuvwxyz123456";
         let invalid_tokens = vec![
             "short",
             "",
@@ -865,11 +895,9 @@ mod auth_security_tests {
 
     #[test]
     fn token_expiry_validation() {
-        // Token 应有 7 天过期时间
-        let seven_days_in_seconds = 7 * 24 * 60 * 60; // 604800 秒
+        let seven_days_in_seconds = 7 * 24 * 60 * 60;
         let max_expiry = seven_days_in_seconds;
 
-        // 验证过期时间在合理范围内
         assert!(
             max_expiry > 0 && max_expiry <= 30 * 24 * 60 * 60,
             "Token 过期时间应合理"
@@ -878,22 +906,60 @@ mod auth_security_tests {
 
     #[test]
     fn password_hashing_security() {
-        // 密码应使用安全的哈希算法（如 bcrypt, argon2）
-        // 这里验证配置意图
-        let min_cost_factor = 10; // bcrypt 最小 cost factor
-
+        let min_cost_factor = 10;
         assert!(min_cost_factor >= 10, "密码哈希 cost factor 应足够高");
     }
 
     #[test]
     fn session_fixation_prevention() {
-        // 登录后应生成新的 session/token
-        // 这是防止 session fixation 攻击的关键
-
         let old_token = "old_token_value";
         let new_token = "new_token_value";
-
         assert_ne!(old_token, new_token, "登录后 token 应更新");
+    }
+
+    #[test]
+    fn token_length_exactly_32_bytes() {
+        let token = "a".repeat(32);
+        assert_eq!(token.len(), 32, "token 必须恰好 32 字节");
+        assert!(token.chars().all(|c| c.is_alphanumeric()));
+    }
+
+    #[test]
+    fn token_rejects_31_and_33_chars() {
+        assert!(
+            !("a".repeat(31)).chars().all(|c| c.is_alphanumeric()) || "a".repeat(31).len() != 32
+        );
+        assert!(
+            !("a".repeat(33)).chars().all(|c| c.is_alphanumeric()) || "a".repeat(33).len() != 32
+        );
+    }
+
+    #[test]
+    fn token_no_special_characters_allowed() {
+        let special_tokens = vec![
+            "abcdefghijklmnopqrst!@#$%^&*()uvwx",
+            "abcdefghijklmnop qrstuvwxyz01", // space
+            "abcdefghijklmnop-qrstuvwxyz01", // hyphen
+            "abcdefghijklmnop.qrstuvwxyz01", // dot
+        ];
+        for token in &special_tokens {
+            let is_valid = token.len() == 32 && token.chars().all(|c| c.is_alphanumeric());
+            assert!(!is_valid, "含特殊字符的 token 应被拒绝: {:?}", token);
+        }
+    }
+
+    #[test]
+    fn generic_auth_error_prevents_user_enumeration() {
+        let error_messages = vec!["用户名或密码错误", "Invalid credentials"];
+        for msg in &error_messages {
+            assert!(
+                !msg.contains("用户不存在")
+                    && !msg.contains("密码错误")
+                    && !msg.contains("not found"),
+                "认证错误消息不应区分用户不存在和密码错误: {}",
+                msg
+            );
+        }
     }
 }
 

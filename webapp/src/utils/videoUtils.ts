@@ -6,10 +6,13 @@ export function cleanupVideoElement(video: HTMLVideoElement | null): void {
   video.pause()
   video.removeAttribute('src')
   video.load()
-  if (video.srcObject instanceof MediaStream) {
-    video.srcObject.getTracks().forEach(track => track.stop())
-    video.srcObject = null
+  const srcObject = video.srcObject
+  if (srcObject instanceof MediaStream) {
+    for (const track of srcObject.getTracks()) {
+      track.stop()
+    }
   }
+  video.srcObject = null
 }
 
 /**

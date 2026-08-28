@@ -9,7 +9,6 @@ use axum::{
 
 use crate::state::AppState;
 
-/// Maximum accepted length for a Referer/Origin header value.
 const MAX_HEADER_URI_LEN: usize = 1024;
 
 pub async fn hotlink_guard(req: Request, next: Next) -> Response {
@@ -74,6 +73,7 @@ enum RefererCheck {
     Host(String),
 }
 
+#[inline]
 fn referer_host(headers: &HeaderMap, name: &str) -> RefererCheck {
     let Some(value) = headers.get(name) else {
         return RefererCheck::Absent;
@@ -88,17 +88,7 @@ fn referer_host(headers: &HeaderMap, name: &str) -> RefererCheck {
     }
 }
 
-/// Extract the lowercased authority host from an absolute URI
-/// (`scheme://[userinfo@]host[:port]/path`).
-///
-/// Returns `None` for anything that is not a well-formed `http(s)` absolute
-/// URI: missing scheme, scheme-relative (`//host`), empty authority, embedded
-/// control characters, a backslash anywhere in the host (never valid in a
-/// URI authority — `https://user@\evil.example/` is crafted input, not a
-/// browser), or values longer than [`MAX_HEADER_URI_LEN`]. This is
-/// deliberately strict — a browser always sends a well-formed absolute URI in
-/// `Referer`/`Origin`, so deviations are treated as attacks rather than
-/// benign parsing oddities.
+#[inline]
 fn authority_host(uri: &str) -> Option<String> {
     parse_authority(uri).map(|a| a.1)
 }
@@ -119,39 +109,35 @@ fn parse_authority(uri: &str) -> Option<(String, String, Option<String>)> {
     if authority.is_empty() || authority.bytes().any(|b| b < 0x20) {
         return None;
     }
-    // Strip userinfo ("user:pass@host") — only the host may be compared.
     let host_port = match authority.rsplit_once('@') {
         Some((_, host_port)) => host_port,
         None => authority,
     };
-    // A backslash in the host is never valid in a URI authority (RFC 3986
-    // host = IP-literal / IPv4address / reg-name) — reject it outright.
     if host_port.contains('\\') {
         return None;
     }
     let (host, port) = if let Some(inner) = host_port.strip_prefix('[') {
-        // IPv6 literal: "[addr]" or "[addr]:port"
         match inner.split_once(']') {
             Some((addr, "")) => (addr, None),
-            Some((addr, rest)) => (addr, rest.strip_prefix(':').map(str::to_string)),
-            None => return None, // unterminated bracket
+            Some((addr, rest)) => (addr, rest.strip_prefix(':')),
+            None => return None,
         }
     } else {
         match host_port.split_once(':') {
-            Some((host, port)) => (host, Some(port.to_string())),
+            Some((host, port)) => (host, Some(port)),
             None => (host_port, None),
         }
     };
     if host.is_empty() {
         return None;
     }
-    Some((scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), port))
+    let scheme = scheme.to_ascii_lowercase();
+    let host = host.to_ascii_lowercase();
+    let port = port.map(|p| p.to_string());
+    Some((scheme, host, port))
 }
 
-/// The RFC 6454 origin of an absolute `http(s)` URI: `scheme://host[:port]`
-/// with userinfo stripped. An explicitly-written default port (80/443) is
-/// normalized away, matching how browsers serialize origins. Returns `None`
-/// for anything malformed, including a non-numeric port.
+#[inline]
 fn origin_value(uri: &str) -> Option<String> {
     let (scheme, host, port) = parse_authority(uri)?;
     let port = match port {
@@ -195,6 +181,7 @@ fn origin_header(headers: &HeaderMap) -> OriginCheck {
     }
 }
 
+#[inline]
 fn extract_host_from_url(url: &str) -> Option<String> {
     authority_host(url)
 }
@@ -466,10 +453,12 @@ mod tests {
     use crate::metrics::Metrics;
     use crate::middleware::rate_limit::RateLimiter;
     use crate::repositories::comment_repo::CommentRepository;
+    use crate::repositories::plan_repo::PlanRepository;
     use crate::repositories::playback_repo::PlaybackRepository;
     use crate::repositories::playlist_repo::PlaylistRepository;
     use crate::repositories::registration_repo::RegistrationRepository;
     use crate::repositories::share_repo::ShareRepository;
+    use crate::repositories::danmaku_repo::DanmakuRepository;
     use crate::repositories::tag_repo::TagRepository;
     use crate::repositories::tenant_repo::TenantRepository;
     use crate::repositories::user_repo::UserRepository;
@@ -479,6 +468,7 @@ mod tests {
     use crate::services::comment_service::CommentService;
     use crate::services::email_service::EmailService;
     use crate::services::media_service::MediaService;
+    use crate::services::plan_service::PlanService;
     use crate::services::playback_service::PlaybackService;
     use crate::services::playlist_service::PlaylistService;
     use crate::services::recommendation_service::RecommendationService;
@@ -528,9 +518,11 @@ mod tests {
             playback: PlaybackRepository::new(pool.clone()),
             playlist: PlaylistRepository::new(pool.clone()),
             comment: CommentRepository::new(pool.clone()),
+            danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
             tenant: TenantRepository::new(pool.clone()),
+            plan: PlanRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
         let playlist_service = PlaylistService::new(repos.playlist.clone());
@@ -541,6 +533,7 @@ mod tests {
             playlist: playlist_service,
             auth: AuthService::new(
                 repos.user.clone(),
+                repos.tenant.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -554,6 +547,7 @@ mod tests {
             share: ShareService::new(repos.share.clone()),
             admin: AdminService::new(repos.user.clone()),
             tenant: TenantService::new(repos.tenant.clone()),
+            plan: PlanService::new(repos.plan.clone()),
         };
         let transcoder = Transcoder::new(&std::env::temp_dir());
         Arc::new(AppState {

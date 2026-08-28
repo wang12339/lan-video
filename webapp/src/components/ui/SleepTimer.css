@@ -385,3 +385,13 @@
   color: var(--accent);
   font-weight: 600;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .sleep-timer-trigger.ending,
+  .sleep-timer-toast,
+  .sleep-timer-dropdown,
+  .sleep-timer-ring-fg {
+    animation: none !important;
+    transition: none !important;
+  }
+}

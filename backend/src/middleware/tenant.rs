@@ -25,9 +25,9 @@ pub enum TenantStatus {
 }
 
 impl TenantStatus {
-    /// 从字符串解析状态
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+    #[inline]
+    pub fn parse_status(s: &str) -> Self {
+        match s {
             "active" | "" => Self::Active,
             "disabled" | "inactive" => Self::Disabled,
             "maintenance" => Self::Maintenance,
@@ -61,10 +61,6 @@ pub struct TenantRateLimiter {
 }
 
 impl TenantRateLimiter {
-    /// 创建新的租户限流器
-    ///
-    /// # 参数
-    /// * `max_requests_per_minute` - 每个租户每分钟最大请求数
     pub fn new(max_requests_per_minute: u64) -> Self {
         Self {
             counters: Arc::new(DashMap::new()),
@@ -72,35 +68,22 @@ impl TenantRateLimiter {
         }
     }
 
-    /// 检查租户是否超过限流
-    ///
-    /// # 参数
-    /// * `tenant_id` - 租户 ID
-    ///
-    /// # 返回
-    /// * `true` - 允许请求
-    /// * `false` - 超过限流
+    #[inline]
     pub fn check(&self, tenant_id: i64) -> bool {
         let now = Instant::now();
         let mut entry = self.counters.entry(tenant_id).or_insert_with(|| (now, 0));
 
         let (window_start, count) = entry.value_mut();
 
-        // 如果窗口已过期（超过 1 分钟），重置计数器
         if now.duration_since(*window_start).as_secs() >= 60 {
             *window_start = now;
             *count = 0;
         }
 
-        *count += 1;
-
-        // 检查是否超过限制
+        *count = count.saturating_add(1);
         *count <= self.max_requests_per_minute
     }
 
-    /// 清理过期的计数器条目
-    ///
-    /// 应定期调用以防止内存泄漏
     pub fn cleanup(&self) {
         let now = Instant::now();
         self.counters
@@ -122,19 +105,9 @@ struct TenantRow {
     maintenance_eta: Option<String>,
 }
 
-/// 解析租户上下文
-///
-/// # 参数
-/// * `req` - HTTP 请求
-/// * `next` - 下一个中间件
-///
-/// # 返回
-/// * 成功时返回下一个中间件的响应
-/// * 失败时返回错误响应
 pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
     let start_time = Instant::now();
 
-    // 获取应用状态
     let state = req.extensions().get::<Arc<AppState>>().cloned();
     let Some(state) = state else {
         tracing::error!("AppState not found in request extensions");
@@ -145,7 +118,6 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
             .into_response();
     };
 
-    // 提取 Host 头
     let host = req
         .headers()
         .get("host")
@@ -153,7 +125,6 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    // 解析租户
     let tenant = state.repos.tenant.resolve_from_host(&host).await;
 
     let Some(tenant) = tenant else {
@@ -161,7 +132,6 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
         return (StatusCode::NOT_FOUND, "unknown site").into_response();
     };
 
-    // 检查租户状态
     match tenant.status {
         TenantStatus::Disabled => {
             tracing::warn!(
@@ -199,8 +169,8 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
         TenantStatus::Active => {}
     }
 
-    // 检查租户级限流
-    let tenant_limiter = TenantRateLimiter::new(1000); // 每分钟 1000 请求
+    static TENANT_RATE_LIMITER: std::sync::OnceLock<TenantRateLimiter> = std::sync::OnceLock::new();
+    let tenant_limiter = TENANT_RATE_LIMITER.get_or_init(|| TenantRateLimiter::new(1000));
     if !tenant_limiter.check(tenant.tenant_id) {
         tracing::warn!(
             tenant_id = tenant.tenant_id,
@@ -218,13 +188,12 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
             .into_response();
     }
 
-    // 注入租户上下文
-    req.extensions_mut().insert(tenant.clone());
+    let tenant_id = tenant.tenant_id;
+    let tenant_slug = tenant.slug.clone();
 
-    // 记录租户上下文日志
     tracing::info!(
-        tenant_id = tenant.tenant_id,
-        tenant_slug = %tenant.slug,
+        tenant_id = tenant_id,
+        tenant_slug = %tenant_slug,
         tenant_status = ?tenant.status,
         tenant_plan = %tenant.plan,
         host = %host,
@@ -232,48 +201,19 @@ pub async fn resolve_tenant(mut req: Request, next: Next) -> Response {
         "tenant resolved"
     );
 
-    // 执行下一个中间件
+    req.extensions_mut().insert(tenant);
+
     let response = next.run(req).await;
 
-    // 记录响应状态
     tracing::debug!(
-        tenant_id = tenant.tenant_id,
-        tenant_slug = %tenant.slug,
+        tenant_id = tenant_id,
+        tenant_slug = %tenant_slug,
         status = response.status().as_u16(),
         duration_ms = start_time.elapsed().as_millis() as u64,
         "tenant request completed"
     );
 
     response
-}
-
-/// 健康检查端点
-///
-/// 用于检查租户系统是否正常工作
-pub async fn health_check() -> impl IntoResponse {
-    StatusCode::OK
-}
-
-/// 健康检查响应结构
-#[derive(serde::Serialize)]
-pub struct HealthCheckResponse {
-    pub status: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub tenant_system: String,
-}
-
-/// 详细的健康检查端点
-///
-/// 包含租户系统状态信息
-pub async fn detailed_health_check() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!(HealthCheckResponse {
-            status: "healthy".to_string(),
-            timestamp: chrono::Utc::now(),
-            tenant_system: "operational".to_string(),
-        })),
-    )
 }
 
 #[cfg(test)]
@@ -289,10 +229,12 @@ mod tests {
     use crate::metrics::Metrics;
     use crate::middleware::rate_limit::RateLimiter;
     use crate::repositories::comment_repo::CommentRepository;
+    use crate::repositories::plan_repo::PlanRepository;
     use crate::repositories::playback_repo::PlaybackRepository;
     use crate::repositories::playlist_repo::PlaylistRepository;
     use crate::repositories::registration_repo::RegistrationRepository;
     use crate::repositories::share_repo::ShareRepository;
+    use crate::repositories::danmaku_repo::DanmakuRepository;
     use crate::repositories::tag_repo::TagRepository;
     use crate::repositories::tenant_repo::TenantRepository;
     use crate::repositories::user_repo::UserRepository;
@@ -302,6 +244,7 @@ mod tests {
     use crate::services::comment_service::CommentService;
     use crate::services::email_service::EmailService;
     use crate::services::media_service::MediaService;
+    use crate::services::plan_service::PlanService;
     use crate::services::playback_service::PlaybackService;
     use crate::services::playlist_service::PlaylistService;
     use crate::services::recommendation_service::RecommendationService;
@@ -353,9 +296,11 @@ mod tests {
             playback: PlaybackRepository::new(pool.clone()),
             playlist: PlaylistRepository::new(pool.clone()),
             comment: CommentRepository::new(pool.clone()),
+            danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
             tenant: TenantRepository::new(pool.clone()),
+            plan: PlanRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
         let playlist_service = PlaylistService::new(repos.playlist.clone());
@@ -366,6 +311,7 @@ mod tests {
             playlist: playlist_service,
             auth: AuthService::new(
                 repos.user.clone(),
+                repos.tenant.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -379,6 +325,7 @@ mod tests {
             share: ShareService::new(repos.share.clone()),
             admin: AdminService::new(repos.user.clone()),
             tenant: TenantService::new(repos.tenant.clone()),
+            plan: PlanService::new(repos.plan.clone()),
         };
         let transcoder = Transcoder::new(&std::env::temp_dir());
         Arc::new(AppState {
@@ -501,15 +448,21 @@ mod tests {
 
     #[test]
     fn tenant_status_from_str() {
-        assert_eq!(TenantStatus::from_str("active"), TenantStatus::Active);
-        assert_eq!(TenantStatus::from_str("disabled"), TenantStatus::Disabled);
-        assert_eq!(TenantStatus::from_str("inactive"), TenantStatus::Disabled);
+        assert_eq!(TenantStatus::parse_status("active"), TenantStatus::Active);
         assert_eq!(
-            TenantStatus::from_str("maintenance"),
+            TenantStatus::parse_status("disabled"),
+            TenantStatus::Disabled
+        );
+        assert_eq!(
+            TenantStatus::parse_status("inactive"),
+            TenantStatus::Disabled
+        );
+        assert_eq!(
+            TenantStatus::parse_status("maintenance"),
             TenantStatus::Maintenance
         );
-        assert_eq!(TenantStatus::from_str(""), TenantStatus::Active);
-        assert_eq!(TenantStatus::from_str("unknown"), TenantStatus::Active);
+        assert_eq!(TenantStatus::parse_status(""), TenantStatus::Active);
+        assert_eq!(TenantStatus::parse_status("unknown"), TenantStatus::Active);
     }
 
     #[test]
@@ -529,17 +482,5 @@ mod tests {
         assert!(limiter.check(1));
         assert!(!limiter.check(1));
         assert!(limiter.check(2));
-    }
-
-    #[tokio::test]
-    async fn health_check_returns_200() {
-        let response = health_check().await.into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn detailed_health_check_returns_200_with_json() {
-        let response = detailed_health_check().await.into_response();
-        assert_eq!(response.status(), StatusCode::OK);
     }
 }

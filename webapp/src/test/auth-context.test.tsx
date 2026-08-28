@@ -90,14 +90,22 @@ describe('AuthContext', () => {
   // =========================================================================
   describe('登录状态', () => {
     it('初始状态 loading=true，user=null', async () => {
-      let receivedLoading = true
+      // 使用一个永不 resolve 的 promise 来保持 loading 状态
+      let resolveGetUserInfo!: (v: unknown) => void
+      mockGetUserInfo.mockReturnValue(new Promise((r) => { resolveGetUserInfo = r }))
+
+      let receivedLoading = false
       renderWithAuth((c) => {
-        ctx = c
         receivedLoading = c.loading
       })
 
-      // getUserInfo 被调用前 loading 应为 true
+      // 在 getUserInfo 返回前，loading 应为 true
       expect(receivedLoading).toBe(true)
+
+      // 清理：resolve 以避免悬挂 promise
+      await act(async () => {
+        resolveGetUserInfo(authError('未登录'))
+      })
     })
 
     it('getUserInfo 成功后 loading=false，user 有值', async () => {

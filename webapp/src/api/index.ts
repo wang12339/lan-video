@@ -1,13 +1,13 @@
 // API 模块导出
 
-export { BASE, getToken, clearToken, mediaUrl, cacheClear, APIError, AuthError, setOnAuthRequired, setOnError } from './client';
+export { BASE, getToken, clearToken, mediaUrl, cacheClear, APIError, AuthError, ValidationError, RateLimitError, NotFoundError, NetworkError, TimeoutError, setOnAuthRequired, setOnError } from './client';
 export { health } from './client';
 export type { VideoListResponse, Video, PlaybackHistory, UserInfo, UserProfile, AuthResponse, ServerInfo, HealthResponse, MappedVideo, MappedImage, MappedHistory, MappedPlaylist, VideoVariant, TranscodeStatusResponse } from './types';
 export { login, register, logout, getUserInfo, getUserProfile, checkSession, uploadAvatar, sendVerificationEmail, updateEmail, forgotPassword, resetPassword, verifyEmail } from './auth';
 export { listVideos, getVideo, incrementViews, deleteVideo, deleteVideos, listFavorites, toggleFavorite, getFavoriteStatus, getUploadStatus, uploadResumeChunk, transcodeVideo, getTranscodeStatus, searchVideos, searchSuggest } from './videos';
 export type { SearchResult, SearchResponse } from './videos';
 export { savePlayback, listPlaybackHistory, startPlaybackSession, heartbeatPlaybackSession, stopPlaybackSession } from './playback';
-export { mapVideo, mapImage, mapHistory, mapPlaylist, formatDuration, formatViews, formatCount, getCatColor } from './utils';
+export { mapVideo, mapImage, mapHistory, mapPlaylist, formatDuration, formatViews, formatCount, formatBytes, getCatColor } from './utils';
 export { loadPrefs, getPref, setPref } from './prefs';
 export { listTags, getPopularTags, createTag, updateTag, deleteTag, getVideoTags, addVideoTags, removeVideoTag } from './tags';
 export type { Tag, TagListResponse, TagCreateRequest, TagUpdateRequest } from './tags';

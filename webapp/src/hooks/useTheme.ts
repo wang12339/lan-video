@@ -7,9 +7,7 @@ const THEME_KEY = 'atmos.theme'
 function getSystemTheme(): 'dark' | 'light' {
   if (typeof window === 'undefined') return 'dark'
   try {
-    const mm = (window as any).matchMedia
-    if (typeof mm !== 'function') return 'dark'
-    return mm.call(window, '(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   } catch {
     return 'dark'
   }
@@ -40,9 +38,7 @@ export function useTheme() {
   useEffect(() => {
     if (theme !== 'system') return
     try {
-      const mm = (window as any).matchMedia
-      if (typeof mm !== 'function') return
-      const mediaQuery = mm.call(window, '(prefers-color-scheme: dark)')
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
       const handler = (e: MediaQueryListEvent) => {
         setResolvedTheme(e.matches ? 'dark' : 'light')
       }
@@ -67,7 +63,7 @@ export function useTheme() {
 
   const setTheme = useCallback((newTheme: Theme) => {
     setThemeState(newTheme)
-    try { localStorage.setItem(THEME_KEY, newTheme) } catch {}
+    try { localStorage.setItem(THEME_KEY, newTheme) } catch { void 0 }
     
     if (newTheme === 'system') {
       setResolvedTheme(getSystemTheme())

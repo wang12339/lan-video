@@ -12,9 +12,34 @@ use crate::util::error::ServiceError;
 use crate::util::hashid;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
-/// GET /tags
-///
-/// List all tags with pagination
+const MAX_TAG_NAME_LEN: usize = 50;
+
+fn is_valid_hex_color(color: &str) -> bool {
+    color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn validate_tag_name(name: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if name.trim().is_empty() || name.len() > MAX_TAG_NAME_LEN {
+        Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "标签名称长度需在 1-50 个字符之间",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_tag_color(color: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if !is_valid_hex_color(color) {
+        Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "标签颜色格式无效，需为 #RRGGBB 格式",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn list_tags(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TagQuery>,
@@ -45,13 +70,14 @@ pub async fn list_tags(
     }))
 }
 
-/// POST /tags
-///
-/// Create a new tag (admin only)
 pub async fn create_tag(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<CreateTagRequest>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
+    validate_tag_name(&req.name)?;
+    if let Some(ref color) = req.color {
+        validate_tag_color(color)?;
+    }
     let tag = state
         .services
         .tag
@@ -71,9 +97,6 @@ pub async fn create_tag(
     Ok(Json(tag.into()))
 }
 
-/// GET /tags/{id}
-///
-/// Get a specific tag
 pub async fn get_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
@@ -89,14 +112,17 @@ pub async fn get_tag(
     Ok(Json(tag.into()))
 }
 
-/// PUT /tags/{id}
-///
-/// Update a tag (admin only)
 pub async fn update_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
     SafeJson(req): SafeJson<UpdateTagRequest>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if let Some(ref name) = req.name {
+        validate_tag_name(name)?;
+    }
+    if let Some(ref color) = req.color {
+        validate_tag_color(color)?;
+    }
     let tag = state
         .services
         .tag
@@ -120,9 +146,6 @@ pub async fn update_tag(
     Ok(Json(tag.into()))
 }
 
-/// DELETE /tags/{id}
-///
-/// Delete a tag (admin only)
 pub async fn delete_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
@@ -141,9 +164,6 @@ pub async fn delete_tag(
     })))
 }
 
-/// GET /tags/popular
-///
-/// Get popular tags
 pub async fn get_popular_tags(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<TagResponse>>, (StatusCode, Json<ErrorResponse>)> {
@@ -157,9 +177,6 @@ pub async fn get_popular_tags(
     Ok(Json(tags.into_iter().map(TagResponse::from).collect()))
 }
 
-/// POST /videos/{id}/tags
-///
-/// Add tags to a video
 pub async fn add_tags_to_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -191,9 +208,6 @@ pub async fn add_tags_to_video(
     })))
 }
 
-/// DELETE /videos/{id}/tags
-///
-/// Remove tags from a video
 pub async fn remove_tags_from_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -221,9 +235,6 @@ pub async fn remove_tags_from_video(
     })))
 }
 
-/// DELETE /videos/{id}/tags/{tag_id}
-///
-/// Remove a single tag from a video
 pub async fn remove_tag_from_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -250,9 +261,6 @@ pub async fn remove_tag_from_video(
     })))
 }
 
-/// GET /videos/{id}/tags
-///
-/// Get tags for a video
 pub async fn get_video_tags(
     State(state): State<Arc<AppState>>,
     Path(video_id): Path<String>,

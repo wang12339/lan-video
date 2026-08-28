@@ -484,7 +484,7 @@ export default function KeyboardShortcuts({ visible, onClose }: KeyboardShortcut
       <div className="shortcuts-panel" onClick={(e) => e.stopPropagation()}>
         <div className="shortcuts-header">
           <h2 className="shortcuts-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <rect x="2" y="4" width="20" height="16" rx="2" />
               <line x1="6" y1="8" x2="6" y2="8" />
               <line x1="10" y1="8" x2="10" y2="8" />
@@ -496,7 +496,7 @@ export default function KeyboardShortcuts({ visible, onClose }: KeyboardShortcut
             {t('shortcuts.title')}
           </h2>
           <button className="shortcuts-close" onClick={onClose} aria-label={t('common.close')}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -533,7 +533,7 @@ export default function KeyboardShortcuts({ visible, onClose }: KeyboardShortcut
             {t('shortcuts.pressKey')} <kbd>?</kbd> {t('shortcuts.toToggle')}
           </span>
           {hasOverrides && (
-            <button className="shortcuts-reset-all" onClick={resetAll}>
+            <button type="button" className="shortcuts-reset-all" onClick={resetAll}>
               {t('shortcuts.resetAll')}
             </button>
           )}

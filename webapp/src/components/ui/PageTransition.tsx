@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, memo } from 'react'
 import './PageTransition.css'
 
 interface Props {
@@ -7,34 +7,30 @@ interface Props {
   transitionKey: string
 }
 
-export default function PageTransition({ children, transitionKey }: Props) {
+function PageTransitionImpl({ children, transitionKey }: Props) {
   const [state, setState] = useState<'entering' | 'entered' | 'exiting'>('entered')
-  const [displayKey, setDisplayKey] = useState(transitionKey)
   const [displayChildren, setDisplayChildren] = useState(children)
+  const prevKeyRef = useRef(transitionKey)
 
   useEffect(() => {
-    if (transitionKey === displayKey) return
+    if (transitionKey === prevKeyRef.current) return
+    prevKeyRef.current = transitionKey
 
-    // Phase 1: exit animation
     setState('exiting')
 
     const exitTimer = setTimeout(() => {
-      // Phase 2: swap content while hidden
-      setDisplayKey(transitionKey)
       setDisplayChildren(children)
       setState('entering')
 
-      // Phase 3: enter animation completes
       const enterTimer = setTimeout(() => {
         setState('entered')
-      }, 300) // matches CSS --page-transition-duration
+      }, 300)
 
       return () => clearTimeout(enterTimer)
-    }, 200) // exit duration
+    }, 200)
 
     return () => clearTimeout(exitTimer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transitionKey])
+  }, [transitionKey, children])
 
   // Keep children in sync when not transitioning (e.g. same-route state change)
   useEffect(() => {
@@ -49,3 +45,5 @@ export default function PageTransition({ children, transitionKey }: Props) {
     </div>
   )
 }
+
+export default memo(PageTransitionImpl)

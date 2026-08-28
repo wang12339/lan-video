@@ -1,11 +1,9 @@
-/* Base skeleton styles */
 .skeleton-line {
   background: linear-gradient(90deg, var(--bg3, #1e1e25) 25%, var(--surface, #24242c) 50%, var(--bg3, #1e1e25) 75%);
   background-size: 200% 100%;
   border-radius: 4px;
 }
 
-/* Shape variants */
 .skeleton-shape-rect {
   border-radius: 4px;
 }
@@ -18,26 +16,24 @@
   border-radius: 12px;
 }
 
-/* Animation variants */
 .skeleton-animate-shimmer {
   animation: shimmer 1.5s infinite;
 }
 
 .skeleton-animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .skeleton-animate-wave {
   animation: wave 2s ease-in-out infinite;
 }
 
-/* Animation keyframes */
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
 
-@keyframes pulse {
+@keyframes skeleton-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
@@ -48,12 +44,10 @@
   100% { transform: translateX(100%); }
 }
 
-/* Custom skeleton container */
 .skeleton-custom {
   display: inline-block;
 }
 
-/* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
   .skeleton-animate-shimmer,
   .skeleton-animate-pulse,
@@ -62,7 +56,6 @@
   }
 }
 
-/* Stats skeleton */
 .skeleton-stats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -89,7 +82,6 @@
   margin: 0 auto;
 }
 
-/* Table skeleton */
 .skeleton-table {
   background: var(--bg2, #15151a);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
@@ -121,7 +113,6 @@
   height: 40px;
 }
 
-/* Card skeleton */
 .skeleton-card {
   background: var(--bg2, #15151a);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
@@ -163,7 +154,6 @@
   width: 30%;
 }
 
-/* Text skeleton */
 .skeleton-text {
   display: flex;
   flex-direction: column;
@@ -174,7 +164,6 @@
   height: 16px;
 }
 
-/* Video card skeleton */
 .skeleton-video-card {
   background: var(--bg2, #15151a);
   border-radius: var(--radius, 12px);
@@ -204,7 +193,6 @@
   width: 50%;
 }
 
-/* Video card skeleton in history/favorites list (horizontal layout) */
 .history-list .skeleton-video-card {
   display: flex;
   flex-direction: row;

@@ -136,6 +136,7 @@ export interface MappedImage {
   title: string;
   category: Category | string;
   thumb: string | null;
+  original: string | null;
   sourceType: SourceType;
 }
 

@@ -1,6 +1,5 @@
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -35,7 +34,14 @@ fn suggest_cache() -> &'static Cache<String, Vec<String>> {
 /// Trim the query and cap its length so a pathological input can never reach
 /// the database as a giant bound value.
 fn normalize_query(query: &str) -> String {
-    query.trim().chars().take(MAX_QUERY_LEN).collect()
+    let normalized: String = query
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ");
+    normalized.chars().take(MAX_QUERY_LEN).collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +52,17 @@ pub struct SearchResult {
     pub category: Option<String>,
     pub rank: f32,
     pub headline: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct SearchRow {
+    video_id: i64,
+    title: String,
+    description: Option<String>,
+    category: Option<String>,
+    rank: f32,
+    headline: Option<String>,
+    total: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +103,7 @@ impl SearchService {
         // is not installed on standard PostgreSQL installs. 'simple' does
         // not tokenize Chinese, but it works for the Latin-script portion
         // of titles and avoids a hard 500 on every search.
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, SearchRow>(
             r#"
             SELECT
                 id as video_id,
@@ -110,24 +127,17 @@ impl SearchService {
         .await
         .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))?;
 
-        let total: i64 = rows.first().map(|r| r.get("total")).unwrap_or(0);
+        let total: i64 = rows.first().map(|r| r.total).unwrap_or(0);
         let results = rows
             .into_iter()
             .map(|r| {
-                // SECURITY (XSS-001): ts_headline can return a string
-                // containing `<mark>...</mark>` markers. The webapp currently
-                // does not render this, and React would auto-escape it
-                // anyway, but stripping the markers here keeps the API
-                // surface unambiguous for any future consumer.
-                let headline: Option<String> = r
-                    .get::<Option<String>, _>("headline")
-                    .map(|s| strip_ts_headline_markers(&s));
+                let headline = r.headline.map(|s| strip_ts_headline_markers(&s));
                 SearchResult {
-                    video_id: r.get("video_id"),
-                    title: r.get("title"),
-                    description: r.get("description"),
-                    category: r.get("category"),
-                    rank: r.get("rank"),
+                    video_id: r.video_id,
+                    title: r.title,
+                    description: r.description,
+                    category: r.category,
+                    rank: r.rank,
                     headline,
                 }
             })
@@ -206,7 +216,17 @@ impl SearchService {
 /// Strip the `<mark>...</mark>` start/stop selectors from a ts_headline result.
 /// We just remove the literal substrings; the resulting text is plain.
 fn strip_ts_headline_markers(s: &str) -> String {
-    s.replace("<mark>", "").replace("</mark>", "")
+    let mut out = String::with_capacity(s.len());
+    let mut remaining = s;
+    while let Some(start) = remaining.find("<mark>") {
+        out.push_str(&remaining[..start]);
+        remaining = &remaining[start + 6..];
+        if let Some(end) = remaining.find("</mark>") {
+            remaining = &remaining[end + 7..];
+        }
+    }
+    out.push_str(remaining);
+    out
 }
 
 /// Escape LIKE wildcards (`%`, `_`, `\`) with the default backslash escape so

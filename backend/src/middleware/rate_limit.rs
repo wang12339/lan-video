@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -188,7 +189,40 @@ impl RateLimiter {
     ) -> Result<(), ()> {
         let now = Instant::now();
 
-        // Atomic read-modify-write via DashMap::entry — holds write guard
+        if let Some(mut slot) = self.cache.get_mut(key) {
+            let (expires_at, entry) = slot.value_mut();
+
+            if let Some(until) = entry.blocked_until {
+                if now < until {
+                    tracing::warn!(key = %log_safe(key), "rate limited: blocked (memory)");
+                    return Err(());
+                }
+                entry.count = 0;
+                entry.blocked_until = None;
+                *expires_at = now + Duration::from_secs(window_secs);
+            }
+
+            if now >= *expires_at {
+                entry.count = 0;
+                *expires_at = now + Duration::from_secs(window_secs);
+            }
+
+            entry.count = entry.count.saturating_add(1);
+
+            if entry.count >= max_attempts {
+                entry.blocked_until = Some(now + Duration::from_secs(block_secs));
+                tracing::warn!(
+                    key = %log_safe(key),
+                    count = entry.count,
+                    max = max_attempts,
+                    block_secs = block_secs,
+                    "rate limit exceeded, blocking"
+                );
+                return Err(());
+            }
+            return Ok(());
+        }
+
         let mut slot = self.cache.entry(key.to_string()).or_insert_with(|| {
             (
                 now + Duration::from_secs(window_secs),
@@ -201,19 +235,16 @@ impl RateLimiter {
 
         let (expires_at, entry) = slot.value_mut();
 
-        // If blocked, reject
         if let Some(until) = entry.blocked_until {
             if now < until {
-                tracing::warn!(key = %log_safe(key), "rate limited: blocked until {:?}", until);
+                tracing::warn!(key = %log_safe(key), "rate limited: blocked (memory)");
                 return Err(());
             }
-            // Block expired — reset count and clear block
             entry.count = 0;
             entry.blocked_until = None;
             *expires_at = now + Duration::from_secs(window_secs);
         }
 
-        // If window expired, reset
         if now >= *expires_at {
             entry.count = 0;
             *expires_at = now + Duration::from_secs(window_secs);
@@ -221,9 +252,6 @@ impl RateLimiter {
 
         entry.count = entry.count.saturating_add(1);
 
-        // The attempt that reaches the limit is itself rejected: a client is
-        // allowed max_attempts - 1 successful calls before the block kicks in.
-        // (Deliberately `>=`, not `>` — existing callers and tests rely on it.)
         if entry.count >= max_attempts {
             entry.blocked_until = Some(now + Duration::from_secs(block_secs));
             tracing::warn!(
@@ -278,10 +306,19 @@ impl RateLimiter {
 
 /// Keys can embed user-supplied input (usernames, IPs) — strip control
 /// characters before they reach the log so an attacker cannot forge log lines.
-fn log_safe(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect()
+fn log_safe(s: &str) -> Cow<'_, str> {
+    if s.bytes().all(|b| b >= 0x20 && b != 0x7f) {
+        return Cow::Borrowed(s);
+    }
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            result.push('?');
+        } else {
+            result.push(c);
+        }
+    }
+    Cow::Owned(result)
 }
 
 /// Start a background task that periodically cleans up expired entries from both rate limiters.

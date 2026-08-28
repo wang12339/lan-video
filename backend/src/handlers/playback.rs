@@ -122,9 +122,10 @@ fn validate_session_request(
     payload: &SessionRequest,
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     if payload.video_id <= 0 {
-        return Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"));
+        Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 /// POST /playback/session/start — 开始播放会话

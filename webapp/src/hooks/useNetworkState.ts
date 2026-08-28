@@ -11,13 +11,6 @@ interface NetworkState {
   isReconnecting: boolean
 }
 
-interface SyncStatus {
-  pending: number
-  failed: number
-  lastSyncTime: number | null
-  isSyncing: boolean
-}
-
 export function useNetworkState(): NetworkState {
   const [state, setState] = useState<NetworkState>(() => ({
     isOnline: navigator.onLine,
@@ -72,31 +65,28 @@ export function useNetworkState(): NetworkState {
       }
     }
 
-    // Auto-reconnect logic
     const attemptReconnect = () => {
       setState(prev => {
         if (prev.isOnline || prev.reconnectAttempts >= maxReconnectAttempts) {
           return prev
         }
-        
+
         const newAttempts = prev.reconnectAttempts + 1
-        const delay = Math.min(1000 * Math.pow(2, newAttempts), 30000) // Exponential backoff, max 30s
-        
+        const delay = Math.min(1000 * Math.pow(2, newAttempts), 30000)
+
         reconnectTimerRef.current = setTimeout(() => {
-          // Attempt to fetch a lightweight resource to check connectivity
-          fetch('/health', { 
-            method: 'HEAD', 
+          reconnectTimerRef.current = null
+          fetch('/health', {
+            method: 'HEAD',
             mode: 'no-cors',
             cache: 'no-cache'
           }).then(() => {
-            // If fetch succeeds, we're back online
             updateOnlineState()
           }).catch(() => {
-            // Still offline, try again
             attemptReconnect()
           })
         }, delay)
-        
+
         return {
           ...prev,
           reconnectAttempts: newAttempts,
@@ -108,8 +98,9 @@ export function useNetworkState(): NetworkState {
     window.addEventListener('online', updateOnlineState)
     const handleOffline = () => {
       updateOnlineState()
-      // Start auto-reconnect when going offline
-      setTimeout(attemptReconnect, 1000)
+      if (!reconnectTimerRef.current) {
+        attemptReconnect()
+      }
     }
     window.addEventListener('offline', handleOffline)
 
@@ -139,7 +130,12 @@ export function useOfflineAlert() {
   const { isOnline, isReconnecting, reconnectAttempts, connectionType, isSlowConnection } = useNetworkState()
   const [showAlert, setShowAlert] = useState(false)
   const [wasOffline, setWasOffline] = useState(false)
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
+  const [syncStatus, setSyncStatus] = useState<{
+    pending: number
+    failed: number
+    lastSyncTime: number | null
+    isSyncing: boolean
+  }>({
     pending: 0,
     failed: 0,
     lastSyncTime: null,

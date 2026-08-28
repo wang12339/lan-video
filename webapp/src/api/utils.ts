@@ -67,6 +67,14 @@ export function formatViews(n: number | null | undefined): string {
 
 export const formatCount = formatViews
 
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 // 数据映射
 export function mapVideo(v: Video | null): MappedVideo | null {
   if (!v) return null;
@@ -97,6 +105,7 @@ export function mapImage(v: Video | null): MappedImage | null {
     title: v.title || i18n.t('common.untitled'),
     category: v.category || 'general',
     thumb: mediaUrl(v.thumbUrl) || mediaUrl(v.streamUrl) || placeholderDataURL(v.id, 'local_image'),
+    original: mediaUrl(v.streamUrl) || mediaUrl(v.thumbUrl) || placeholderDataURL(v.id, 'local_image'),
     sourceType: v.sourceType || 'local_image',
   };
 }

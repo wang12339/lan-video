@@ -189,11 +189,11 @@ function NavBar() {
     }
   }, [closeMenu, location.pathname, navigate])
 
-  const isActive = (path: string) => location.pathname === path
+  const isActive = useCallback((path: string) => location.pathname === path, [location.pathname])
 
   return (
     <>
-      <nav className="nav">
+      <nav className="nav" aria-label={t('nav.mainNav')}>
         <Link to="/" className="nav-logo">{t('nav.logo')}</Link>
 
         <div className="nav-search" ref={searchRef}>
@@ -262,31 +262,32 @@ function NavBar() {
         </button>
 
         <div ref={linksRef} className={`nav-links ${menuOpen ? 'open' : ''}`}>
-          <Link to="/" className={`nav-link ${isActive('/') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.home')); closeMenu() }}>{t('nav.home')}</Link>
-          <Link to="/gallery" className={`nav-link ${isActive('/gallery') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.gallery')); closeMenu() }}>{t('nav.gallery')}</Link>
+          <Link to="/" className={`nav-link ${isActive('/') ? 'active' : ''}`} aria-current={isActive('/') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.home')); closeMenu() }}>{t('nav.home')}</Link>
+          <Link to="/gallery" className={`nav-link ${isActive('/gallery') ? 'active' : ''}`} aria-current={isActive('/gallery') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.gallery')); closeMenu() }}>{t('nav.gallery')}</Link>
           {user && (
-            <Link to="/upload" className={`nav-link ${isActive('/upload') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.upload')); closeMenu() }}>{t('nav.upload')}</Link>
+            <Link to="/upload" className={`nav-link ${isActive('/upload') ? 'active' : ''}`} aria-current={isActive('/upload') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.upload')); closeMenu() }}>{t('nav.upload')}</Link>
           )}
           {user?.isAdmin && (
-            <Link to="/admin" className={`nav-link ${isActive('/admin') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.admin')); closeMenu() }}>{t('nav.admin')}</Link>
+            <Link to="/admin" className={`nav-link ${isActive('/admin') ? 'active' : ''}`} aria-current={isActive('/admin') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.admin')); closeMenu() }}>{t('nav.admin')}</Link>
           )}
           <div className="nav-mobile-user">
             {user ? (
               <>
-                <Link to="/profile" className={`nav-link ${isActive('/profile') ? 'active' : ''}`} onClick={() => { trackClick('导航', t('nav.myProfile')); closeMenu() }}>{t('nav.myProfile')}</Link>
-                <button
-                  type="button"
-                  className="nav-link nav-link-btn"
-                  onClick={() => {
-                    if (confirmLogout) {
-                      void handleLogout()
-                    } else {
-                      setConfirmLogout(true)
-                    }
-                  }}
-                >
-                  {confirmLogout ? t('nav.logoutConfirm') : t('nav.logout')}
-                </button>
+                <Link to="/profile" className={`nav-link ${isActive('/profile') ? 'active' : ''}`} aria-current={isActive('/profile') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.myProfile')); closeMenu() }}>{t('nav.myProfile')}</Link>
+            <button
+              type="button"
+              className="nav-link nav-link-btn"
+              aria-expanded={confirmLogout}
+              onClick={() => {
+                if (confirmLogout) {
+                  void handleLogout()
+                } else {
+                  setConfirmLogout(true)
+                }
+              }}
+            >
+              {confirmLogout ? t('nav.logoutConfirm') : t('nav.logout')}
+            </button>
               </>
             ) : (
               <button type="button" className="nav-link nav-link-btn" onClick={handleGuestLogin}>

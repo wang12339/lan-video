@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo, useCallback, memo, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { InfiniteData } from '@tanstack/react-query'
@@ -16,6 +16,18 @@ const COMMENT_PAGE_SIZE = 20
 interface Props {
   videoId: string
 }
+
+const MemoizedCommentItem = memo(forwardRef<HTMLDivElement, {
+  comment: Comment
+  onDelete: (c: Comment) => void
+  videoId: string
+}>(function MemoizedCommentItem({ comment, onDelete, videoId }, ref) {
+  return (
+    <div ref={ref}>
+      <CommentItem comment={comment} onDelete={onDelete} videoId={videoId} />
+    </div>
+  )
+}))
 
 export default function Comments({ videoId }: Props) {
   const { t } = useTranslation()
@@ -58,8 +70,8 @@ export default function Comments({ videoId }: Props) {
     staleTime: 30_000,
   })
 
-  const comments = data?.pages.flatMap((p) => p.comments) ?? []
-  const total = data?.pages[data.pages.length - 1]?.total ?? 0
+  const comments = useMemo(() => data?.pages.flatMap((p) => p.comments) ?? [], [data])
+  const total = useMemo(() => data?.pages[data.pages.length - 1]?.total ?? 0, [data])
 
   const createMutation = useMutation({
     mutationFn: (text: string) => createComment(videoId, text),
@@ -141,38 +153,59 @@ export default function Comments({ videoId }: Props) {
     },
   })
 
-  const submit = () => {
+  const submit = useCallback(() => {
     const trimmed = content.trim()
     if (!trimmed || createMutation.isPending) return
     createMutation.mutate(trimmed)
-  }
+  }, [content, createMutation])
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     submit()
-  }
+  }, [submit])
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
       submit()
     }
-  }
+  }, [submit])
 
-  const handleLoadMore = () => {
+  const handleLoadMore = useCallback(() => {
     if (isFetchingNextPage || !hasNextPage) return
     setLoadMoreFailed(false)
     fetchNextPage().catch(() => setLoadMoreFailed(true))
-  }
+  }, [isFetchingNextPage, hasNextPage, fetchNextPage])
 
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     if (!deleteTarget) return
     setDeleteError('')
     deleteMutation.mutate(deleteTarget.id)
-  }
+  }, [deleteTarget, deleteMutation])
 
-  const countAtLimit = content.length > COMMENT_MAX_LENGTH * 0.9
-  const errorMessage = error?.message || t('comments.loadFailed')
+  const handleContentChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setContent(e.target.value)
+  }, [])
+
+  const handleRetryRefetch = useCallback(() => void refetch(), [refetch])
+
+  const handleCancelDelete = useCallback(() => setDeleteTarget(null), [])
+
+  const countAtLimit = useMemo(() => content.length > COMMENT_MAX_LENGTH * 0.9, [content.length])
+  const errorMessage = useMemo(() => error?.message || t('comments.loadFailed'), [error, t])
+
+  const commentItems = useMemo(() =>
+    comments.map((c, index) => (
+      <MemoizedCommentItem
+        key={c.id}
+        comment={c}
+        onDelete={setDeleteTarget}
+        videoId={videoId}
+        ref={index === 0 ? newCommentRef : undefined}
+      />
+    )),
+    [comments, videoId]
+  )
 
   return (
     <div className="comments-section">
@@ -183,7 +216,7 @@ export default function Comments({ videoId }: Props) {
           <textarea
             className="comment-input"
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={handleContentChange}
             onKeyDown={handleKeyDown}
             placeholder={t('comments.placeholder')}
             rows={2}
@@ -207,11 +240,7 @@ export default function Comments({ videoId }: Props) {
       )}
 
       <div className="comments-list" ref={commentsListRef}>
-        {comments.map((c, index) => (
-          <div key={c.id} ref={index === 0 ? newCommentRef : undefined}>
-            <CommentItem comment={c} onDelete={setDeleteTarget} videoId={videoId} />
-          </div>
-        ))}
+        {commentItems}
 
         {isPending && comments.length === 0 && (
           <p className="comments-loading">{t('common.loading')}</p>
@@ -219,7 +248,7 @@ export default function Comments({ videoId }: Props) {
         {isError && comments.length === 0 && (
           <div className="comments-error-block">
             <p className="comments-error" role="alert">{errorMessage}</p>
-            <button className="retry-btn" onClick={() => void refetch()} disabled={isFetching}>
+            <button className="comments-retry-btn" onClick={handleRetryRefetch} disabled={isFetching}>
               {t('common.retry')}
             </button>
           </div>
@@ -234,13 +263,13 @@ export default function Comments({ videoId }: Props) {
         {loadMoreFailed && (
           <>
             <p className="comments-error compact" role="alert">{t('comments.loadFailed')}</p>
-            <button className="load-more-btn" onClick={handleLoadMore}>
+            <button className="comments-load-more-btn" onClick={handleLoadMore}>
               {t('common.retry')}
             </button>
           </>
         )}
         {!loadMoreFailed && comments.length < total && (
-          <button className="load-more-btn" onClick={handleLoadMore} disabled={isFetchingNextPage}>
+          <button className="comments-load-more-btn" onClick={handleLoadMore} disabled={isFetchingNextPage}>
             {isFetchingNextPage ? t('common.loading') : t('common.loadMore')}
           </button>
         )}
@@ -252,7 +281,7 @@ export default function Comments({ videoId }: Props) {
         message={t('comments.notRecoverable')}
         danger
         onConfirm={handleDelete}
-        onCancel={() => setDeleteTarget(null)}
+        onCancel={handleCancelDelete}
       />
     </div>
   )

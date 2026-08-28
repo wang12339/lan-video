@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getSearchHistory,
@@ -19,7 +19,7 @@ interface SearchHistoryProps {
   showStats?: boolean
 }
 
-export default function SearchHistory({
+function SearchHistoryImpl({
   onSelect,
   visible,
   showPrivacyToggle = true,
@@ -221,6 +221,7 @@ export default function SearchHistory({
             </div>
             
             <button
+              type="button"
               className="search-history-delete"
               onClick={(e) => handleDelete(e, item.query)}
               aria-label={`${t('search.delete')} ${item.query}`}
@@ -232,6 +233,7 @@ export default function SearchHistory({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
+                aria-hidden="true"
               >
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
@@ -274,12 +276,14 @@ export default function SearchHistory({
             
             <div className="search-history-confirm-actions">
               <button
+                type="button"
                 className="search-history-confirm-cancel"
                 onClick={handleCancelClear}
               >
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 className="search-history-confirm-delete"
                 onClick={handleClear}
               >
@@ -292,3 +296,5 @@ export default function SearchHistory({
     </div>
   )
 }
+
+export default memo(SearchHistoryImpl)

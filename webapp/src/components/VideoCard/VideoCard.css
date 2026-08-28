@@ -3,25 +3,26 @@
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease;
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.3s ease;
   position: relative;
   border: 1px solid var(--border);
+  contain: layout style;
 }
 
 .video-card:hover {
   transform: translateY(-6px);
-  box-shadow: 
+  box-shadow:
     0 12px 32px rgba(0, 0, 0, 0.25),
-    0 0 0 1px rgba(var(--accent-rgb, 99, 102, 241), 0.2),
-    0 8px 24px rgba(var(--accent-rgb, 99, 102, 241), 0.08);
-  border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.3);
-  will-change: transform;
+    0 0 0 1px rgba(var(--accent-rgb, 255, 68, 51), 0.2),
+    0 8px 24px rgba(var(--accent-rgb, 255, 68, 51), 0.08);
+  border-color: rgba(var(--accent-rgb, 255, 68, 51), 0.3);
 }
 
 .video-card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 255, 68, 51), 0.2);
 }
 
 .video-card:focus:not(:focus-visible) {
@@ -33,6 +34,7 @@
   aspect-ratio: 16 / 9;
   background: var(--bg3);
   overflow: hidden;
+  contain: layout paint;
 }
 
 .card-img {
@@ -41,6 +43,7 @@
   object-fit: cover;
   opacity: 0;
   transition: opacity 0.3s, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  backface-visibility: hidden;
 }
 
 .card-img.loaded {
@@ -78,7 +81,7 @@
   white-space: nowrap;
 }
 
-.progress-bar {
+.vc-progress-bar {
   position: absolute;
   left: 0;
   right: 0;
@@ -88,7 +91,7 @@
   z-index: 2;
 }
 
-.progress-fill {
+.vc-progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), #ff8866);
   border-radius: 0 2px 2px 0;
@@ -140,6 +143,7 @@
   justify-content: center;
   color: white;
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -150,8 +154,8 @@
 
 .play-btn:hover {
   transform: scale(1.15);
-  background: var(--accent, rgba(99, 102, 241, 0.9));
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+  background: var(--accent, rgba(255, 68, 51, 0.9));
+  box-shadow: 0 0 20px rgba(255, 68, 51, 0.5);
 }
 
 .dur {
@@ -349,10 +353,7 @@
   animation-delay: 0.3s;
 }
 
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
+
 
 /* 分类标签颜色标识 */
 .video-card[data-cat="科技"] .cat-badge { --cat-color: #3b82f6; }
@@ -413,6 +414,7 @@
     transition: none;
     -webkit-tap-highlight-color: transparent;
     min-height: 44px;
+    will-change: auto;
   }
 
   .dur {

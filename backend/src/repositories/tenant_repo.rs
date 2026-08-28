@@ -135,13 +135,13 @@ where
         match result {
             Ok(Ok(value)) => return Ok(value),
             Ok(Err(e)) => {
-                last_error = Some(e);
                 tracing::warn!(
                     query = %label,
                     attempt = attempt + 1,
-                    error = %last_error.as_ref().unwrap(),
+                    error = %e,
                     "query failed, retrying..."
                 );
+                last_error = Some(e);
             }
             Err(_timeout) => {
                 last_error = Some(sqlx::Error::PoolTimedOut);
@@ -503,6 +503,54 @@ impl TenantRepository {
         .await?;
 
         Ok(rows.rows_affected() > 0)
+    }
+
+    /// 创建新租户。
+    ///
+    /// # 参数
+    /// * `name` - 租户名称
+    /// * `slug` - 租户唯一标识（用于子域名）
+    /// * `custom_domain` - 自定义域名（可选）
+    /// * `plan` - 套餐类型
+    /// * `max_users` - 最大用户数
+    /// * `max_storage_bytes` - 最大存储空间（字节）
+    /// * `settings` - 租户配置
+    ///
+    /// # 返回
+    /// * `Ok(TenantConfig)` - 创建成功，返回租户配置
+    /// * `Err(sqlx::Error)` - 数据库插入失败（如 slug 重复）
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create(
+        &self,
+        name: &str,
+        slug: &str,
+        custom_domain: Option<&str>,
+        plan: &str,
+        max_users: i32,
+        max_storage_bytes: i64,
+        settings: &TenantSettings,
+    ) -> Result<TenantConfig, sqlx::Error> {
+        let settings_json =
+            serde_json::to_value(settings).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+
+        let tenant = execute_with_retry("tenant_create", || {
+            sqlx::query_as::<_, Tenant>(
+                r#"INSERT INTO tenants (name, slug, custom_domain, plan, max_users, max_storage_bytes, settings, is_active)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                   RETURNING id, name, slug, custom_domain, is_active, max_users, max_storage_bytes, plan, settings"#,
+            )
+            .bind(name)
+            .bind(slug)
+            .bind(custom_domain)
+            .bind(plan)
+            .bind(max_users)
+            .bind(max_storage_bytes)
+            .bind(&settings_json)
+            .fetch_one(&self.pool)
+        })
+        .await?;
+
+        Ok(Self::to_config(&tenant))
     }
 
     /// Resolve tenant configuration from host header.

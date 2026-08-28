@@ -35,19 +35,16 @@ pub type LocalVideoValues<'a> = (
 const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id";
 const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id";
 
-/// Shared WHERE-clause builder for video list/count queries so the filters
-/// can't drift between the two. Values are always bound (never interpolated),
-/// so this stays injection-safe.
 fn push_video_filters(
     builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-    query: Option<String>,
-    source_type: Option<String>,
-    category: Option<String>,
+    query: Option<&str>,
+    source_type: Option<&str>,
+    category: Option<&str>,
     uploader_id: Option<i64>,
 ) {
     if let Some(q) = query {
         builder.push(" AND v.search_vector @@ plainto_tsquery('chinese', ");
-        builder.push_bind(q);
+        builder.push_bind(q.to_owned());
         builder.push(")");
     }
     if let Some(t) = source_type {
@@ -56,12 +53,12 @@ fn push_video_filters(
             builder.push_bind(stripped.to_owned());
         } else {
             builder.push(" AND v.source_type = ");
-            builder.push_bind(t);
+            builder.push_bind(t.to_owned());
         }
     }
     if let Some(c) = category {
         builder.push(" AND v.category = ");
-        builder.push_bind(c);
+        builder.push_bind(c.to_owned());
     }
     if let Some(uid) = uploader_id {
         builder.push(" AND v.uploader_id = ");
@@ -210,13 +207,7 @@ impl VideoRepository {
     ) -> Result<i64, sqlx::Error> {
         let mut builder =
             sqlx::QueryBuilder::new("SELECT COUNT(*) as count FROM videos v WHERE 1=1");
-        push_video_filters(
-            &mut builder,
-            query.map(str::to_owned),
-            source_type.map(str::to_owned),
-            category.map(str::to_owned),
-            uploader_id,
-        );
+        push_video_filters(&mut builder, query, source_type, category, uploader_id);
         builder.build_query_scalar().fetch_one(&self.pool).await
     }
 
@@ -281,13 +272,7 @@ impl VideoRepository {
             ));
         }
         builder.push(" WHERE 1=1");
-        push_video_filters(
-            &mut builder,
-            query.map(str::to_owned),
-            source_type.map(str::to_owned),
-            category.map(str::to_owned),
-            uploader_id,
-        );
+        push_video_filters(&mut builder, query, source_type, category, uploader_id);
 
         match username {
             Some(_uname) => {
@@ -354,7 +339,7 @@ impl VideoRepository {
             return Ok(Vec::new());
         }
         sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {} FROM videos WHERE id = ANY($1)",
+            "SELECT {} FROM videos WHERE id = ANY($1) ORDER BY array_position($1, id)",
             VIDEO_COLUMNS
         ))
         .bind(ids)
@@ -1062,16 +1047,12 @@ impl VideoRepository {
     /// # 返回
     /// `HashSet<String>` 方便 O(1) 包含检查。
     pub async fn find_all_local_file_names(&self) -> Result<HashSet<String>, sqlx::Error> {
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            stream_url: String,
-        }
-        let rows = sqlx::query_as::<_, Row>(
+        let rows = sqlx::query_scalar::<_, String>(
             "SELECT stream_url FROM videos WHERE source_type LIKE 'local%'",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|r| r.stream_url).collect())
+        Ok(rows.into_iter().collect())
     }
 
     // ── Variant / transcode helpers ──

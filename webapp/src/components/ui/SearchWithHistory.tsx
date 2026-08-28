@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { addToSearchHistory, getRecentSearches } from '../../utils/searchHistory'
 import SearchHistory from './SearchHistory'
@@ -10,7 +10,7 @@ interface SearchWithHistoryProps {
   autoFocus?: boolean
 }
 
-export default function SearchWithHistory({
+function SearchWithHistoryImpl({
   placeholder,
   onSearch,
   className = '',
@@ -114,7 +114,7 @@ export default function SearchWithHistory({
               }}
               aria-label={t('search.clear')}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
@@ -160,3 +160,5 @@ export default function SearchWithHistory({
     </div>
   )
 }
+
+export default memo(SearchWithHistoryImpl)

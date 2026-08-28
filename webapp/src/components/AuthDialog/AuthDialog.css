@@ -9,6 +9,7 @@
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   animation: auth-overlay-in 0.25s ease-out;
+  will-change: opacity;
 }
 
 @keyframes auth-overlay-in {
@@ -36,6 +37,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   animation: auth-dialog-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  contain: layout style;
+  will-change: transform, opacity;
 }
 
 @keyframes auth-dialog-in {
@@ -61,7 +64,8 @@
   justify-content: center;
   color: var(--text3);
   font-size: 14px;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s ease, color 0.15s ease;
+  will-change: background, color;
 }
 
 .auth-close:hover {
@@ -92,7 +96,8 @@
   font-size: 14px;
   text-align: center;
   color: var(--text2);
-  transition: all 0.2s;
+  transition: background 0.2s ease, color 0.2s ease;
+  will-change: background, color;
 }
 
 .auth-tab.active {
@@ -138,16 +143,16 @@
 
 .auth-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
   animation: auth-input-focus 0.3s ease;
 }
 
 @keyframes auth-input-focus {
   from {
-    box-shadow: 0 0 0 0px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 0 0 0px rgba(var(--accent-rgb), 0.3);
   }
   to {
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
   }
 }
 
@@ -214,14 +219,15 @@
   border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 500;
-  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+  transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
   cursor: pointer;
+  will-change: transform;
 }
 
 .auth-btn:hover {
   background: var(--accent2);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.25);
 }
 
 .auth-btn:active {
@@ -262,6 +268,7 @@
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: auth-spin 0.8s linear infinite;
+  will-change: transform;
 }
 
 @keyframes auth-spin {
@@ -317,7 +324,7 @@
   color: var(--accent);
   font-size: 16px;
   opacity: 0.6;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s ease, background 0.15s ease;
 }
 
 .auth-kicked-close:hover {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
+import type Hls from 'hls.js'
 import { getToken } from '../api/client'
 
 /**
@@ -38,15 +39,16 @@ interface HlsPlayerOptions {
  * @returns hls.js 的构造函数（`Hls` 类）。
  * @throws 如果脚本加载失败（网络错误等），Promise 会被 reject。
  */
-let hlsLoadPromise: Promise<any> | null = null
+let hlsLoadPromise: Promise<typeof Hls> | null = null
 
-async function loadHls(): Promise<any> {
-  if ((window as any).Hls) {
-    return (window as any).Hls
+async function loadHls(): Promise<typeof Hls> {
+  const win = window as unknown as { Hls?: typeof Hls }
+  if (win.Hls) {
+    return win.Hls
   }
   if (hlsLoadPromise) return hlsLoadPromise
 
-  hlsLoadPromise = new Promise((resolve, reject) => {
+  hlsLoadPromise = new Promise<typeof Hls>((resolve, reject) => {
     const script = document.createElement('script')
     // Pinned version to avoid supply-chain drift; update intentionally via PR
     script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'
@@ -54,7 +56,7 @@ async function loadHls(): Promise<any> {
     const timer = window.setTimeout(() => reject(new Error('hls.js load timeout')), 8000)
     script.onload = () => {
       window.clearTimeout(timer)
-      resolve((window as any).Hls)
+      resolve(win.Hls!)
     }
     script.onerror = () => {
       window.clearTimeout(timer)
@@ -67,7 +69,7 @@ async function loadHls(): Promise<any> {
     throw err
   })
 
-  return hlsLoadPromise
+  return hlsLoadPromise!
 }
 
 /**
@@ -151,7 +153,7 @@ async function loadHls(): Promise<any> {
  * ```
  */
 export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptions) {
-  const hlsRef = useRef<any>(null)
+  const hlsRef = useRef<Hls | null>(null)
   const retryCountRef = useRef<number>(0)
   const maxRetries = 3
 
@@ -177,20 +179,15 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
       return
     }
 
-    // Check if the source is an HLS stream (support query-string variants)
     const isHls = /\.m3u8(\?|$)/.test(src) || src.includes('/hls/')
 
     if (!isHls) {
-      // Not HLS, use native playback
       destroyHls()
       video.src = src
       return
     }
 
-    // Check native HLS support (Safari, iOS) — use strict check
     if (video.canPlayType('application/vnd.apple.mpegurl') !== '') {
-      // Safari native HLS uses Cookie auth (httpOnly token via credentials:same-origin).
-      // No need to append token to URL - cookies are automatically sent with same-origin requests.
       video.src = src
       if (autoPlay) {
         video.play().catch(() => {})
@@ -198,29 +195,35 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
       return
     }
 
-    // Load hls.js for browsers without native support
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const clearRetryTimer = () => {
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+    }
 
     loadHls().then((Hls) => {
       if (cancelled || !Hls || !video) return
 
       if (Hls.isSupported()) {
-        const hls = new Hls({
-          // 预加载策略：自动选择码率，优化初始加载
-          maxBufferLength: 15,           // 减少初始缓冲时间（原30秒→15秒）
-          maxMaxBufferLength: 60,        // 最大缓冲区限制（原600秒→60秒）
-          startLevel: -1,                // 自动选择码率
-          startFragPrefetch: true,       // 预加载首个分片
+        const hlsConfig: Partial<Hls.Config> & { lowLatencyMode?: boolean } = {
+          maxBufferLength: 15,
+          maxMaxBufferLength: 60,
+          startLevel: -1,
+          startFragPrefetch: true,
           enableWorker: true,
-          lowLatencyMode: false,         // 非低延迟模式，优先稳定性
-          xhrSetup: (xhr: XMLHttpRequest) => {
-            // Fetch token at request time so refreshed tokens are used
+          lowLatencyMode: false,
+          xhrSetup: (xhr: XMLHttpRequest, _url: string) => {
             const t = getToken()
             if (t) {
               xhr.setRequestHeader('Authorization', `Bearer ${t}`)
             }
           },
-        } as any)
+        }
+        const hls = new Hls(hlsConfig)
 
         hlsRef.current = hls
         hls.loadSource(src)
@@ -232,7 +235,7 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
           }
         })
 
-        hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
+        hls.on(Hls.Events.ERROR, (_event: string, data: Hls.errorData) => {
           if (data.fatal) {
             retryCountRef.current++
 
@@ -245,16 +248,16 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.warn(`HLS network error (attempt ${retryCountRef.current}/${maxRetries}), recovering...`)
-                // 网络错误：延迟后重新加载
-                setTimeout(() => {
+                clearRetryTimer()
+                retryTimer = setTimeout(() => {
+                  retryTimer = null
                   if (hlsRef.current) {
                     hls.startLoad()
                   }
-                }, 1000 * retryCountRef.current) // 指数退避
+                }, 1000 * retryCountRef.current)
                 break
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.warn(`HLS media error (attempt ${retryCountRef.current}/${maxRetries}), recovering...`)
-                // 媒体错误：尝试恢复
                 hls.recoverMediaError()
                 break
               default:
@@ -275,6 +278,7 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
 
     return () => {
       cancelled = true
+      clearRetryTimer()
       destroyHls()
     }
   }, [videoRef, src, autoPlay, destroyHls])

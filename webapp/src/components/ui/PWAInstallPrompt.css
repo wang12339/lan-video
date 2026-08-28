@@ -150,7 +150,12 @@
   color: var(--text1);
 }
 
-/* 移动端 */
+@media (prefers-reduced-motion: reduce) {
+  .pwa-install-banner {
+    animation: none;
+  }
+}
+
 @media (max-width: 640px) {
   .pwa-install-banner {
     left: 10px;
@@ -174,7 +179,6 @@
   }
 }
 
-/* 桌面端优化 */
 @media (min-width: 641px) {
   .pwa-install-banner {
     max-width: 420px;

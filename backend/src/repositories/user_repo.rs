@@ -140,15 +140,13 @@ impl UserRepository {
         tenant_id: i64,
         username: &str,
     ) -> Result<Option<UserRow>, sqlx::Error> {
-        let pool = self.pool.clone();
-        let username = username.to_string();
         let user = log_slow_query("user_repo::find_by_username", || async {
             sqlx::query_as::<_, UserRow>(
                 "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, tenant_id FROM users WHERE tenant_id = $1 AND username = $2"
             )
             .bind(tenant_id)
-            .bind(&username)
-            .fetch_optional(&pool)
+            .bind(username)
+            .fetch_optional(&self.pool)
             .await
         })
         .await?;
@@ -207,12 +205,14 @@ impl UserRepository {
     /// **Index**: `auth_tokens(token_hash)` unique index for the single-row
     /// lookup; the join to `users` uses the PK index on `users(id)`.
     pub async fn find_user_by_token(&self, token: &str) -> Result<Option<UserRow>, sqlx::Error> {
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Ok(None);
+        }
         if let Some(user) = token_cache().get(token) {
             return Ok(Some(user));
         }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-        let pool = self.pool.clone();
         let user = log_slow_query("user_repo::find_user_by_token", || async {
             sqlx::query_as::<_, UserRow>(
                 r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, t.tenant_id
@@ -221,13 +221,10 @@ impl UserRepository {
                    WHERE t.token_hash = $1 AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked"#,
             )
             .bind(&token_hash)
-            .fetch_optional(&pool)
+            .fetch_optional(&self.pool)
             .await
         })
         .await?;
-        // Only positive results are cached (see TOKEN_CACHE docs): revocation
-        // by user_id (admin kick, password reset) cannot invalidate here, so
-        // the short TTL bounds how long a revoked token keeps working.
         if let Some(user) = &user {
             token_cache().insert(token.to_string(), user.clone());
         }
@@ -251,6 +248,9 @@ impl UserRepository {
         &self,
         token: &str,
     ) -> Result<Option<(UserRow, bool, bool)>, sqlx::Error> {
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Ok(None);
+        }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let row = sqlx::query_as::<_, (i64, i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool)>(
@@ -308,6 +308,9 @@ impl UserRepository {
     ///
     /// **Index**: `auth_tokens(token_hash)` unique index, single-row delete.
     pub async fn delete_token(&self, token: &str) -> Result<bool, sqlx::Error> {
+        if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Ok(false);
+        }
         // Logout has the raw token, so the token cache can be invalidated
         // precisely — logout takes effect immediately, unlike user_id-based
         // revocations which are TTL-bounded (see TOKEN_CACHE docs).
@@ -371,7 +374,6 @@ impl UserRepository {
     /// **Index**: `users(tenant_id, created_at DESC)` for the ordered scan;
     /// `auth_tokens(user_id, revoked, expires_at)` for the correlated EXISTS.
     pub async fn list_users(&self, tenant_id: i64) -> Result<Vec<UserWithStatus>, sqlx::Error> {
-        let pool = self.pool.clone();
         let users = log_slow_query("user_repo::list_users", || async {
             sqlx::query_as::<_, UserWithStatus>(
                 r#"SELECT u.id, u.username, u.approved, u.role >= 3 AS is_admin, u.role, u.avatar_url, u.created_at,
@@ -379,7 +381,7 @@ impl UserRepository {
                    FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at DESC"#,
             )
             .bind(tenant_id)
-            .fetch_all(&pool)
+            .fetch_all(&self.pool)
             .await
         })
         .await?;
@@ -637,15 +639,12 @@ impl UserRepository {
     /// adding `CREATE INDEX idx_users_email ON users(email)` if this
     /// becomes a hot path).
     pub async fn find_by_email(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
-        let pool = self.pool.clone();
-        let email = email.to_string();
-        let user = sqlx::query_as::<_, UserRow>(
+        sqlx::query_as::<_, UserRow>(
             "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, tenant_id FROM users WHERE email = $1"
         )
-        .bind(&email)
-        .fetch_optional(&pool)
-        .await?;
-        Ok(user)
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     /// Mint a new password-reset token for `user_id`.

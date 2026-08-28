@@ -13,6 +13,20 @@ use crate::util::hashid;
 use crate::util::pagination::PaginationParams;
 use crate::util::response::{error_response, ErrorResponse, SafeJson};
 
+const MAX_COMMENT_LENGTH: usize = 2000;
+
+fn sanitize_comment_content(content: &str) -> String {
+    content
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
 fn map_comment(c: crate::repositories::comment_repo::CommentRow) -> CommentResponse {
     CommentResponse {
         id: c.id,
@@ -74,13 +88,23 @@ pub async fn create_comment(
 ) -> Result<(StatusCode, Json<CommentResponse>), (StatusCode, Json<ErrorResponse>)> {
     let video_id = hashid::decode_id_or_numeric(&video_id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    let sanitized = sanitize_comment_content(&req.content);
+    if sanitized.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "评论内容不能为空"));
+    }
+    if sanitized.len() > MAX_COMMENT_LENGTH {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "评论内容不能超过 2000 个字符",
+        ));
+    }
     let comment = state
         .services
         .comment
         .create_comment(
             video_id,
             auth_user.id,
-            &req.content,
+            &sanitized,
             req.parent_id,
             auth_user.is_admin,
         )

@@ -1,4 +1,6 @@
 pub mod comment_repo;
+pub mod danmaku_repo;
+pub mod plan_repo;
 pub mod playback_repo;
 pub mod playlist_repo;
 pub mod registration_repo;

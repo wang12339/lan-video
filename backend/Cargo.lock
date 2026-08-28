@@ -134,7 +134,6 @@ dependencies = [
  "infer",
  "lettre",
  "moka",
- "once_cell",
  "prometheus",
  "rand",
  "redis",

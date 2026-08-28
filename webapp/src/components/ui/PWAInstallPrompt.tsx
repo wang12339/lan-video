@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, memo } from 'react'
 import { usePWA } from '../../hooks/usePWA'
 import './PWAInstallPrompt.css'
 
@@ -19,7 +19,7 @@ function isStandalone(): boolean {
     (window.navigator as unknown as Record<string, boolean>).standalone === true
 }
 
-export default function PWAInstallPrompt() {
+function PWAInstallPromptImpl() {
   const { isInstallable, isInstalled, install } = usePWA()
   const [isVisible, setIsVisible] = useState(false)
   const [isIOSDevice] = useState(isIOS)
@@ -51,8 +51,7 @@ export default function PWAInstallPrompt() {
     }
   }, [isInstalled])
 
-  // 关闭提示并记住
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
     setIsVisible(false)
     setDismissed(true)
     try {
@@ -60,15 +59,15 @@ export default function PWAInstallPrompt() {
     } catch {
       // localStorage 不可用时静默失败
     }
-  }
+  }, [])
 
   // 安装处理
-  const handleInstall = async () => {
+  const handleInstall = useCallback(async () => {
     const success = await install()
     if (success) {
       setIsVisible(false)
     }
-  }
+  }, [install])
 
   // Android/Desktop: 显示标准安装提示
   if (isVisible && isInstallable && !isIOSDevice) {
@@ -134,3 +133,5 @@ export default function PWAInstallPrompt() {
 
   return null
 }
+
+export default memo(PWAInstallPromptImpl)

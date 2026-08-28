@@ -44,6 +44,14 @@
   transform: translateY(-2px);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .scroll-to-top,
+  .scroll-to-top svg,
+  .scroll-to-top-progress .progress-value {
+    transition: none !important;
+  }
+}
+
 /* Progress ring */
 .scroll-to-top-progress {
   position: absolute;

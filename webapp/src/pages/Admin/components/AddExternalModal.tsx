@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useModalEscape } from './useModalEscape'
+import AdminModal from './AdminModal'
 
 interface Props {
   onSave: (data: { title: string; description?: string; category?: string; stream_url: string; cover_url?: string }) => Promise<void>
@@ -16,7 +16,7 @@ export default function AddExternalModal({ onSave, onClose }: Props) {
   const [cat, setCat] = useState('local')
   const [saving, setSaving] = useState(false)
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!title.trim() || !url.trim() || saving) return
     setSaving(true)
     try {
@@ -28,24 +28,24 @@ export default function AddExternalModal({ onSave, onClose }: Props) {
         cover_url: cover.trim() || undefined,
       })
     } finally { setSaving(false) }
-  }
-
-  useModalEscape(onClose)
+  }, [title, desc, url, cover, cat, saving, onSave])
 
   return (
-    <div className="admin-modal-overlay" onClick={onClose}>
-      <div className="admin-modal" onClick={e => e.stopPropagation()}>
-        <h3>{t('admin.media.addExternalTitle')}</h3>
-        <label><span>{t('admin.media.titleField')} *</span><input value={title} onChange={e => setTitle(e.target.value)} maxLength={500} placeholder={t('admin.media.titleField')} autoFocus /></label>
-        <label><span>{t('admin.media.videoLink')} *</span><input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..." /></label>
-        <label><span>{t('admin.media.coverLink')}</span><input type="url" value={cover} onChange={e => setCover(e.target.value)} placeholder={t('admin.media.coverOptional')} /></label>
-        <label><span>{t('admin.media.categoryField')}</span><input value={cat} onChange={e => setCat(e.target.value)} maxLength={100} placeholder="local" /></label>
-        <label><span>{t('admin.media.description')}</span><textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={t('admin.media.description')} /></label>
-        <div className="admin-modal-actions">
+    <AdminModal
+      title={t('admin.media.addExternalTitle')}
+      onClose={onClose}
+      actions={
+        <>
           <button type="button" className="admin-btn" onClick={onClose} disabled={saving}>{t('admin.media.cancel')}</button>
           <button type="button" className="admin-btn admin-btn-primary" onClick={handleSave} disabled={saving || !title.trim() || !url.trim()}>{saving ? t('admin.media.adding') : t('admin.media.add')}</button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <label><span>{t('admin.media.titleField')} *</span><input value={title} onChange={e => setTitle(e.target.value)} maxLength={500} placeholder={t('admin.media.titleField')} autoFocus /></label>
+      <label><span>{t('admin.media.videoLink')} *</span><input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..." /></label>
+      <label><span>{t('admin.media.coverLink')}</span><input type="url" value={cover} onChange={e => setCover(e.target.value)} placeholder={t('admin.media.coverOptional')} /></label>
+      <label><span>{t('admin.media.categoryField')}</span><input value={cat} onChange={e => setCat(e.target.value)} maxLength={100} placeholder="local" /></label>
+      <label><span>{t('admin.media.description')}</span><textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={t('admin.media.description')} /></label>
+    </AdminModal>
   )
 }

@@ -10,10 +10,11 @@ const VideosTab = lazy(() => import('./VideosTab'))
 const UsersTab = lazy(() => import('./UsersTab'))
 const TagsTab = lazy(() => import('./TagsTab'))
 const TenantTab = lazy(() => import('./TenantTab'))
+const PlanTab = lazy(() => import('./PlanTab'))
 const SystemTab = lazy(() => import('./SystemTab'))
 const LogsTab = lazy(() => import('./LogsTab'))
 
-type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'system' | 'logs'
+type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'plans' | 'system' | 'logs'
 type MediaSubTab = 'video' | 'image'
 
 const TABS: { key: Tab; icon: string }[] = [
@@ -22,6 +23,7 @@ const TABS: { key: Tab; icon: string }[] = [
   { key: 'users', icon: '👥' },
   { key: 'tags', icon: '🏷️' },
   { key: 'tenants', icon: '🏢' },
+  { key: 'plans', icon: '📦' },
   { key: 'system', icon: '⚙️' },
   { key: 'logs', icon: '📋' },
 ]
@@ -79,7 +81,7 @@ export default function Admin() {
             type="button"
             className="admin-sidebar-toggle"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-label={sidebarCollapsed ? t('admin.sidebar.expand') : t('admin.sidebar.collapse')}
           >
             {sidebarCollapsed ? '»' : '«'}
           </button>
@@ -147,6 +149,7 @@ export default function Admin() {
               {tab === 'users' && <UsersTab />}
               {tab === 'tags' && <TagsTab />}
               {tab === 'tenants' && <TenantTab />}
+              {tab === 'plans' && <PlanTab />}
               {tab === 'system' && <SystemTab />}
               {tab === 'logs' && <LogsTab />}
             </div>

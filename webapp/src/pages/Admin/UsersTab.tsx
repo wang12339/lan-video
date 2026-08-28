@@ -1,31 +1,28 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../context/AuthContext'
 import { listUsers, deleteUser, resetUserPassword, toggleUserAdmin, approveUser, kickUser } from '../../api/admin'
 import type { AdminUser } from '../../api/admin'
+import { useDebouncedValue } from '../../utils/throttle'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useAlertDialog } from '../../hooks/useAlertDialog'
 import { ConfirmDialog, AlertDialog, SkeletonLoader } from './components'
+import AdminModal from './components/AdminModal'
 
 const PAGE_SIZE = 8
+const SEARCH_DEBOUNCE_MS = 300
 
 type RoleFilter = 'all' | 'admin' | 'user'
-
-interface ConfirmState {
-  open: boolean
-  title: string
-  message: string
-  danger?: boolean
-  onConfirm: () => void | Promise<void>
-}
 
 export default function UsersTab() {
   const { t } = useTranslation()
   const { user: currentUser } = useAuth()
-  const [users, setUsers] = useState<AdminUser[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
 
   // 搜索 / 角色筛选 / 分页
   const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS)
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
   const [page, setPage] = useState(0)
 
@@ -37,31 +34,22 @@ export default function UsersTab() {
   const [pwMsg, setPwMsg] = useState('')
 
   // Dialogs
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmState>({ open: false, title: '', message: '', onConfirm: () => {} })
-  const [alertDialog, setAlertDialog] = useState<{ open: boolean; message: string }>({ open: false, message: '' })
+  const { confirmDialog, askConfirm, handleCancel } = useConfirmDialog()
+  const { alertMsg, showAlert, closeAlert } = useAlertDialog()
 
-  const loadUsers = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    try {
-      setUsers(await listUsers())
-      setError('')
-    } catch {
-      setError(t('admin.users.loadFailed'))
-    } finally {
-      if (!silent) setLoading(false)
-    }
-  }, [t])
-
-  useEffect(() => { loadUsers() }, [loadUsers])
+  // ──────────────────────────────────────────────────────────────
+  // React Query: 获取用户列表
+  // NOTE: 后端 GET /admin/users 不支持 search/page 参数，当前为全量加载 + 前端过滤。
+  //       若后续后端支持 ?search=&page=&size=，可将参数传入 listUsers() 实现真正的服务端搜索。
+  // ──────────────────────────────────────────────────────────────
+  const { data: users = [], isLoading, error, refetch } = useQuery<AdminUser[]>({
+    queryKey: ['admin-users'],
+    queryFn: listUsers,
+    staleTime: 30_000,
+  })
 
   // 筛选条件变化时回到第一页
-  useEffect(() => { setPage(0) }, [searchInput, roleFilter])
-
-  const askConfirm = useCallback((state: Omit<ConfirmState, 'open'>) => {
-    setConfirmDialog({ open: true, ...state })
-  }, [])
-
-  const showAlert = useCallback((message: string) => setAlertDialog({ open: true, message }), [])
+  useEffect(() => { setPage(0) }, [debouncedSearch, roleFilter])
 
   const handleDelete = (u: AdminUser) => {
     if (u.isAdmin) {
@@ -75,8 +63,7 @@ export default function UsersTab() {
       onConfirm: async () => {
         try {
           await deleteUser(u.id)
-          setUsers(prev => prev.filter(x => x.id !== u.id))
-          loadUsers(true)
+          queryClient.invalidateQueries({ queryKey: ['admin-users'] })
         } catch { showAlert(t('admin.users.deleteFailed')) }
       },
     })
@@ -106,13 +93,13 @@ export default function UsersTab() {
     } finally { setPwSaving(false) }
   }
 
-  const handlePwKeyDown = (e: React.KeyboardEvent) => {
+  const handlePwKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !pwSaving) {
       e.preventDefault()
       handleResetPw()
     }
     if (e.key === 'Escape') setPwUserId(null)
-  }
+  }, [pwSaving])
 
   const handleToggleAdmin = (u: AdminUser) => {
     if (u.id === currentUser?.id) {
@@ -123,13 +110,10 @@ export default function UsersTab() {
       title: t('admin.users.toggleAdminTitle'),
       message: t('admin.users.confirmToggleAdmin', { action: t(u.isAdmin ? 'admin.users.toggleAdminActionRemove' : 'admin.users.toggleAdminActionGrant'), username: u.username }),
       onConfirm: async () => {
-        const prev = users.find(x => x.id === u.id)
-        setUsers(prev => prev.map(x => x.id === u.id ? { ...x, isAdmin: !x.isAdmin } : x))
         try {
           await toggleUserAdmin(u.id)
-          loadUsers(true)
+          queryClient.invalidateQueries({ queryKey: ['admin-users'] })
         } catch {
-          if (prev) setUsers(p => p.map(x => x.id === u.id ? prev : x))
           showAlert(t('admin.users.operationFailed'))
         }
       },
@@ -142,17 +126,10 @@ export default function UsersTab() {
       message: t('admin.users.confirmApprove', { action: t(approved ? 'admin.users.approveActionApprove' : 'admin.users.approveActionReject'), username: u.username }),
       danger: !approved,
       onConfirm: async () => {
-        const prev = users.find(x => x.id === u.id)
-        if (approved) {
-          setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: true } : x))
-        } else {
-          setUsers(prev => prev.filter(x => x.id !== u.id))
-        }
         try {
           await approveUser(u.id, approved)
-          loadUsers(true)
+          queryClient.invalidateQueries({ queryKey: ['admin-users'] })
         } catch {
-          if (prev) setUsers(p => p.map(x => x.id === u.id ? prev : x))
           showAlert(t('admin.users.operationFailed'))
         }
       },
@@ -169,32 +146,24 @@ export default function UsersTab() {
       message: t('admin.users.confirmKick', { username: u.username }),
       danger: true,
       onConfirm: async () => {
-        const prev = users.find(x => x.id === u.id)
-        setUsers(prev => prev.map(x => x.id === u.id ? { ...x, hasActiveToken: false } : x))
         try {
           await kickUser(u.id)
-          loadUsers(true)
+          queryClient.invalidateQueries({ queryKey: ['admin-users'] })
         } catch {
-          if (prev) setUsers(p => p.map(x => x.id === u.id ? prev : x))
           showAlert(t('admin.users.operationFailed'))
         }
       },
     })
   }
 
-  // 搜索 + 角色筛选
-  const matchesSearch = (u: AdminUser) => {
-    const q = searchInput.trim().toLowerCase()
-    return !q || u.username.toLowerCase().includes(q)
-  }
-
-  const pendingUsers = useMemo(() =>
-    users.filter(u => !u.approved && !u.isAdmin && matchesSearch(u)),
-    [users, searchInput],
-  )
+  // 防抖后的搜索关键词用于过滤，避免每次按键都重新计算
+  const pendingUsers = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase()
+    return users.filter(u => !u.approved && !u.isAdmin && (!q || u.username.toLowerCase().includes(q)))
+  }, [users, debouncedSearch])
 
   const filteredUsers = useMemo(() => {
-    const q = searchInput.trim().toLowerCase()
+    const q = debouncedSearch.trim().toLowerCase()
     return users.filter(u => {
       if (u.approved || u.isAdmin) {
         if (roleFilter === 'admin' && !u.isAdmin) return false
@@ -203,7 +172,7 @@ export default function UsersTab() {
       }
       return false
     })
-  }, [users, roleFilter, searchInput])
+  }, [users, roleFilter, debouncedSearch])
 
   // 删除/筛选后页码越界自动修正
   const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE))
@@ -213,12 +182,12 @@ export default function UsersTab() {
 
   const pageUsers = useMemo(() => filteredUsers.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [filteredUsers, page])
 
-  if (loading) return <SkeletonLoader type="card" lines={5} />
+  if (isLoading) return <SkeletonLoader type="card" lines={5} />
   if (error) {
     return (
       <div className="admin-error">
-        <p>{error}</p>
-        <button className="admin-btn" onClick={() => loadUsers()}>{t('common.retry')}</button>
+        <p>{t('admin.users.loadFailed')}</p>
+        <button className="admin-btn" onClick={() => refetch()}>{t('common.retry')}</button>
       </div>
     )
   }
@@ -238,7 +207,7 @@ export default function UsersTab() {
           <option value="admin">{t('admin.users.admin')}</option>
           <option value="user">{t('admin.users.regularUser')}</option>
         </select>
-        <button className="admin-btn" onClick={() => loadUsers()}>{t('admin.users.refresh')}</button>
+        <button className="admin-btn" onClick={() => refetch()}>{t('admin.users.refresh')}</button>
       </div>
 
       {pendingUsers.length > 0 && (
@@ -332,17 +301,19 @@ export default function UsersTab() {
       )}
 
       {pwUserId && (
-        <div className="admin-modal-overlay" onClick={() => setPwUserId(null)}>
-          <div className="admin-modal" onClick={e => e.stopPropagation()}>
-            <h3>{t('admin.users.resetPassword')}</h3>
-            <label><span>{t('admin.users.newPassword')}</span><input type="password" value={pwValue} onChange={e => setPwValue(e.target.value)} onKeyDown={handlePwKeyDown} placeholder={t('admin.users.passwordPlaceholder')} autoFocus autoComplete="new-password" maxLength={128} /></label>
-            {pwMsg && <div className="admin-result" style={{ color: pwOk ? undefined : '#ef4444' }}>{pwMsg}</div>}
-            <div className="admin-modal-actions">
+        <AdminModal
+          title={t('admin.users.resetPassword')}
+          onClose={() => setPwUserId(null)}
+          actions={
+            <>
               <button className="admin-btn" onClick={() => setPwUserId(null)}>{t('admin.users.cancel')}</button>
               <button className="admin-btn admin-btn-primary" onClick={handleResetPw} disabled={pwSaving}>{pwSaving ? t('admin.users.resetting') : t('admin.users.reset')}</button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <label><span>{t('admin.users.newPassword')}</span><input type="password" value={pwValue} onChange={e => setPwValue(e.target.value)} onKeyDown={handlePwKeyDown} placeholder={t('admin.users.passwordPlaceholder')} autoFocus autoComplete="new-password" maxLength={128} /></label>
+          {pwMsg && <div className="admin-result" style={{ color: pwOk ? undefined : '#ef4444' }}>{pwMsg}</div>}
+        </AdminModal>
       )}
 
       <ConfirmDialog
@@ -352,13 +323,13 @@ export default function UsersTab() {
         danger={confirmDialog.danger}
         confirmText={t('common.confirm')}
         onConfirm={confirmDialog.onConfirm}
-        onCancel={() => setConfirmDialog(prev => ({ ...prev, open: false }))}
+        onCancel={handleCancel}
       />
 
       <AlertDialog
-        open={alertDialog.open}
-        message={alertDialog.message}
-        onClose={() => setAlertDialog({ open: false, message: '' })}
+        open={!!alertMsg}
+        message={alertMsg}
+        onClose={closeAlert}
       />
     </div>
   )

@@ -130,7 +130,12 @@
   color: var(--text);
 }
 
-/* 移动端适配 */
+@media (prefers-reduced-motion: reduce) {
+  .feature-flag-toggle .toggle-thumb {
+    transition: none;
+  }
+}
+
 @media (max-width: 480px) {
   .feature-flag-item {
     flex-wrap: wrap;

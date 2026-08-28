@@ -36,12 +36,17 @@ export default defineConfig({
           if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) {
             return 'i18n'
           }
+          if (id.includes('node_modules/hls.js') || id.includes('node_modules/video.js')) {
+            return 'media-vendor'
+          }
         },
       },
     },
     esbuild: {
       drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
+      legalComments: 'none',
     },
+    minify: 'esbuild',
   },
   server: {
     port: 5173,

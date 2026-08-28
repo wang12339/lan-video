@@ -1,4 +1,3 @@
-/* 开发工具面板 */
 .dev-tools-trigger {
   position: fixed;
   bottom: 20px;
@@ -194,7 +193,14 @@
   background: var(--surface);
 }
 
-/* 移动端适配 */
+@media (prefers-reduced-motion: reduce) {
+  .dev-tools-trigger,
+  .dev-tools-panel {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 @media (max-width: 480px) {
   .dev-tools-panel {
     left: 10px;

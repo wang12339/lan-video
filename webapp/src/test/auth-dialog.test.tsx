@@ -255,12 +255,7 @@ describe('AuthDialog', () => {
         renderDialog()
         switchToRegister()
         const input = getInputByLabel(t('auth.username'))
-        // 使用 null 控制字符（\0），在 jsdom 中可保留在 value 里
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype, 'value'
-        )!.set!
-        nativeInputValueSetter.call(input, 'user\x00name')
-        fireEvent.input(input)
+        fireEvent.change(input, { target: { value: 'user\x00name' } })
         fireEvent.blur(input)
         await waitFor(() => {
           expect(screen.getByText(t('auth.validation.usernameIllegal'))).toBeInTheDocument()

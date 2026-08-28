@@ -1,0 +1,236 @@
+.plan-tab {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.plan-header {
+  margin-bottom: 24px;
+}
+
+.plan-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.plan-subtitle {
+  color: var(--text3);
+  margin: 0;
+}
+
+.plan-actions {
+  margin-bottom: 24px;
+}
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.plan-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  transition: all 0.2s;
+}
+
+.plan-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.plan-card-default {
+  border-color: var(--accent);
+}
+
+.plan-card-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-card-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.plan-slug {
+  font-size: 12px;
+  color: var(--text3);
+  font-family: monospace;
+  background: var(--bg3);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.plan-description {
+  color: var(--text2);
+  font-size: 14px;
+  margin: 0 0 16px 0;
+}
+
+.plan-features {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.plan-feature {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.plan-feature-label {
+  color: var(--text3);
+}
+
+.plan-feature-value {
+  font-weight: 500;
+}
+
+.plan-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-edit,
+.btn-toggle,
+.btn-delete {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg2);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.btn-edit:hover {
+  background: var(--bg3);
+}
+
+.btn-enable {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.btn-enable:hover {
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+}
+
+.btn-disable {
+  color: var(--orange);
+  border-color: var(--orange);
+}
+
+.btn-disable:hover {
+  background: color-mix(in srgb, var(--orange) 15%, transparent);
+}
+
+.btn-delete {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.btn-delete:hover {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+}
+
+/* 模态框样式 */
+.plan-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.plan-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.plan-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.plan-modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text3);
+  padding: 0;
+  line-height: 1;
+}
+
+.plan-modal-close:hover {
+  color: var(--text);
+}
+
+.plan-modal-body {
+  padding: 24px;
+}
+
+.plan-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.plan-loading,
+.plan-error {
+  padding: 24px;
+  text-align: center;
+  color: var(--text3);
+}
+
+.plan-error {
+  color: var(--red);
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .plan-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}

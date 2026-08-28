@@ -1066,8 +1066,8 @@ describe('Upload 组件', () => {
     it('GB 单位文件大小', async () => {
       renderUpload()
       const input = getFileInput()
-      // 使用真实的 2GB 大小文件（通过 override size 属性）
-      const file = makeFile('large.mp4', 2 * 1024 * 1024 * 1024, 'video/mp4')
+      // 使用 Proxy override size 属性，避免分配 2GB 内存
+      const file = makeLargeFile('large.mp4', 2 * 1024 * 1024 * 1024, 'video/mp4')
 
       await act(async () => {
         fireEvent.change(input, { target: { files: [file] } })
@@ -1079,7 +1079,7 @@ describe('Upload 组件', () => {
   // ── 附加：分类与交互 ─────────────────────────────────────────────────────────
 
   describe('分类选择', () => {
-    it('默认分类应为"其他"', async () => {
+    it('默认分类应为"全部"', async () => {
       renderUpload()
       const input = getFileInput()
       const file = makeFile('test.mp4', 1024 * 1024, 'video/mp4')
@@ -1088,9 +1088,9 @@ describe('Upload 组件', () => {
         fireEvent.change(input, { target: { files: [file] } })
       })
 
-      // 文件列表中的分类下拉框默认应为"其他"
+      // 文件列表中的分类下拉框默认应为"全部"
       const catSelect = screen.getByRole('combobox', { name: /test.mp4.*分类/i })
-      expect(catSelect).toHaveValue('general')
+      expect(catSelect).toHaveValue('all')
     })
 
     it('点击分类按钮应切换全局分类', async () => {
@@ -1115,7 +1115,7 @@ describe('Upload 组件', () => {
       })
 
       const catSelect = screen.getByRole('combobox', { name: /test2.mp4.*分类/i })
-      expect(catSelect).toHaveValue('科技')
+      expect(catSelect).toHaveValue('tech')
     })
 
     it('上传中不应允许切换分类', async () => {

@@ -147,6 +147,7 @@ pub async fn test_app_state() -> Arc<AppState> {
             playlist: playlist_service,
             auth: AuthService::new(
                 user_repo,
+                tenant_repo.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -253,6 +254,7 @@ pub async fn cleanup_test_comments(pool: &PgPool, video_id: i64) {
 pub fn auth_service(state: &AppState) -> AuthService {
     AuthService::new(
         state.repos.user.clone(),
+        state.repos.tenant.clone(),
         state.services.playback.clone(),
         state.rate_limiter.clone(),
         state.ip_rate_limiter.clone(),

@@ -320,8 +320,10 @@ export async function searchVideos(
   page = 0,
   size = 20
 ): Promise<SearchResponse> {
+  const trimmed = query.trim();
+  if (!trimmed) return { items: [], total: 0, page: 0, size };
   const params = new URLSearchParams();
-  params.set('q', query);
+  params.set('q', trimmed);
   params.set('page', String(Math.max(0, page)));
   params.set('size', String(Math.min(Math.max(1, size), MAX_SEARCH_SIZE)));
   return request(`/videos/search?${params}`);
@@ -352,8 +354,10 @@ export async function searchVideos(
 export async function searchSuggest(
   query: string
 ): Promise<string[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
   const params = new URLSearchParams();
-  params.set('q', query);
+  params.set('q', trimmed);
   return request(`/videos/search/suggest?${params}`);
 }
 

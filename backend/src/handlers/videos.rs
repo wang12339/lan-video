@@ -16,17 +16,18 @@ use crate::services::media_service::sweeper;
 use crate::state::AppState;
 use crate::util::hashid;
 use crate::util::pagination::PaginationParams;
-use crate::util::response::{error_response, internal_error_log, CachedResponse, ErrorResponse};
+use crate::util::error::ServiceError;
+use crate::util::response::{error_response, internal_error_log, CachedResponse, ErrorResponse, SafeJson};
+
+use crate::models::danmaku::{DanmakuListResponse, SendDanmakuRequest, SendDanmakuResponse};
 
 const MAX_SEARCH_QUERY_LEN: usize = 200;
 
-/// GET /videos
 pub async fn list_videos(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<VideoQuery>,
 ) -> Result<CachedResponse<PagedVideoResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // 惰性启动 upload_locks 清理任务（进程内仅一次，幂等）
     sweeper::ensure_upload_lock_cleanup(&state);
 
     let pagination = PaginationParams::new(params.page, params.size);
@@ -49,9 +50,8 @@ pub async fn list_videos(
         ));
     }
 
-    // Build cache key (without username)
     let cache_key = format!(
-        "list_videos:{}:{}:{}:{}:{}:{}:{}",
+        "lv:{}:{}:{}:{}:{}:{}:{}",
         page,
         size,
         query,
@@ -65,7 +65,7 @@ pub async fn list_videos(
             StatusCode::OK,
             [(
                 header::CACHE_CONTROL,
-                "public, s-maxage=30, max-age=10".into(),
+                "public, s-maxage=30, max-age=10".to_string(),
             )],
             Json(resp),
         ));
@@ -77,17 +77,9 @@ pub async fn list_videos(
         .list_videos_paged(
             page,
             size,
-            if query.is_empty() { None } else { Some(query) },
-            if source_type.is_empty() {
-                None
-            } else {
-                Some(source_type)
-            },
-            if category.is_empty() {
-                None
-            } else {
-                Some(category)
-            },
+            (!query.is_empty()).then_some(query),
+            (!source_type.is_empty()).then_some(source_type),
+            (!category.is_empty()).then_some(category),
             None,
             uploader_id,
             sort,
@@ -101,15 +93,17 @@ pub async fn list_videos(
         page,
         size,
     };
-    state.video_cache.insert(cache_key, resp.clone());
 
     Ok((
         StatusCode::OK,
         [(
             header::CACHE_CONTROL,
-            "public, s-maxage=30, max-age=10".into(),
+            "public, s-maxage=30, max-age=10".to_string(),
         )],
-        Json(resp),
+        {
+            state.video_cache.insert(cache_key, resp.clone());
+            Json(resp)
+        },
     ))
 }
 
@@ -156,7 +150,7 @@ pub async fn get_video_variants(
             .map(|v| {
                 let file_name = std::path::Path::new(&v.file_path)
                     .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
+                    .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 VideoVariantResponse {
                     resolution: v.resolution,
@@ -170,7 +164,6 @@ pub async fn get_video_variants(
     ))
 }
 
-/// GET /videos/{id}/hls — Get HLS playlist URL for adaptive streaming
 pub async fn get_hls_playlist(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -178,24 +171,23 @@ pub async fn get_hls_playlist(
     let video_id = hashid::decode_id_or_numeric(&id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
 
-    let hls_dir = state
+    let master_playlist = state
         .config
         .media_root
-        .join("hls")
-        .join(video_id.to_string());
-    let master_playlist = hls_dir.join("master.m3u8");
+        .join(format!("hls/{}/master.m3u8", video_id));
 
-    if master_playlist.exists() {
-        Ok(Json(serde_json::json!({
+    let exists = tokio::fs::metadata(&master_playlist).await.is_ok();
+    Ok(Json(if exists {
+        serde_json::json!({
             "status": "ready",
             "masterUrl": format!("/media/hls/{}/master.m3u8", video_id),
-        })))
+        })
     } else {
-        Ok(Json(serde_json::json!({
+        serde_json::json!({
             "status": "not_available",
             "message": "HLS 流尚未生成，请先转码",
-        })))
-    }
+        })
+    }))
 }
 
 /// POST /videos/{id}/like
@@ -322,7 +314,6 @@ pub async fn increment_views(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
-/// GET /videos/search
 pub async fn search_videos(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchQuery>,
@@ -338,8 +329,6 @@ pub async fn search_videos(
         ));
     }
 
-    // Empty/whitespace query: nothing matches a tsquery, short-circuit instead
-    // of running a pointless full scan.
     if params.q.trim().is_empty() {
         return Ok(Json(SearchResponse {
             items: Vec::new(),
@@ -356,7 +345,7 @@ pub async fn search_videos(
         .await
         .map_err(|e| internal_error_log("search_videos", &e))?;
 
-    let items: Vec<SearchResultItem> = results
+    let items = results
         .into_iter()
         .map(|r| SearchResultItem {
             id: r.video_id,
@@ -402,4 +391,64 @@ pub async fn search_suggest(
         .map_err(|e| internal_error_log("search_suggest", &e))?;
 
     Ok(Json(suggestions))
+}
+
+/// GET /videos/{id}/danmaku
+///
+/// 返回某视频的全部弹幕（按出现时间升序）。该路由位于统一的 `bearer_auth`
+/// 之下，调用方需携带有效令牌。
+pub async fn list_danmaku(
+    State(state): State<Arc<AppState>>,
+    Path(video_id): Path<String>,
+) -> Result<Json<DanmakuListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+
+    let items = state
+        .repos
+        .danmaku
+        .list_by_video(video_id)
+        .await
+        .map_err(|e| ServiceError::into_tuple(e.into()))?;
+
+    Ok(Json(DanmakuListResponse { items }))
+}
+
+/// POST /videos/{id}/danmaku
+///
+/// 发送一条弹幕。调用方需登录（由 `bearer_auth` 保证 `AuthUser` 存在）。
+pub async fn create_danmaku(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(video_id): Path<String>,
+    SafeJson(req): SafeJson<SendDanmakuRequest>,
+) -> Result<(StatusCode, Json<SendDanmakuResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let video_id = hashid::decode_id_or_numeric(&video_id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+
+    let mut req = req;
+    req.text = req.text.trim().to_string();
+    if req.text.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "弹幕内容不能为空"));
+    }
+    if req.text.len() > 200 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "弹幕内容不能超过 200 个字符",
+        ));
+    }
+
+    let id = state
+        .repos
+        .danmaku
+        .create(video_id, auth_user.id, &req)
+        .await
+        .map_err(|e| ServiceError::into_tuple(e.into()))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(SendDanmakuResponse {
+            id: hashid::encode_id(id),
+        }),
+    ))
 }

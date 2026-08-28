@@ -122,11 +122,21 @@ start_backend() {
         fi
     fi
 
-    # 构建
+    # 构建后端
     local binary="$SCRIPT_DIR/target/release/atmos-video-backend"
     if [[ ! -x "$binary" ]] || find "$SCRIPT_DIR/src" -name "*.rs" -newer "$binary" -print -quit | grep -q .; then
-        echo "正在构建..."
+        echo "正在构建后端..."
         cargo build --release 2>&1 | tail -3
+    fi
+
+    # 构建前端
+    local webapp_dir="$SCRIPT_DIR/../webapp"
+    local dist_dir="$webapp_dir/dist"
+    if [[ -d "$webapp_dir" ]]; then
+        if [[ ! -d "$dist_dir" ]] || find "$webapp_dir/src" "$webapp_dir/index.html" "$webapp_dir/vite.config.ts" -newer "$dist_dir/index.html" -print -quit 2>/dev/null | grep -q .; then
+            echo "正在构建前端..."
+            (cd "$webapp_dir" && npm run build 2>&1 | tail -5)
+        fi
     fi
 
     # 设置环境变量（已在 .env 中定义，此处为后备默认值）

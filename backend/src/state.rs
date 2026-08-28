@@ -9,6 +9,8 @@ use crate::metrics::Metrics;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::models::video::{PagedVideoResponse, VideoItem};
 use crate::repositories::comment_repo::CommentRepository;
+use crate::repositories::danmaku_repo::DanmakuRepository;
+use crate::repositories::plan_repo::PlanRepository;
 use crate::repositories::playback_repo::PlaybackRepository;
 use crate::repositories::playlist_repo::PlaylistRepository;
 use crate::repositories::registration_repo::RegistrationRepository;
@@ -22,6 +24,7 @@ use crate::services::auth_service::AuthService;
 use crate::services::comment_service::CommentService;
 use crate::services::email_service::EmailService;
 use crate::services::media_service::MediaService;
+use crate::services::plan_service::PlanService;
 use crate::services::playback_service::PlaybackService;
 use crate::services::playlist_service::PlaylistService;
 use crate::services::recommendation_service::{RecommendationService, VideoRecommendation};
@@ -34,7 +37,7 @@ use crate::services::transcoder::Transcoder;
 use crate::services::video_service::VideoService;
 
 pub type VideoListCache = Cache<String, PagedVideoResponse>;
-pub type RecommendationCache = Cache<String, Vec<VideoRecommendation>>;
+pub type RecommendationCache = Cache<String, (Vec<VideoRecommendation>, i64)>;
 /// 单视频详情缓存（`GET /videos/{id}` 热路径）：60 秒 TTL。
 /// 视频列表/详情查询共享同一失效入口 `AppState::invalidate_caches`。
 pub type VideoDetailCache = Cache<i64, VideoItem>;
@@ -60,39 +63,38 @@ impl PlaybackSessionTracker {
         }
     }
 
+    #[inline]
+    fn make_key(username: &str, video_id: i64) -> String {
+        let mut key = String::with_capacity(username.len() + 20);
+        key.push_str(username);
+        key.push(':');
+        key.push_str(&video_id.to_string());
+        key
+    }
+
     pub fn start(&self, username: &str, video_id: i64) {
-        let key = format!("{}:{}", username, video_id);
+        let key = Self::make_key(username, video_id);
         self.sessions.insert(key, Instant::now());
     }
 
     pub fn heartbeat(&self, username: &str, video_id: i64) {
-        let key = format!("{}:{}", username, video_id);
+        let key = Self::make_key(username, video_id);
         self.sessions.insert(key, Instant::now());
     }
 
     pub fn stop(&self, username: &str, video_id: i64) {
-        let key = format!("{}:{}", username, video_id);
+        let key = Self::make_key(username, video_id);
         self.sessions.remove(&key);
     }
 
     pub fn is_active(&self, username: &str, video_id: i64) -> bool {
-        let key = format!("{}:{}", username, video_id);
+        let key = Self::make_key(username, video_id);
         self.sessions
             .get(&key)
             .map(|entry| entry.elapsed().as_secs() < SESSION_TIMEOUT_SECS)
             .unwrap_or(false)
     }
 
-    /// Returns true if the user has any active playback session for any video.
-    ///
-    /// NOTE (security review): this is deliberately NOT used as an
-    /// authorization basis anywhere — it would let any active session pass
-    /// for *arbitrary* videos. Grep confirms zero call sites; media_auth only
-    /// ever uses the video-bound `is_active`. It is kept for symmetry as a
-    /// potential non-security helper. It is O(n) over all sessions (flat
-    /// map key "username:video_id"); with no callers there is no hot path,
-    /// so no refactor to a nested DashMap is warranted today. If a caller
-    /// ever appears, prefer a per-user nested map or active-count index.
     pub fn has_any_active(&self, username: &str) -> bool {
         let prefix = format!("{}:", username);
         self.sessions
@@ -100,7 +102,6 @@ impl PlaybackSessionTracker {
             .any(|e| e.key().starts_with(&prefix) && e.elapsed().as_secs() < SESSION_TIMEOUT_SECS)
     }
 
-    /// Remove all expired sessions to prevent memory leaks.
     pub fn evict_expired(&self) {
         self.sessions
             .retain(|_, last| last.elapsed().as_secs() < SESSION_TIMEOUT_SECS);
@@ -125,9 +126,11 @@ pub struct RepoLayer {
     pub playback: PlaybackRepository,
     pub playlist: PlaylistRepository,
     pub comment: CommentRepository,
+    pub danmaku: DanmakuRepository,
     pub share: ShareRepository,
     pub tag: TagRepository,
     pub tenant: TenantRepository,
+    pub plan: PlanRepository,
 }
 
 #[derive(Clone)]
@@ -145,6 +148,7 @@ pub struct ServiceLayer {
     pub share: ShareService,
     pub admin: AdminService,
     pub tenant: TenantService,
+    pub plan: PlanService,
 }
 
 #[derive(Clone)]

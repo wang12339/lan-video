@@ -82,6 +82,7 @@ function makeMappedImage(overrides: Partial<MappedImage> = {}): MappedImage {
     title: '测试图片',
     category: 'general',
     thumb: '/media/thumb.jpg',
+    original: '/media/original.jpg',
     sourceType: 'local_image',
     ...overrides,
   }
@@ -582,9 +583,9 @@ describe('Gallery 页面', () => {
   // ======================================================================
   describe('灯箱预览', () => {
     const images = [
-      makeMappedImage({ id: 'img1', title: '风景照', thumb: '/media/img1.jpg' }),
-      makeMappedImage({ id: 'img2', title: '城市夜景', thumb: '/media/img2.jpg' }),
-      makeMappedImage({ id: 'img3', title: '日落', thumb: '/media/img3.jpg' }),
+      makeMappedImage({ id: 'img1', title: '风景照', thumb: '/media/img1.jpg', original: '/media/img1-original.jpg' }),
+      makeMappedImage({ id: 'img2', title: '城市夜景', thumb: '/media/img2.jpg', original: '/media/img2-original.jpg' }),
+      makeMappedImage({ id: 'img3', title: '日落', thumb: '/media/img3.jpg', original: '/media/img3-original.jpg' }),
     ]
 
     async function renderWithImages() {
@@ -605,11 +606,11 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      const lightboxImg = container.querySelector('.lightbox-img') as HTMLImageElement
-      expect(lightboxImg).toHaveAttribute('src', '/media/img1.jpg')
+      const lightboxImg = document.querySelector('.lightbox-img') as HTMLImageElement
+      expect(lightboxImg).toHaveAttribute('src', '/media/img1-original.jpg')
       expect(lightboxImg).toHaveAttribute('alt', '风景照')
     })
 
@@ -619,12 +620,14 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox-title')).toBeInTheDocument()
       })
 
-      const info = container.querySelector('.lightbox-info')!
-      expect(info).toHaveTextContent('风景照')
-      expect(info).toHaveTextContent('1 / 3')
+      const title = document.querySelector('.lightbox-title')!
+      expect(title).toHaveTextContent('风景照')
+
+      const counter = document.querySelector('.lightbox-counter')!
+      expect(counter).toHaveTextContent('1 / 3')
     })
 
     it('灯箱有正确的 ARIA 属性', async () => {
@@ -633,7 +636,7 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        const lightbox = container.querySelector('.lightbox')
+        const lightbox = document.querySelector('.lightbox')
         expect(lightbox).toHaveAttribute('role', 'dialog')
         expect(lightbox).toHaveAttribute('aria-modal', 'true')
         expect(lightbox).toHaveAttribute('aria-label', '图片预览：风景照')
@@ -647,14 +650,14 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      const closeBtn = screen.getByRole('button', { name: '关闭' })
+      const closeBtn = document.querySelector('.lightbox-close') as HTMLElement
       fireEvent.click(closeBtn)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).not.toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).not.toBeInTheDocument()
       })
     })
 
@@ -664,14 +667,14 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      const lightbox = container.querySelector('.lightbox')!
+      const lightbox = document.querySelector('.lightbox')!
       fireEvent.click(lightbox)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).not.toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).not.toBeInTheDocument()
       })
     })
 
@@ -681,13 +684,13 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      const lightboxImg = container.querySelector('.lightbox-img')!
+      const lightboxImg = document.querySelector('.lightbox-img')!
       fireEvent.click(lightboxImg)
 
-      expect(container.querySelector('.lightbox')).toBeInTheDocument()
+      expect(document.querySelector('.lightbox')).toBeInTheDocument()
     })
 
     it('按下 Escape 键关闭灯箱', async () => {
@@ -696,13 +699,13 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
       fireEvent.keyDown(document, { key: 'Escape' })
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).not.toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).not.toBeInTheDocument()
       })
     })
 
@@ -712,17 +715,17 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
       })
 
       fireEvent.keyDown(document, { key: 'ArrowRight' })
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('2 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('2 / 3')
       })
 
-      const lightboxImg = container.querySelector('.lightbox-img') as HTMLImageElement
-      expect(lightboxImg).toHaveAttribute('src', '/media/img2.jpg')
+      const lightboxImg = document.querySelector('.lightbox-img') as HTMLImageElement
+      expect(lightboxImg).toHaveAttribute('src', '/media/img2-original.jpg')
       expect(lightboxImg).toHaveAttribute('alt', '城市夜景')
     })
 
@@ -732,17 +735,17 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[1]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('2 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('2 / 3')
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft' })
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
       })
 
-      const lightboxImg = container.querySelector('.lightbox-img') as HTMLImageElement
-      expect(lightboxImg).toHaveAttribute('src', '/media/img1.jpg')
+      const lightboxImg = document.querySelector('.lightbox-img') as HTMLImageElement
+      expect(lightboxImg).toHaveAttribute('src', '/media/img1-original.jpg')
     })
 
     it('第一张图片时隐藏上一张按钮', async () => {
@@ -751,11 +754,11 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      expect(container.querySelector('.lightbox-prev')).not.toBeInTheDocument()
-      expect(container.querySelector('.lightbox-next')).toBeInTheDocument()
+      expect(document.querySelector('.lightbox-prev')).not.toBeInTheDocument()
+      expect(document.querySelector('.lightbox-next')).toBeInTheDocument()
     })
 
     it('最后一张图片时隐藏下一张按钮', async () => {
@@ -764,11 +767,11 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[2]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
 
-      expect(container.querySelector('.lightbox-prev')).toBeInTheDocument()
-      expect(container.querySelector('.lightbox-next')).not.toBeInTheDocument()
+      expect(document.querySelector('.lightbox-prev')).toBeInTheDocument()
+      expect(document.querySelector('.lightbox-next')).not.toBeInTheDocument()
     })
 
     it('点击导航按钮切换图片', async () => {
@@ -777,21 +780,21 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
       })
 
-      const nextBtn = container.querySelector('.lightbox-next')!
+      const nextBtn = document.querySelector('.lightbox-next')!
       fireEvent.click(nextBtn)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('2 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('2 / 3')
       })
 
-      const prevBtn = container.querySelector('.lightbox-prev')!
+      const prevBtn = document.querySelector('.lightbox-prev')!
       fireEvent.click(prevBtn)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
       })
     })
 
@@ -802,7 +805,7 @@ describe('Gallery 页面', () => {
       fireEvent.keyDown(cards[0]!, { key: 'Enter' })
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
     })
 
@@ -813,7 +816,7 @@ describe('Gallery 页面', () => {
       fireEvent.keyDown(cards[0]!, { key: ' ' })
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox')).toBeInTheDocument()
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
       })
     })
 
@@ -849,14 +852,14 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
       })
 
       fireEvent.keyDown(document, { key: 'ArrowLeft' })
       fireEvent.keyDown(document, { key: 'ArrowLeft' })
       fireEvent.keyDown(document, { key: 'ArrowLeft' })
 
-      expect(container.querySelector('.lightbox-info')).toHaveTextContent('1 / 3')
+      expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
     })
 
     it('灯箱导航不会越界（右边界）', async () => {
@@ -865,13 +868,13 @@ describe('Gallery 页面', () => {
       fireEvent.click(container.querySelectorAll('.gallery-card')[2]!)
 
       await waitFor(() => {
-        expect(container.querySelector('.lightbox-info')).toHaveTextContent('3 / 3')
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('3 / 3')
       })
 
       fireEvent.keyDown(document, { key: 'ArrowRight' })
       fireEvent.keyDown(document, { key: 'ArrowRight' })
 
-      expect(container.querySelector('.lightbox-info')).toHaveTextContent('3 / 3')
+      expect(document.querySelector('.lightbox-counter')).toHaveTextContent('3 / 3')
     })
   })
 })

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,7 +25,7 @@ pub struct PerformanceMonitor {
     failed_queries: AtomicU64,
     timeout_queries: AtomicU64,
     retry_queries: AtomicU64,
-    query_durations: Arc<RwLock<Vec<Duration>>>,
+    query_durations: Arc<RwLock<VecDeque<Duration>>>,
     max_duration_history: usize,
 }
 
@@ -36,7 +37,7 @@ impl PerformanceMonitor {
             failed_queries: AtomicU64::new(0),
             timeout_queries: AtomicU64::new(0),
             retry_queries: AtomicU64::new(0),
-            query_durations: Arc::new(RwLock::new(Vec::new())),
+            query_durations: Arc::new(RwLock::new(VecDeque::with_capacity(max_duration_history))),
             max_duration_history,
         }
     }
@@ -76,12 +77,10 @@ impl PerformanceMonitor {
     /// 记录查询持续时间
     async fn record_duration(&self, duration: Duration) {
         let mut durations = self.query_durations.write().await;
-        durations.push(duration);
-
-        // 保持历史记录在限制内
-        if durations.len() > self.max_duration_history {
-            durations.remove(0);
+        if durations.len() >= self.max_duration_history {
+            durations.pop_front();
         }
+        durations.push_back(duration);
     }
 
     /// 获取性能指标
@@ -94,7 +93,7 @@ impl PerformanceMonitor {
         let retries = self.retry_queries.load(Ordering::Relaxed);
 
         let avg_duration_ms = if !durations.is_empty() {
-            let sum: Duration = durations.iter().sum();
+            let sum: Duration = durations.iter().copied().sum();
             sum.as_millis() as f64 / durations.len() as f64
         } else {
             0.0
@@ -122,13 +121,12 @@ impl PerformanceMonitor {
         }
     }
 
-    /// 计算百分位数
-    fn percentile(durations: &[Duration], percentile: u32) -> f64 {
+    fn percentile(durations: &VecDeque<Duration>, percentile: u32) -> f64 {
         if durations.is_empty() {
             return 0.0;
         }
 
-        let mut sorted = durations.to_vec();
+        let mut sorted: Vec<Duration> = durations.iter().copied().collect();
         sorted.sort();
 
         let index = (percentile as f64 / 100.0 * sorted.len() as f64) as usize;
@@ -149,47 +147,10 @@ impl PerformanceMonitor {
 }
 
 /// 性能监控器单例
-static PERFORMANCE_MONITOR: once_cell::sync::Lazy<PerformanceMonitor> =
-    once_cell::sync::Lazy::new(|| PerformanceMonitor::new(1000));
+static PERFORMANCE_MONITOR: std::sync::LazyLock<PerformanceMonitor> =
+    std::sync::LazyLock::new(|| PerformanceMonitor::new(1000));
 
 /// 获取全局性能监控器
 pub fn get_performance_monitor() -> &'static PerformanceMonitor {
     &PERFORMANCE_MONITOR
-}
-
-/// 性能监控包装器
-#[allow(dead_code)]
-pub struct MonitoredQuery<F> {
-    query_fn: F,
-    label: String,
-    monitor: &'static PerformanceMonitor,
-}
-
-impl<F, Fut, T> MonitoredQuery<F>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, sqlx::Error>>,
-{
-    pub fn new(label: &str, query_fn: F) -> Self {
-        Self {
-            query_fn,
-            label: label.to_string(),
-            monitor: get_performance_monitor(),
-        }
-    }
-
-    pub async fn execute(self) -> Result<T, sqlx::Error> {
-        let start = self.monitor.record_query_start();
-
-        match (self.query_fn)().await {
-            Ok(result) => {
-                self.monitor.record_query_success(start).await;
-                Ok(result)
-            }
-            Err(e) => {
-                self.monitor.record_query_failure(start).await;
-                Err(e)
-            }
-        }
-    }
 }

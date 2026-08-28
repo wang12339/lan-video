@@ -33,7 +33,6 @@ fn map_upload_service_error(e: &ServiceError) -> (StatusCode, &'static str) {
     }
 }
 
-/// POST /admin/videos/external
 pub async fn add_external_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -53,10 +52,6 @@ pub async fn add_external_video(
             ));
         }
     }
-    // SECURITY (A04 M4): reject external URLs pointing at loopback, link-local,
-    // or RFC1918 addresses. The browser still fetches the URL, but blocking
-    // these on input stops an admin from accidentally registering an
-    // internal-network address that every viewer would then resolve.
     if !is_safe_external_url(&req.stream_url) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -84,7 +79,10 @@ pub async fn add_external_video(
             Some(auth_user.id),
         )
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| {
+            tracing::error!("add_external_video failed: {}", e);
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
+        })?;
 
     state.invalidate_caches();
     tracing::info!(
@@ -292,16 +290,15 @@ pub async fn upload_resume(
         .unwrap_or(0);
 
     if received >= total_size {
-        let tmp_clone = tmp.clone();
         let id = state
             .services
             .media
-            .upload_video_file(&file_name, &tmp_clone, &category, auth_user.id)
+            .upload_video_file(&file_name, &tmp, &category, auth_user.id)
             .await
             .map_err(|e| {
-                let tmp_for_cleanup = tmp.clone();
+                let tmp_path = tmp.clone();
                 tokio::spawn(async move {
-                    let _ = tokio::fs::remove_file(&tmp_for_cleanup).await;
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
                 });
                 match &e {
                     ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_) => {
@@ -348,7 +345,7 @@ pub async fn check_hashes(
         .video
         .check_existing_hashes(req.hashes)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("check_existing_hashes", &e))?;
     Ok(Json(CheckHashesResponse { existing }))
 }
 
@@ -368,13 +365,12 @@ pub async fn check_files(
         .video
         .check_existing_files(&files)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("check_existing_files", &e))?;
     Ok(Json(CheckFilesResponse {
         existing_indices: existing_indices.into_iter().collect(),
     }))
 }
 
-/// POST /admin/videos/scan
 pub async fn scan_media(
     State(state): State<Arc<AppState>>,
     multipart: Option<Multipart>,
@@ -383,7 +379,7 @@ pub async fn scan_media(
         let mut cat = "local".to_string();
         while let Ok(Some(field)) = mp.next_field().await {
             if field.name() == Some("category") {
-                cat = field.text().await.unwrap_or("local".to_string());
+                cat = field.text().await.unwrap_or_else(|_| "local".to_string());
             }
         }
         cat
@@ -397,7 +393,7 @@ pub async fn scan_media(
         .video
         .scan_media_directory(&category)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "扫描失败"))?;
+        .map_err(|e| internal_error_log("scan_media_directory", &e))?;
 
     tracing::info!(category = %category, added = added, "admin media scan complete");
     state.invalidate_caches();
@@ -594,7 +590,7 @@ pub async fn batch_update_category(
         .video
         .batch_update_category(&req.ids, &req.category)
         .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
+        .map_err(|e| internal_error_log("batch_update_category", &e))?;
     state.invalidate_caches();
     Ok(Json(OkResponse {
         ok: true,

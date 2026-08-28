@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { health } from '../../api'
@@ -49,7 +49,7 @@ export default function SystemTab() {
     toggleRegistrationMut.mutate(!regEnabled)
   }
 
-  const handleScan = async () => {
+  const handleScan = useCallback(async () => {
     if (scanning) return
     setScanning(true)
     setScanResult('')
@@ -64,9 +64,9 @@ export default function SystemTab() {
     } finally {
       setScanning(false)
     }
-  }
+  }, [scanning, queryClient, t])
 
-  const handleBackfill = async () => {
+  const handleBackfill = useCallback(async () => {
     if (backfilling) return
     setBackfilling(true)
     setBackfillResult('')
@@ -85,7 +85,7 @@ export default function SystemTab() {
     } finally {
       setBackfilling(false)
     }
-  }
+  }, [backfilling, t])
 
   if (sysLoading) return <SkeletonLoader type="card" lines={4} />
 

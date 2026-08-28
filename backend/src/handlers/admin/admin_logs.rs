@@ -7,18 +7,17 @@ use crate::services::log_parser;
 use crate::state::AppState;
 use crate::util::response::{error_response, ErrorResponse};
 
-/// GET /admin/logs — 读取日志文件
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Extension(_auth_user): Extension<AuthUser>,
     Query(params): Query<LogQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let log_dir = state.config.log_dir.clone();
     let limit = params.limit.unwrap_or(200).min(1000);
     let offset = params.offset.unwrap_or(0);
-    let level = params.level.clone();
-    let search = params.search.clone();
+    let level = params.level;
+    let search = params.search;
 
+    let log_dir = state.config.log_dir.clone();
     let result = tokio::task::spawn_blocking(move || {
         if !log_dir.exists() {
             return (String::new(), Vec::new());

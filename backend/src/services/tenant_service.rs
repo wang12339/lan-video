@@ -164,6 +164,77 @@ impl TenantService {
         Ok(())
     }
 
+    /// 创建新租户。
+    ///
+    /// # 参数
+    /// * `name` - 租户名称
+    /// * `slug` - 租户唯一标识（用于子域名）
+    /// * `custom_domain` - 自定义域名（可选）
+    /// * `plan` - 套餐类型
+    /// * `max_users` - 最大用户数
+    /// * `max_storage_bytes` - 最大存储空间（字节）
+    /// * `settings` - 租户配置
+    ///
+    /// # 返回
+    /// * `Ok(TenantConfig)` - 创建成功
+    /// * `Err(ServiceError::Validation)` - 参数验证失败
+    /// * `Err(ServiceError::Internal)` - 数据库错误（如 slug 重复）
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_tenant(
+        &self,
+        name: &str,
+        slug: &str,
+        custom_domain: Option<&str>,
+        plan: &str,
+        max_users: i32,
+        max_storage_bytes: i64,
+        settings: TenantSettings,
+    ) -> Result<TenantConfig, ServiceError> {
+        // 验证配置
+        self.validate_settings(&settings)?;
+
+        // 验证必填参数
+        if name.trim().is_empty() {
+            return Err(ServiceError::validation("租户名称不能为空"));
+        }
+        if slug.trim().is_empty() {
+            return Err(ServiceError::validation("租户标识不能为空"));
+        }
+        if !slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            return Err(ServiceError::validation(
+                "租户标识只能包含小写字母、数字和连字符",
+            ));
+        }
+        if max_users <= 0 {
+            return Err(ServiceError::validation("最大用户数必须大于 0"));
+        }
+        if max_storage_bytes <= 0 {
+            return Err(ServiceError::validation("最大存储空间必须大于 0"));
+        }
+
+        self.tenant_repo
+            .create(
+                name,
+                slug,
+                custom_domain,
+                plan,
+                max_users,
+                max_storage_bytes,
+                &settings,
+            )
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
+                    ServiceError::validation("租户标识或域名已存在")
+                } else {
+                    ServiceError::internal(format!("创建租户失败: {}", e))
+                }
+            })
+    }
+
     /// 验证租户配置的合法性。
     ///
     /// # 校验规则

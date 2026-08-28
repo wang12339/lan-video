@@ -99,7 +99,7 @@ impl CommentRepository {
                FROM comments c
                JOIN users u ON c.user_id = u.id
                WHERE c.video_id = $1 AND c.parent_id IS NULL
-               ORDER BY c.created_at DESC, c.id DESC
+               ORDER BY c.id DESC
                LIMIT $2 OFFSET $3"#,
         )
         .bind(video_id)
@@ -231,5 +231,46 @@ impl CommentRepository {
         .bind(comment_id)
         .fetch_optional(&self.pool)
         .await
+    }
+
+    pub async fn get_comments_cursor(
+        &self,
+        video_id: i64,
+        limit: i64,
+        before_id: Option<i64>,
+    ) -> Result<Vec<CommentRow>, sqlx::Error> {
+        match before_id {
+            Some(cursor) => {
+                sqlx::query_as::<_, CommentRow>(
+                    r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
+                              c.content, c.parent_id, c.created_at
+                       FROM comments c
+                       JOIN users u ON c.user_id = u.id
+                       WHERE c.video_id = $1 AND c.parent_id IS NULL AND c.id < $2
+                       ORDER BY c.id DESC
+                       LIMIT $3"#,
+                )
+                .bind(video_id)
+                .bind(cursor)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query_as::<_, CommentRow>(
+                    r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
+                              c.content, c.parent_id, c.created_at
+                       FROM comments c
+                       JOIN users u ON c.user_id = u.id
+                       WHERE c.video_id = $1 AND c.parent_id IS NULL
+                       ORDER BY c.id DESC
+                       LIMIT $2"#,
+                )
+                .bind(video_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
     }
 }

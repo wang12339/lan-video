@@ -1,6 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips/).
 pub(crate) const CLOUDFLARE_IPV4: &[(Ipv4Addr, u8)] = &[
     (Ipv4Addr::new(173, 245, 48, 0), 20),
     (Ipv4Addr::new(103, 21, 244, 0), 22),
@@ -19,7 +18,6 @@ pub(crate) const CLOUDFLARE_IPV4: &[(Ipv4Addr, u8)] = &[
     (Ipv4Addr::new(131, 0, 72, 0), 22),
 ];
 
-/// Cloudflare's published IPv6 ranges.
 pub(crate) const CLOUDFLARE_IPV6: &[(Ipv6Addr, u8)] = &[
     (Ipv6Addr::new(0x2400, 0xcb00, 0, 0, 0, 0, 0, 0), 32),
     (Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 0), 32),
@@ -30,6 +28,7 @@ pub(crate) const CLOUDFLARE_IPV6: &[(Ipv6Addr, u8)] = &[
     (Ipv6Addr::new(0x2c0f, 0xf248, 0, 0, 0, 0, 0, 0), 32),
 ];
 
+#[inline]
 fn ipv4_in_network(ip: u32, network: u32, prefix: u8) -> bool {
     let mask = if prefix >= 32 {
         u32::MAX
@@ -39,6 +38,7 @@ fn ipv4_in_network(ip: u32, network: u32, prefix: u8) -> bool {
     (ip & mask) == (network & mask)
 }
 
+#[inline]
 fn ipv6_in_network(ip: u128, network: u128, prefix: u8) -> bool {
     let mask = if prefix >= 128 {
         u128::MAX
@@ -48,6 +48,7 @@ fn ipv6_in_network(ip: u128, network: u128, prefix: u8) -> bool {
     (ip & mask) == (network & mask)
 }
 
+#[inline]
 pub(crate) fn is_cloudflare_peer(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {

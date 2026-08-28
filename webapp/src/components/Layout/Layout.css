@@ -1,8 +1,7 @@
 .nav {
   position: fixed;
   top: 0;
-  left: 0;
-  right: 0;
+  inset-inline: 0;
   height: calc(var(--nav-h) + env(safe-area-inset-top));
   background: var(--nav-bg);
   backdrop-filter: blur(16px) saturate(180%);
@@ -44,7 +43,7 @@
   color: var(--text);
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .nav-search input:focus {

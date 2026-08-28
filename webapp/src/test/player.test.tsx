@@ -56,6 +56,7 @@ vi.mock('../context/AuthContext', () => ({
 
 vi.mock('../utils/track', () => ({
   trackVideo: vi.fn(),
+  trackClick: vi.fn(),
 }))
 
 vi.mock('../hooks/useHlsPlayer', () => ({
@@ -353,17 +354,17 @@ describe('Player 页面', () => {
     expect(progressSlider).toHaveAttribute('tabindex', '0')
 
     // 进度条内部结构
-    expect(document.querySelector('.progress-bar')).toBeInTheDocument()
-    expect(document.querySelector('.progress-buffered')).toBeInTheDocument()
-    expect(document.querySelector('.progress-current')).toBeInTheDocument()
-    expect(document.querySelector('.progress-dot')).toBeInTheDocument()
+    expect(document.querySelector('.player-progress-bar')).toBeInTheDocument()
+    expect(document.querySelector('.player-progress-buffered')).toBeInTheDocument()
+    expect(document.querySelector('.player-progress-current')).toBeInTheDocument()
+    expect(document.querySelector('.player-progress-dot')).toBeInTheDocument()
 
     // 时间显示存在
     expect(document.querySelector('.time-display')).toBeInTheDocument()
     expect(document.querySelector('.time-sep')).toHaveTextContent('/')
 
     // 模拟点击进度条
-    const progressWrap = document.querySelector('.progress-wrap') as HTMLElement
+    const progressWrap = document.querySelector('.player-progress-wrap') as HTMLElement
     const rect = { left: 0, width: 100 }
     progressWrap.getBoundingClientRect = vi.fn(() => rect as DOMRect)
 

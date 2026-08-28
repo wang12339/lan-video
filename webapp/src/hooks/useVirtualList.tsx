@@ -138,7 +138,7 @@ export function useVirtualList<T>(
     container.scrollTo({ top, behavior: 'smooth' })
   }, [itemHeight])
 
-  const totalHeight = items.length * itemHeight
+  const totalHeight = useMemo(() => items.length * itemHeight, [items.length, itemHeight])
 
   return {
     virtualItems,

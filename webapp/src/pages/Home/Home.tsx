@@ -1,94 +1,49 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { listVideos } from '../../api/videos'
-import { mapVideo } from '../../api/utils'
-import { getTrendingVideos } from '../../api/recommendations'
-import { listPlaybackHistory } from '../../api/playback'
-import type { PlaybackHistory } from '../../api/types'
-import type { MappedVideo } from '../../api/types'
-import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
 import { useAuth } from '../../context/AuthContext'
-import { trackClick } from '../../utils/track'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
+import { useHomeData } from './hooks/useHomeData'
+import HeroSection from './HeroSection'
+import CategoryFilter from './CategoryFilter'
+import SearchBar from './SearchBar'
+import RecentSection from './RecentSection'
+import TrendingSection from './TrendingSection'
+import VideoGrid from './VideoGrid'
 import './Home.css'
 
-const CATEGORY_KEYS = [
-  { key: 'all', value: '全部', icon: '📋' },
-  { key: 'tech', value: '科技', icon: '💻' },
-  { key: 'design', value: '设计', icon: '🎨' },
-  { key: 'music', value: '音乐', icon: '🎵' },
-  { key: 'tutorial', value: '教程', icon: '📚' },
-  { key: 'entertainment', value: '娱乐', icon: '🎮' },
-  { key: 'sports', value: '运动', icon: '⚽' },
-  { key: 'record', value: '记录', icon: '📷' },
-  { key: 'external', value: '外部', icon: '🌐' },
-]
-const PAGE_SIZE = 20
-
-// 离开首页时记住滚动位置，返回时恢复（模块级变量，跨组件卸载保留）
 let homeScrollY = 0
 
-interface VideoListParams {
-  query?: string
-  type: string
-  category?: string
-  page: number
-  size: number
-}
+const ScrollTopButton = memo(function ScrollTopButton({ ariaLabel }: { ariaLabel: string }) {
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
 
-function buildParams(category: string, query: string, page: number): VideoListParams {
-  const params: VideoListParams = {
-    type: category === '外部' ? 'external' : 'local_video',
-    page,
-    size: PAGE_SIZE,
-  }
-  if (query) params.query = query
-  if (category !== '全部' && category !== '外部') params.category = category
-  return params
-}
-
-// 使用 React.memo 优化视频卡片组件，避免不必要的重渲染
-const VideoCardMemo = React.memo(VideoCard)
+  return (
+    <button
+      className="scroll-top-btn"
+      onClick={scrollToTop}
+      aria-label={ariaLabel}
+    >
+      ↑
+    </button>
+  )
+})
 
 export default function Home() {
   const { t } = useTranslation()
-  const [searchParams, setSearchParams] = useSearchParams()
   const { user } = useAuth()
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() =>
     (localStorage.getItem('home-view-mode') as 'grid' | 'list') || 'grid'
   )
   const [showScrollTop, setShowScrollTop] = useState(false)
-  const [category, setCategory] = useState(() => searchParams.get('cat') || '全部')
-  const [emailVerified, setEmailVerified] = useState<boolean | null>(() => {
-    const param = searchParams.get('email_verified')
-    if (param === 'true') return true
-    if (param === 'false') return false
-    return null
-  })
-  const query = (searchParams.get('q') || '').trim()
 
-  // URL 分类与 state 同步（支持浏览器前进/后退）
-  useEffect(() => {
-    const urlCat = searchParams.get('cat') || '全部'
-    setCategory((prev) => (prev === urlCat ? prev : urlCat))
-  }, [searchParams])
-
-  // Clean up email_verified query parameter after capturing it
-  useEffect(() => {
-    if (emailVerified === null) return
-    const timer = setTimeout(() => {
-      setEmailVerified(null)
-      const next = new URLSearchParams(searchParams)
-      next.delete('email_verified')
-      setSearchParams(next, { replace: true })
-    }, 5000)
-    return () => clearTimeout(timer)
-  }, [emailVerified, searchParams, setSearchParams])
-
-  // 视频列表：分页 + 加载更多 + 错误重试（TanStack Query 管理缓存/去重）
   const {
+    category,
+    setCategory,
+    query,
+    emailVerified,
+    searchParams,
+    setSearchParams,
     data,
     isPending,
     isError,
@@ -96,109 +51,15 @@ export default function Home() {
     isFetchingNextPage,
     fetchNextPage,
     refetch,
-  } = useInfiniteQuery({
-    queryKey: ['home-videos', category, query],
-    queryFn: ({ pageParam }) => listVideos(buildParams(category, query, pageParam)),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((n, p) => n + p.items.length, 0)
-      return loaded < lastPage.total ? allPages.length : undefined
-    },
-    enabled: !!user,
-    placeholderData: (prev) => prev,
-    staleTime: 30_000,
-  })
+    trending,
+    recentVideos,
+    videos,
+    total,
+  } = useHomeData()
 
-  // 热门推荐（无搜索时展示，游客可看 3 条作试看）
-  const { data: trendingData } = useQuery({
-    queryKey: ['trending-videos', query ? 'q' : 'all'],
-    queryFn: getTrendingVideos,
-    enabled: !query,
-    staleTime: 60_000,
-  })
-
-  // 最近观看（登录用户，无搜索时展示）
-  const { data: recentData } = useQuery({
-    queryKey: ['recent-videos'],
-    queryFn: () => listPlaybackHistory(8),
-    enabled: !!user && !query,
-    staleTime: 30_000,
-  })
-
-  const recentVideos = useMemo(
-    () =>
-      (Array.isArray(recentData) ? recentData : [])
-        .filter((h) => h.videoId && h.title)
-        .slice(0, 4)
-        .map((h: PlaybackHistory) => ({
-          id: h.videoId,
-          title: h.title,
-          thumbnail_url: h.coverUrl ?? undefined,
-          thumb: h.coverUrl ?? undefined,
-          views: 0,
-          category: h.category,
-          duration: h.durationMs > 0 ? Math.floor(h.durationMs / 1000) : undefined,
-          date: h.updatedAt,
-        })),
-    [recentData]
-  )
-
-  const trending = useMemo(
-    () => (Array.isArray(trendingData) ? trendingData : []).filter((v) => v.id).slice(0, 6),
-    [trendingData]
-  )
-  const trendingIds = useMemo(() => new Set(trending.map((v) => v.id)), [trending])
-
-  // 增量映射：缓存已映射结果，只对新增页面执行 mapVideo
-  const mappedCacheRef = useRef<Map<string, MappedVideo>>(new Map())
-  const lastPageCountRef = useRef(0)
-
-  const videos = useMemo(() => {
-    const pages = data?.pages ?? []
-    const cache = mappedCacheRef.current
-
-    // 如果页数减少（切换分类/搜索），清空缓存
-    if (pages.length < lastPageCountRef.current) {
-      cache.clear()
-    }
-    lastPageCountRef.current = pages.length
-
-    // 只处理新增的页面
-    const startPage = cache.size === 0 ? 0 : Math.max(0, pages.length - 1)
-    for (let pi = startPage; pi < pages.length; pi++) {
-      const page = pages[pi]
-      if (!page) continue
-      for (const raw of page.items) {
-        const v = mapVideo(raw)
-        if (v && !cache.has(v.id)) {
-          cache.set(v.id, v)
-        }
-      }
-    }
-
-    // 过滤 trending 并保持顺序
-    const seen = new Set<string>()
-    const list: MappedVideo[] = []
-    for (const page of pages) {
-      for (const raw of page.items) {
-        const id = raw.id
-        if (!id || seen.has(id) || trendingIds.has(id)) continue
-        const v = cache.get(id)
-        if (v) {
-          seen.add(id)
-          list.push(v)
-        }
-      }
-    }
-    return list
-  }, [data, trendingIds])
-
-  // 后端已按 query 过滤，无需前端二次过滤（避免分页 total 错位）
   const filteredVideos = videos
 
-  const total = data?.pages[0]?.total ?? 0
-
-  // 返回首页时恢复滚动位置（数据命中缓存时生效）
+  // 返回首页时恢复滚动位置
   const restoredRef = useRef(false)
   useEffect(() => {
     if (restoredRef.current || !data) return
@@ -283,42 +144,13 @@ export default function Home() {
     return () => document.removeEventListener('keydown', handleArrowKeys)
   }, [])
 
-  // 底部哨兵：统一 useInfiniteScroll
+  // 底部哨兵
   const sentinelRef = useRef<HTMLDivElement>(null)
   useInfiniteScroll(sentinelRef, {
     hasMore: !!hasNextPage && filteredVideos.length > 0,
     loading: isFetchingNextPage,
     onLoadMore: fetchNextPage,
   })
-
-  // 使用 useCallback 缓存事件处理函数
-  const handleCategoryClick = useCallback((cat: string) => {
-    if (cat === category) return
-    setCategory(cat)
-    requestAnimationFrame(() => {
-      const active = document.querySelector('.cat-tag.active')
-      active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-    })
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      if (cat === '全部') next.delete('cat')
-      else next.set('cat', cat)
-      return next
-    })
-    trackClick('切换分类', cat)
-  }, [category, setSearchParams])
-
-  const skeletonCount = useMemo(() => {
-    if (typeof window === 'undefined') return 6
-    const width = window.innerWidth
-    if (width <= 380) return 2
-    if (width <= 640) return 4
-    if (width <= 1024) return 6
-    return 8
-  }, [])
-
-  const showInitialError = isError && filteredVideos.length === 0 && !isPending
-  const showEmpty = !isPending && !isError && filteredVideos.length === 0
 
   const structuredData = useMemo(() => ({
     '@context': 'https://schema.org',
@@ -333,282 +165,52 @@ export default function Home() {
     },
   }), [t])
 
+  const handleRetry = useCallback(() => refetch(), [refetch])
+  const handleLoadMore = useCallback(() => fetchNextPage(), [fetchNextPage])
+
   return (
     <div className="home">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
       />
-      {isPending && <div className="home-progress" role="progressbar" aria-label={t('common.loading')} />}
-      {emailVerified !== null && (
-        <div className={`email-verify-banner ${emailVerified ? 'success' : 'error'}`}>
-          {emailVerified ? t('home.emailVerified') : t('home.emailVerifyFailed')}
-        </div>
-      )}
 
-      {!user && (
-        <div className="hero">
-          <div className="hero-particles" aria-hidden="true">
-            <span /><span /><span /><span /><span />
-          </div>
-          <h1 className="hero-title">{t('home.heroTitle')}</h1>
-          <p className="hero-sub">{t('home.heroSub')}</p>
-          <p className="hero-desc">{t('home.heroDesc')}</p>
-          <div className="hero-features">
-            <div className="hero-feature" title={t('home.featureHlsDesc')}>
-              <span className="hero-feature-icon">⚡</span>
-              <div className="hero-feature-text">
-                <span className="hero-feature-name">{t('home.featureHls')}</span>
-                <span className="hero-feature-desc">{t('home.featureHlsDesc')}</span>
-              </div>
-            </div>
-            <div className="hero-feature" title={t('home.featureUploadDesc')}>
-              <span className="hero-feature-icon">📦</span>
-              <div className="hero-feature-text">
-                <span className="hero-feature-name">{t('home.featureUpload')}</span>
-                <span className="hero-feature-desc">{t('home.featureUploadDesc')}</span>
-              </div>
-            </div>
-            <div className="hero-feature" title={t('home.featureShareDesc')}>
-              <span className="hero-feature-icon">🔒</span>
-              <div className="hero-feature-text">
-                <span className="hero-feature-name">{t('home.featureShare')}</span>
-                <span className="hero-feature-desc">{t('home.featureShareDesc')}</span>
-              </div>
-            </div>
-            <div className="hero-feature" title={t('home.featurePrivateDesc')}>
-              <span className="hero-feature-icon">🏠</span>
-              <div className="hero-feature-text">
-                <span className="hero-feature-name">{t('home.featurePrivate')}</span>
-                <span className="hero-feature-desc">{t('home.featurePrivateDesc')}</span>
-              </div>
-            </div>
-          </div>
-          <div className="hero-stats">
-            <div className="hero-stat">
-              <span className="hero-stat-value">HLS</span>
-              <span className="hero-stat-label">{t('home.featureHls')}</span>
-            </div>
-            <div className="hero-stat">
-              <span className="hero-stat-value">4K</span>
-              <span className="hero-stat-label">Max</span>
-            </div>
-            <div className="hero-stat">
-              <span className="hero-stat-value">∞</span>
-              <span className="hero-stat-label">{t('home.featureUpload')}</span>
-            </div>
-          </div>
-          <div className="hero-steps">
-            <div className="hero-step">
-              <span className="hero-step-num">1</span>
-              <span className="hero-step-text">{t('home.step1')}</span>
-            </div>
-            <div className="hero-step-arrow" aria-hidden="true">→</div>
-            <div className="hero-step">
-              <span className="hero-step-num">2</span>
-              <span className="hero-step-text">{t('home.step2')}</span>
-            </div>
-            <div className="hero-step-arrow" aria-hidden="true">→</div>
-            <div className="hero-step">
-              <span className="hero-step-num">3</span>
-              <span className="hero-step-text">{t('home.step3')}</span>
-            </div>
-          </div>
-          <div className="hero-scroll-hint" aria-hidden="true">
-            <span className="hero-scroll-arrow">↓</span>
-          </div>
-        </div>
-      )}
+      <SearchBar isPending={isPending} emailVerified={emailVerified} />
 
-      {!user && (
-        <div className="trending-searches">
-          <span className="trending-searches-label">{t('home.hotSearch')}</span>
-          <div className="trending-search-tags">
-            {['科技', '教程', '音乐', '设计'].map(tag => (
-              <Link key={tag} to={`/?q=${encodeURIComponent(tag)}`} className="trending-search-tag">
-                {tag}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!user && trending.length > 0 && (
-        <section className="trending-section guest-preview" aria-label={t('home.trending')}>
-          <h2 className="trending-title">{t('home.trending')} · {t('home.guestPreview')}</h2>
-          <div className="video-grid">
-            {trending.slice(0, 3).map((video, i) => (
-              <div key={`guest-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
-                <VideoCardMemo video={video} eager={i < 2} />
-              </div>
-            ))}
-          </div>
-          <div className="guest-cta-wrap">
-            <Link to="/profile" className="empty-cta">{t('home.guestCta')} →</Link>
-          </div>
-        </section>
-      )}
+      {!user && <HeroSection trending={trending} />}
 
       {user && (
         <>
-          <div className="category-bar">
-            {CATEGORY_KEYS.map((cat) => (
-              <button
-                key={cat.key}
-                className={`cat-tag ${category === cat.value ? 'active' : ''}`}
-                onClick={() => handleCategoryClick(cat.value)}
-              >
-                <span className="cat-icon" aria-hidden="true">{cat.icon}</span>
-                {t('home.categories.' + cat.key)}
-                {cat.key === 'all' && total > 0 && (
-                  <span className="cat-count">{total}</span>
-                )}
-              </button>
-            ))}
-          </div>
+          <CategoryFilter
+            category={category}
+            total={total}
+            viewMode={viewMode}
+            onCategoryChange={setCategory}
+            onViewModeChange={setViewMode}
+            searchParams={searchParams}
+            setSearchParams={setSearchParams}
+          />
 
-          {total > 0 && <div className="home-count">{t('home.totalCount', { count: total })}</div>}
+          {!query && <RecentSection recentVideos={recentVideos} viewMode={viewMode} />}
 
-          <div className="view-toggle">
-            <button
-              className={`view-btn ${viewMode === 'grid' ? 'active' : ''}`}
-              onClick={() => { setViewMode('grid'); localStorage.setItem('home-view-mode', 'grid'); }}
-              aria-label="网格视图"
-            >
-              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
-                <rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/>
-                <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/>
-              </svg>
-            </button>
-            <button
-              className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
-              onClick={() => { setViewMode('list'); localStorage.setItem('home-view-mode', 'list'); }}
-              aria-label="列表视图"
-            >
-              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
-                <rect x="1" y="1" width="14" height="3" rx="1"/><rect x="1" y="6" width="14" height="3" rx="1"/>
-                <rect x="1" y="11" width="14" height="3" rx="1"/>
-              </svg>
-            </button>
-          </div>
+          {!query && <TrendingSection trending={trending} viewMode={viewMode} />}
 
-          {!query && recentVideos.length > 0 && (
-            <section className="trending-section recent-section" aria-label={t('home.recent')}>
-              <h2 className="trending-title recent-title">{t('home.recent')}</h2>
-              <div className={`video-grid recent-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
-                {recentVideos.map((video, i) => (
-                  <div key={`recent-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
-                    <VideoCardMemo video={video} eager={i < 2} />
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {!query && trending.length > 0 && (
-            <section className="trending-section" aria-label={t('home.trending')}>
-              <h2 className="trending-title">{t('home.trending')}</h2>
-              <div className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
-                {trending.map((video, i) => (
-                  <div key={`trend-${video.id}`} style={{ '--card-index': i } as React.CSSProperties}>
-                    <VideoCardMemo video={video} eager={i < 4} />
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {filteredVideos.length > 0 ? (
-            <div className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
-              {filteredVideos.map((video, i) => (
-                <div key={video.id} style={{ '--card-index': i } as React.CSSProperties}>
-                  <VideoCardMemo video={video} eager={i < 4} />
-                </div>
-              ))}
-            </div>
-          ) : isPending ? (
-            <div className="video-grid">
-              <VideoCardSkeleton count={skeletonCount} />
-            </div>
-          ) : showInitialError ? (
-            <div className="empty-state">
-              <div className="empty-icon">⚠️</div>
-              <div className="empty-text">{t('errors.network')}</div>
-              <p className="empty-hint">{t('home.errorHint')}</p>
-              <button className="retry-btn" onClick={() => refetch()}>
-                {t('common.retry')}
-              </button>
-            </div>
-          ) : showEmpty ? (
-            <div className="empty-state" role="status" aria-live="polite">
-              <div className="empty-icon" aria-hidden="true">
-                {query ? '🔍' : '🎬'}
-              </div>
-              <div className="empty-text">
-                {query ? t('home.searchEmpty', { query }) : t('home.empty')}
-              </div>
-              {query ? (
-                <button
-                  className="empty-cta"
-                  onClick={() => {
-                    const next = new URLSearchParams(searchParams)
-                    next.delete('q')
-                    setSearchParams(next, { replace: true })
-                  }}
-                >
-                  {t('common.clearSearch')}
-                </button>
-              ) : (
-                <Link to="/upload" className="empty-cta">
-                  {t('common.goUpload')} →
-                </Link>
-              )}
-            </div>
-          ) : null}
-
-          {!isError && hasNextPage && !isFetchingNextPage && filteredVideos.length > 0 && (
-            <div className="load-more-wrap">
-              <button className="load-more-btn" onClick={() => fetchNextPage()}>
-                {t('common.loadMore')}
-              </button>
-            </div>
-          )}
-
-          {isError && filteredVideos.length > 0 && (
-            <div className="load-more-error">
-              <span>{t('errors.network')}</span>
-              <button className="retry-btn" onClick={() => refetch()}>
-                {t('common.retry')}
-              </button>
-            </div>
-          )}
-
-          {!isError && isFetchingNextPage && (
-            <div className="video-grid loading-grid" aria-label={t('common.loading')}>
-              <VideoCardSkeleton count={skeletonCount} />
-            </div>
-          )}
-
-          {!isError && !isFetchingNextPage && !hasNextPage && filteredVideos.length > 0 && (
-            <div className="no-more">{t('common.noMore')}</div>
-          )}
+          <VideoGrid
+            videos={filteredVideos}
+            viewMode={viewMode}
+            isPending={isPending}
+            isError={isError}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onRetry={handleRetry}
+            onLoadMore={handleLoadMore}
+          />
         </>
       )}
 
-      {/* 哨兵始终渲染，避免登录状态切换后 observer 失效 */}
       <div ref={sentinelRef} className="load-sentinel" aria-hidden="true" />
 
-      {/* 游客不强制弹窗，通过 CTA 按钮引导登录 */}
-
-      {showScrollTop && (
-        <button
-          className="scroll-top-btn"
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          aria-label={t('common.scrollToTop')}
-        >
-          ↑
-        </button>
-      )}
+      {showScrollTop && <ScrollTopButton ariaLabel={t('common.scrollToTop')} />}
     </div>
   )
 }

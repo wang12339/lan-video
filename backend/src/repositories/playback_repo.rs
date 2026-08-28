@@ -100,12 +100,6 @@ impl PlaybackRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<RecentWatchItem>, i64), sqlx::Error> {
-        let (total,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM playback_history WHERE username = $1")
-                .bind(username)
-                .fetch_one(&self.pool)
-                .await?;
-
         let rows = sqlx::query_as::<_, HistoryRow>(
             r#"SELECT h.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
                       h.position_ms, h.duration_ms, h.updated_at
@@ -120,6 +114,18 @@ impl PlaybackRepository {
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
+
+        let total = if (rows.len() as i64) < limit {
+            rows.len() as i64 + offset
+        } else {
+            let (cnt,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM playback_history WHERE username = $1")
+                    .bind(username)
+                    .fetch_one(&self.pool)
+                    .await?;
+            cnt
+        };
+
         Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
     }
 

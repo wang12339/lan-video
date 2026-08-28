@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useId, useCallback } from 'react'
 import i18n from '../../i18n'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 import './ConfirmDialog.css'
 
 type ButtonVariant = 'primary' | 'danger' | 'ghost' | 'outline'
@@ -65,7 +66,6 @@ export default function ConfirmDialog({
   const handleClose = useCallback(() => {
     if (loading) return
     setClosing(true)
-    // 等待动画完成后再调用 onCancel
     setTimeout(() => {
       setClosing(false)
       onCancelRef.current()
@@ -132,37 +132,7 @@ export default function ConfirmDialog({
   }, [open, loading, handleClose])
 
   // 焦点陷阱
-  useEffect(() => {
-    if (!open || !dialogRef.current) return
-    const dialog = dialogRef.current
-    const focusableSelector = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
-
-    const handleTabTrap = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return
-      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
-      if (focusables.length === 0) return
-
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-
-      if (first && last) {  // 添加null检查防止undefined访问
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault()
-            last.focus()
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault()
-            first.focus()
-          }
-        }
-      }
-    }
-
-    dialog.addEventListener('keydown', handleTabTrap)
-    return () => dialog.removeEventListener('keydown', handleTabTrap)
-  }, [open])
+  useFocusTrap(dialogRef, open, { autoFocus: false })
 
   if (!open && !closing) return null
 
@@ -188,6 +158,7 @@ export default function ConfirmDialog({
           {extraButtons?.map((btn, i) => (
             <button
               key={i}
+              type="button"
               className={`cd-btn cd-btn-${btn.variant ?? 'outline'}`}
               onClick={() => handleExtraClick(i, btn)}
               disabled={btn.disabled || extraLoading[i] || loading}
@@ -195,11 +166,12 @@ export default function ConfirmDialog({
               {extraLoading[i] ? (btn.loading ?? i18n.t('common.processing')) : btn.text}
             </button>
           ))}
-          <button className="cd-btn cd-btn-cancel" onClick={handleClose} disabled={loading}>
+          <button type="button" className="cd-btn cd-btn-cancel" onClick={handleClose} disabled={loading}>
             {cancelText}
           </button>
           <button
             ref={confirmRef}
+            type="button"
             className={`cd-btn cd-btn-${finalConfirmVariant}`}
             onClick={handleConfirm}
             disabled={loading}
@@ -233,7 +205,6 @@ export function AlertDialog({
   const onCloseRef = useRef(onClose)
   const okRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
-  const lastFocusedRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
   const descId = useId()
   const [closing, setClosing] = useState(false)
@@ -248,13 +219,10 @@ export function AlertDialog({
     }, 200)
   }, [])
 
-  // 打开时聚焦确定按钮，关闭时还原焦点
+  // 打开时重置状态
   useEffect(() => {
     if (!open) return
     setClosing(false)
-    lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    okRef.current?.focus()
-    return () => { lastFocusedRef.current?.focus() }
   }, [open])
 
   // 键盘支持：Esc / Enter 关闭（按钮已聚焦时避免与原生点击重复触发）
@@ -274,37 +242,7 @@ export function AlertDialog({
   }, [open, handleClose])
 
   // 焦点陷阱
-  useEffect(() => {
-    if (!open || !dialogRef.current) return
-    const dialog = dialogRef.current
-    const focusableSelector = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
-
-    const handleTabTrap = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return
-      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
-      if (focusables.length === 0) return
-
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-
-      if (first && last) {  // 添加null检查防止undefined访问
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault()
-            last.focus()
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault()
-            first.focus()
-          }
-        }
-      }
-    }
-
-    dialog.addEventListener('keydown', handleTabTrap)
-    return () => dialog.removeEventListener('keydown', handleTabTrap)
-  }, [open])
+  useFocusTrap(dialogRef, open)
 
   if (!open && !closing) return null
 
@@ -322,7 +260,7 @@ export function AlertDialog({
         <h3 className="cd-title" id={titleId}>{title}</h3>
         <p className="cd-message" id={descId}>{message}</p>
         <div className="cd-actions">
-          <button ref={okRef} className={`cd-btn cd-btn-${okVariant}`} onClick={handleClose}>
+          <button ref={okRef} type="button" className={`cd-btn cd-btn-${okVariant}`} onClick={handleClose}>
             {okText}
           </button>
         </div>

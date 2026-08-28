@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfileResponse};
+use crate::repositories::tenant_repo::TenantRepository;
 use crate::repositories::user_repo::UserRepository;
 use crate::services::email_service::EmailService;
 use crate::services::playback_service::PlaybackService;
@@ -21,6 +22,7 @@ const IP_RATE_LIMIT_BLOCK_SECS: u64 = 0;
 #[derive(Clone)]
 pub struct AuthService {
     user_repo: UserRepository,
+    tenant_repo: TenantRepository,
     playback_service: PlaybackService,
     rate_limiter: RateLimiter,
     ip_rate_limiter: RateLimiter,
@@ -32,12 +34,14 @@ impl AuthService {
     ///
     /// # 参数
     /// - `user_repo`: 用户数据访问层
+    /// - `tenant_repo`: 租户数据访问层
     /// - `playback_service`: 播放历史服务
     /// - `rate_limiter`: 用户名级速率限制器
     /// - `ip_rate_limiter`: IP 级速率限制器
     /// - `config`: 应用配置
     pub fn new(
         user_repo: UserRepository,
+        tenant_repo: TenantRepository,
         playback_service: PlaybackService,
         rate_limiter: RateLimiter,
         ip_rate_limiter: RateLimiter,
@@ -45,6 +49,7 @@ impl AuthService {
     ) -> Self {
         Self {
             user_repo,
+            tenant_repo,
             playback_service,
             rate_limiter,
             ip_rate_limiter,
@@ -87,7 +92,18 @@ impl AuthService {
         client_ip: &str,
         tenant_id: i64,
     ) -> Result<AuthResponse, ServiceError> {
-        if !self.config.registration_enabled() {
+        // 检查全局配置或租户设置
+        let global_enabled = self.config.registration_enabled();
+        let tenant_enabled = self
+            .tenant_repo
+            .get_by_id(tenant_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.settings.registration_enabled)
+            .unwrap_or(false);
+
+        if !global_enabled && !tenant_enabled {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: registration disabled");
             return Ok(auth_err("注册功能已关闭"));
         }
@@ -638,19 +654,17 @@ impl AuthService {
         self.config.cookie_secure
     }
 
-    /// Shared rate limit check: IP-level + per-username.
-    /// SECURITY: per-username keying enables an account-DoS where an attacker
-    /// who knows a username can lock it out for 10 minutes. The per-username
-    /// rate limit uses a short window (3 attempts per minute) and short block
-    /// (300s) to limit the impact. IP-level rate limiting provides the primary
-    /// brute-force defense.
     async fn check_rate_limits(
         &self,
         username: &str,
         client_ip: &str,
         action: &str,
     ) -> Result<(), ServiceError> {
-        let ip_key = format!("auth:ip:{}", client_ip);
+        let ip_key_len = "auth:ip:".len() + client_ip.len();
+        let mut ip_key = String::with_capacity(ip_key_len);
+        ip_key.push_str("auth:ip:");
+        ip_key.push_str(client_ip);
+
         if self
             .ip_rate_limiter
             .check_with(
@@ -666,7 +680,12 @@ impl AuthService {
             return Err(ServiceError::RateLimited);
         }
 
-        let key = format!("auth:{}", username.trim().to_lowercase());
+        let trimmed = username.trim().to_lowercase();
+        let key_len = "auth:".len() + trimmed.len();
+        let mut key = String::with_capacity(key_len);
+        key.push_str("auth:");
+        key.push_str(&trimmed);
+
         if self.rate_limiter.check(&key).await.is_err() {
             tracing::warn!(username = %sanitize_for_log(username), ip = %sanitize_for_log(client_ip), "{} rejected: username rate limited", action);
             return Err(ServiceError::RateLimited);
@@ -794,23 +813,32 @@ const DUMMY_ARGON2_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZHVtbXlzYWx0Zm9y
 /// - 字符计数使用 `chars().count()` 而非字节长度，支持多字节字符
 /// - 防止过于简单的密码（如纯数字、纯小写字母）
 pub(crate) fn is_password_strong_enough(pw: &str) -> bool {
-    let has_upper = pw.chars().any(|c| c.is_uppercase());
-    let has_lower = pw.chars().any(|c| c.is_lowercase());
-    let has_digit = pw.chars().any(|c| c.is_ascii_digit());
-    let has_special = pw.chars().any(|c| !c.is_alphanumeric());
+    let mut has_upper = false;
+    let mut has_lower = false;
+    let mut has_digit = false;
+    let mut has_special = false;
+    for c in pw.chars() {
+        if c.is_uppercase() {
+            has_upper = true;
+        } else if c.is_lowercase() {
+            has_lower = true;
+        } else if c.is_ascii_digit() {
+            has_digit = true;
+        } else {
+            has_special = true;
+        }
+        if has_upper && has_lower && has_digit && has_special {
+            break;
+        }
+    }
     let categories: u8 = [has_upper, has_lower, has_digit, has_special]
         .into_iter()
         .map(u8::from)
         .sum();
 
-    // Require at least 3 of 4 character categories for passwords under 12
-    // chars. Counted in chars, not bytes, to match register()'s length
-    // validation — a byte count would let a multibyte password slip into
-    // the lenient 2-category tier.
     if pw.chars().count() < 12 {
         categories >= 3
     } else {
-        // Longer passwords can be all lowercase with at least one non-alpha
         categories >= 2
     }
 }
@@ -839,11 +867,10 @@ pub(crate) fn is_valid_email(email: &str) -> bool {
     if email.is_empty() || email.len() > 254 {
         return false;
     }
-    let parts: Vec<&str> = email.splitn(2, '@').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-    let (local, domain) = (parts[0], parts[1]);
+    let (local, domain) = match email.split_once('@') {
+        Some((l, d)) => (l, d),
+        None => return false,
+    };
     if local.is_empty() || local.len() > 64 {
         return false;
     }
@@ -856,8 +883,6 @@ pub(crate) fn is_valid_email(email: &str) -> bool {
     if domain.contains("..") {
         return false;
     }
-    // Reject whitespace and control characters: they break the envelope
-    // and can be abused for header/command injection in SMTP.
     if email.chars().any(char::is_whitespace) || email.chars().any(char::is_control) {
         return false;
     }

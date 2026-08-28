@@ -47,6 +47,9 @@ pub enum ServiceError {
     Internal(String),
 }
 
+static INTERNAL_ERROR_MSG: &str = "服务器内部错误";
+static RATE_LIMITED_MSG: &str = "请求过于频繁，请稍后再试";
+
 impl ServiceError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self::NotFound(msg.into())
@@ -76,28 +79,23 @@ impl ServiceError {
         Self::Validation(msg.into())
     }
 
-    /// 构造内部错误：立即记录日志（细节进日志，响应层固定 500）。
     pub fn internal(msg: impl Into<String>) -> Self {
         let msg = msg.into();
         tracing::error!("service error: {}", msg);
         Self::Internal(msg)
     }
 
-    /// 转换为 axum handler 的标准错误元组。
     pub fn into_tuple(self) -> (StatusCode, Json<ErrorResponse>) {
         let (status, msg) = match self {
             Self::NotFound(m) => (StatusCode::NOT_FOUND, m),
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m),
-            Self::RateLimited => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "请求过于频繁，请稍后再试".into(),
-            ),
+            Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED_MSG.into()),
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             Self::Conflict(m) => (StatusCode::CONFLICT, m),
             Self::Duplicate(m) => (StatusCode::CONFLICT, m),
             Self::QuotaExceeded(m) => (StatusCode::INSUFFICIENT_STORAGE, m),
             Self::Validation(m) => (StatusCode::UNPROCESSABLE_ENTITY, m),
-            Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误".into()),
+            Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, INTERNAL_ERROR_MSG.into()),
         };
         error_response(status, msg)
     }

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 
+const isDev = import.meta.env.DEV
+
 interface PerformanceMetric {
   name: string
   value: number
@@ -19,7 +21,6 @@ interface DebugInfo {
 }
 
 export function useDevTools() {
-  const [isDev] = useState(import.meta.env.DEV)
   const [showPanel, setShowPanel] = useState(false)
   const [metrics, setMetrics] = useState<PerformanceMetric[]>([])
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
@@ -94,7 +95,7 @@ export function useDevTools() {
     
     const interval = setInterval(collectMetrics, 2000)
     return () => clearInterval(interval)
-  }, [isDev, showPanel, collectDebugInfo, collectMetrics])
+  }, [showPanel, collectDebugInfo, collectMetrics])
 
   // 快捷键切换面板
   useEffect(() => {
@@ -110,7 +111,7 @@ export function useDevTools() {
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isDev])
+  }, [])
 
   return {
     isDev,

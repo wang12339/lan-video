@@ -1,4 +1,4 @@
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct PlaylistRow {
@@ -40,7 +40,8 @@ impl PlaylistRepository {
     ) -> Result<PlaylistRow, sqlx::Error> {
         sqlx::query_as::<_, PlaylistRow>(
             r#"INSERT INTO playlists (user_id, name, description, is_public)
-               VALUES ($1, $2, $3, $4) RETURNING *"#,
+               VALUES ($1, $2, $3, $4)
+               RETURNING id, user_id, name, description, is_public, cover_url, created_at, updated_at"#,
         )
         .bind(user_id)
         .bind(name)
@@ -51,10 +52,12 @@ impl PlaylistRepository {
     }
 
     pub async fn get_playlist(&self, playlist_id: i64) -> Result<Option<PlaylistRow>, sqlx::Error> {
-        sqlx::query_as::<_, PlaylistRow>("SELECT * FROM playlists WHERE id = $1")
-            .bind(playlist_id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, PlaylistRow>(
+            "SELECT id, user_id, name, description, is_public, cover_url, created_at, updated_at FROM playlists WHERE id = $1",
+        )
+        .bind(playlist_id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     pub async fn update_playlist(
@@ -158,8 +161,22 @@ impl PlaylistRepository {
         &self,
         user_id: i64,
     ) -> Result<Vec<(PlaylistRow, i64)>, sqlx::Error> {
-        let rows = sqlx::query(
-            r#"SELECT p.*, COALESCE(i.item_count, 0) as item_count
+        #[derive(sqlx::FromRow)]
+        struct PlaylistWithCount {
+            id: i64,
+            user_id: i64,
+            name: String,
+            description: Option<String>,
+            is_public: bool,
+            cover_url: Option<String>,
+            created_at: chrono::NaiveDateTime,
+            updated_at: chrono::NaiveDateTime,
+            item_count: i64,
+        }
+
+        let rows = sqlx::query_as::<_, PlaylistWithCount>(
+            r#"SELECT p.id, p.user_id, p.name, p.description, p.is_public, p.cover_url,
+                      p.created_at, p.updated_at, COALESCE(i.item_count, 0) as item_count
                FROM playlists p
                LEFT JOIN (SELECT playlist_id, COUNT(*) as item_count FROM playlist_items GROUP BY playlist_id) i ON i.playlist_id = p.id
                WHERE p.user_id = $1
@@ -173,17 +190,16 @@ impl PlaylistRepository {
             .into_iter()
             .map(|r| {
                 let playlist = PlaylistRow {
-                    id: r.get("id"),
-                    user_id: r.get("user_id"),
-                    name: r.get("name"),
-                    description: r.get("description"),
-                    is_public: r.get("is_public"),
-                    cover_url: r.get("cover_url"),
-                    created_at: r.get("created_at"),
-                    updated_at: r.get("updated_at"),
+                    id: r.id,
+                    user_id: r.user_id,
+                    name: r.name,
+                    description: r.description,
+                    is_public: r.is_public,
+                    cover_url: r.cover_url,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
                 };
-                let count: i64 = r.get("item_count");
-                (playlist, count)
+                (playlist, r.item_count)
             })
             .collect())
     }
@@ -224,22 +240,29 @@ impl PlaylistRepository {
         playlist_id: i64,
         video_ids: &[i64],
     ) -> Result<(), sqlx::Error> {
+        if video_ids.is_empty() {
+            return Ok(());
+        }
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('playlist_items:' || $1::text))")
             .bind(playlist_id)
             .execute(&mut *tx)
             .await?;
 
+        let mut builder =
+            sqlx::QueryBuilder::new("UPDATE playlist_items SET position = sub.pos FROM (VALUES ");
+        let mut separated = builder.separated(", ");
         for (pos, video_id) in video_ids.iter().enumerate() {
-            sqlx::query(
-                "UPDATE playlist_items SET position = $3 WHERE playlist_id = $1 AND video_id = $2",
-            )
-            .bind(playlist_id)
-            .bind(video_id)
-            .bind(pos as i32)
-            .execute(&mut *tx)
-            .await?;
+            separated.push_unseparated("(");
+            separated.push_bind_unseparated(*video_id);
+            separated.push_unseparated(", ");
+            separated.push_bind_unseparated(pos as i32);
+            separated.push_unseparated(")");
         }
+        separated.push_unseparated(") AS sub(vid, pos) WHERE playlist_items.playlist_id = ");
+        builder.push_bind(playlist_id);
+        builder.push(" AND playlist_items.video_id = sub.vid");
+        builder.build().execute(&mut *tx).await?;
 
         sqlx::query("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1")
             .bind(playlist_id)

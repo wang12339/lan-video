@@ -70,19 +70,16 @@ pub async fn security_headers(req: Request, next: Next) -> impl IntoResponse {
         HeaderValue::from_static("same-origin"),
     );
 
+    // Cross-Origin-Embedder-Policy: enable cross-origin isolation for SharedArrayBuffer
+    headers.insert(
+        axum::http::header::HeaderName::from_static("cross-origin-embedder-policy"),
+        HeaderValue::from_static("require-corp"),
+    );
+
     res
 }
 
-/// Return true if the request was made over HTTPS.
-///
-/// SECURITY: the `X-Forwarded-Proto` hint is only honoured when the direct
-/// peer is a trusted proxy (`TRUSTED_PROXY=1` for custom proxies, or
-/// Cloudflare's published ranges when unset) — the same policy
-/// [`crate::util::net::client_ip`] applies to forwarded client-IP headers.
-/// A client connecting straight to the origin can no longer forge
-/// `X-Forwarded-Proto: https` to suppress the HTTP→HTTPS redirect or to get
-/// HSTS issued on a plaintext response. Since the origin only speaks HTTP
-/// (TLS is terminated at the edge), any untrusted peer is treated as HTTP.
+#[inline]
 fn is_https_request(req: &Request) -> bool {
     if !is_trusted_peer(req) {
         return false;
@@ -94,17 +91,14 @@ fn is_https_request(req: &Request) -> bool {
         .unwrap_or(false)
 }
 
-/// True when the direct socket peer is a proxy we trust to set forwarding
-/// headers. Mirrors the peer-trust logic in [`crate::util::net::client_ip`]
-/// (TRUSTED_PROXY=1 → trust any peer; otherwise only Cloudflare ranges).
-/// Note: the Cloudflare range tables below are duplicated from
-/// `util/net.rs` — keep them in sync, or share a single helper if both
-/// modules become editable.
+#[inline]
 fn is_trusted_peer(req: &Request) -> bool {
-    let trusted_proxy = std::env::var("TRUSTED_PROXY")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    static TRUSTED_PROXY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let trusted_proxy = *TRUSTED_PROXY.get_or_init(|| {
+        std::env::var("TRUSTED_PROXY")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    });
     if trusted_proxy {
         return true;
     }
@@ -114,19 +108,7 @@ fn is_trusted_peer(req: &Request) -> bool {
         .unwrap_or(false)
 }
 
-/// CSP policy string — restrict resources to same-origin where possible.
-/// Includes `frame-ancestors 'none'` to redundantly block framing (defence in
-/// depth alongside X-Frame-Options: DENY), and `object-src`/`frame-src 'none'`
-/// to close the classic plugin-embedding and iframe-sandbox escape hatches.
-///
-/// Security notes:
-/// - `upgrade-insecure-requests` tells the browser to rewrite http:// sub-resource
-///   URLs to https:// before fetching, preventing mixed-content warnings.
-/// - `block-all-mixed-content` is the legacy equivalent (deprecated but harmless
-///   as defence-in-depth for older browsers).
-/// - `script-src` and `connect-src` allow Cloudflare Web Analytics (Beacon)
-///   endpoint only; `unsafe-inline` and `unsafe-eval` are deliberately omitted.
-const CSP_POLICY: &str = "default-src 'self'; \
+static CSP_POLICY: &str = "default-src 'self'; \
     base-uri 'self'; \
     form-action 'self'; \
     frame-ancestors 'none'; \
@@ -369,6 +351,10 @@ mod tests {
             res.headers().get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
+        assert_eq!(
+            res.headers().get("cross-origin-embedder-policy").unwrap(),
+            "require-corp"
+        );
         // Response body is untouched by the middleware
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"hi");
@@ -400,6 +386,10 @@ mod tests {
         assert_eq!(
             res.headers().get("cross-origin-resource-policy").unwrap(),
             "same-origin"
+        );
+        assert_eq!(
+            res.headers().get("cross-origin-embedder-policy").unwrap(),
+            "require-corp"
         );
         // HSTS must NOT be present on plain HTTP
         assert!(res.headers().get("strict-transport-security").is_none());

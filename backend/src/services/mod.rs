@@ -4,6 +4,7 @@ pub mod comment_service;
 pub mod email_service;
 pub mod log_parser;
 pub mod media_service;
+pub mod plan_service;
 pub mod playback_service;
 pub mod playlist_service;
 pub mod recommendation_service;

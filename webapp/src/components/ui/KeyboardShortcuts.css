@@ -311,3 +311,12 @@
   border-color: var(--text3);
   background: var(--bg3);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .shortcuts-overlay,
+  .shortcuts-panel,
+  .shortcuts-key.editing {
+    animation: none !important;
+    transition: none !important;
+  }
+}

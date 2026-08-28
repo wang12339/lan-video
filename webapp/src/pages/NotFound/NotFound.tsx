@@ -1,8 +1,9 @@
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import './NotFound.css'
 
-export default function NotFound() {
+function NotFound() {
   const { t } = useTranslation()
   return (
     <div className="not-found">
@@ -53,3 +54,5 @@ export default function NotFound() {
     </div>
   )
 }
+
+export default memo(NotFound)

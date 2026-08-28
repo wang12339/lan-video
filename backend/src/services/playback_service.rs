@@ -191,10 +191,8 @@ impl PlaybackService {
     /// 返回 true 表示应写入数据库：该 key 在节流窗口内没有写过。
     /// 原子地更新记录时间（DashMap::entry 持写锁），锁在 await 前释放。
     fn should_write(&self, username: &str, video_id: i64) -> bool {
-        let key = format!("{}:{}", username, video_id);
+        let key = format!("{}:{video_id}", username);
         let now = Instant::now();
-        // 新条目首次出现时立即放行（or_insert 的时间戳回溯到窗口外），
-        // 否则第一笔进度写入会被节流窗口吞掉。
         let backdated = now
             .checked_sub(WRITE_THROTTLE + Duration::from_millis(1))
             .unwrap_or(now);
@@ -205,11 +203,14 @@ impl PlaybackService {
             }
             *last = now;
         }
-        // 惰性清理：条目数超限时回收过期条目，防止内存无限增长
         if self.last_writes.len() > MAX_TRACKED_WRITES {
             self.last_writes
                 .retain(|_, last| last.elapsed() < ENTRY_TTL);
         }
         true
+    }
+
+    pub fn active_throttle_entries(&self) -> usize {
+        self.last_writes.len()
     }
 }

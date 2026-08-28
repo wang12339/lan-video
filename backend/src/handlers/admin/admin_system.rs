@@ -99,8 +99,6 @@ pub async fn get_registration_enabled(
     }))
 }
 
-/// PUT /admin/config/registration — 开关注册功能
-
 pub async fn set_registration_enabled(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<RegistrationToggleRequest>,
@@ -127,7 +125,6 @@ pub async fn set_registration_enabled(
     }))
 }
 
-/// GET /admin/system — 系统监控
 pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let db_connections = state
         .repos
@@ -136,7 +133,6 @@ pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json:
         .await
         .unwrap_or(0);
 
-    // Media directory disk usage
     let media_root = state.config.media_root.clone();
     let disk_usage = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -168,14 +164,13 @@ pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json:
 }
 
 fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 {
-        return format!("{} B", bytes);
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    match bytes {
+        0..KB => format!("{} B", bytes),
+        KB..MB => format!("{:.1} KB", bytes as f64 / KB as f64),
+        MB..GB => format!("{:.1} MB", bytes as f64 / MB as f64),
+        _ => format!("{:.2} GB", bytes as f64 / GB as f64),
     }
-    if bytes < 1024 * 1024 {
-        return format!("{:.1} KB", bytes as f64 / 1024.0);
-    }
-    if bytes < 1024 * 1024 * 1024 {
-        return format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0);
-    }
-    format!("{:.2} GB", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }

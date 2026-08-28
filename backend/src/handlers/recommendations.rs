@@ -1,7 +1,8 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use moka::sync::Cache;
+use serde::Deserialize;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -14,6 +15,21 @@ use crate::util::error::ServiceError;
 use crate::util::hashid;
 use crate::util::response::{error_response, ErrorResponse};
 
+#[derive(Deserialize, Default)]
+pub struct PageParams {
+    pub page: Option<i64>,
+    pub size: Option<i64>,
+}
+
+impl PageParams {
+    fn offset_limit(&self) -> (i64, i64) {
+        let page = self.page.unwrap_or(1).max(1);
+        let size = self.size.unwrap_or(20).clamp(1, 100);
+        let offset = (page - 1) * size;
+        (offset, size)
+    }
+}
+
 fn map_to_recommendation(r: VideoRecommendation) -> RecommendationItem {
     RecommendationItem {
         id: r.id,
@@ -21,7 +37,7 @@ fn map_to_recommendation(r: VideoRecommendation) -> RecommendationItem {
         category: r.category,
         thumb_url: r.thumb_url,
         score: r.score,
-        reason: r.reason,
+        reason: r.reason.to_string(),
     }
 }
 
@@ -48,10 +64,10 @@ async fn get_cached_recommendations<F, Fut>(
     state: &AppState,
     key: &str,
     loader: F,
-) -> Result<Vec<VideoRecommendation>, (StatusCode, Json<ErrorResponse>)>
+) -> Result<(Vec<VideoRecommendation>, i64), (StatusCode, Json<ErrorResponse>)>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<VideoRecommendation>, ServiceError>>,
+    Fut: std::future::Future<Output = Result<(Vec<VideoRecommendation>, i64), ServiceError>>,
 {
     if let Some(cached) = state.recommendation_cache.get(key) {
         return Ok(cached);
@@ -61,11 +77,11 @@ where
     if let Some(cached) = state.recommendation_cache.get(key) {
         return Ok(cached);
     }
-    let items = loader().await.map_err(|e| e.into_tuple())?;
+    let result = loader().await.map_err(|e| e.into_tuple())?;
     state
         .recommendation_cache
-        .insert(key.to_string(), items.clone());
-    Ok(items)
+        .insert(key.to_string(), result.clone());
+    Ok(result)
 }
 
 /// GET /recommendations
@@ -104,11 +120,14 @@ pub async fn get_similar_videos(
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
 
     let cache_key = format!("similar:{}", video_id);
-    let recommendations = get_cached_recommendations(&state, &cache_key, || {
-        state
+    let (recommendations, _total) = get_cached_recommendations(&state, &cache_key, || async {
+        let items = state
             .services
             .recommendation
             .get_similar_videos(video_id, 10)
+            .await?;
+        let count = items.len() as i64;
+        Ok((items, count))
     })
     .await?;
 
@@ -128,9 +147,15 @@ pub async fn get_similar_videos(
 /// Get trending/popular videos (cached for 2 minutes)
 pub async fn get_trending_videos(
     State(state): State<Arc<AppState>>,
+    Query(params): Query<PageParams>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let recommendations = get_cached_recommendations(&state, "trending", || {
-        state.services.recommendation.get_trending_videos(20)
+    let (offset, limit) = params.offset_limit();
+    let cache_key = format!("trending:{}:{}", offset, limit);
+    let (recommendations, total) = get_cached_recommendations(&state, &cache_key, || {
+        state
+            .services
+            .recommendation
+            .get_trending_videos(offset, limit)
     })
     .await?;
 
@@ -140,7 +165,7 @@ pub async fn get_trending_videos(
         .collect();
 
     Ok(Json(RecommendationResponse {
-        total: items.len(),
+        total: total as usize,
         items,
     }))
 }
@@ -150,9 +175,15 @@ pub async fn get_trending_videos(
 /// Get recently uploaded videos (cached for 2 minutes)
 pub async fn get_recent_videos(
     State(state): State<Arc<AppState>>,
+    Query(params): Query<PageParams>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let recommendations = get_cached_recommendations(&state, "recent", || {
-        state.services.recommendation.get_recent_videos(20)
+    let (offset, limit) = params.offset_limit();
+    let cache_key = format!("recent:{}:{}", offset, limit);
+    let (recommendations, total) = get_cached_recommendations(&state, &cache_key, || {
+        state
+            .services
+            .recommendation
+            .get_recent_videos(offset, limit)
     })
     .await?;
 
@@ -162,7 +193,7 @@ pub async fn get_recent_videos(
         .collect();
 
     Ok(Json(RecommendationResponse {
-        total: items.len(),
+        total: total as usize,
         items,
     }))
 }

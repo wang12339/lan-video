@@ -1,7 +1,8 @@
+import { memo } from 'react'
 import { useDevTools } from '../../hooks/useDevTools'
 import './DevTools.css'
 
-export default function DevTools() {
+function DevToolsImpl() {
   const { isDev, showPanel, setShowPanel, metrics, debugInfo, refreshMetrics } = useDevTools()
 
   if (!isDev) return null
@@ -23,7 +24,7 @@ export default function DevTools() {
         <div className="dev-tools-panel" role="dialog" aria-label="开发工具">
           <div className="dev-tools-header">
             <h3>🛠️ 开发工具</h3>
-            <button className="dev-tools-close" onClick={() => setShowPanel(false)}>
+            <button type="button" className="dev-tools-close" onClick={() => setShowPanel(false)} aria-label="关闭开发工具">
               ✕
             </button>
           </div>
@@ -90,16 +91,16 @@ export default function DevTools() {
             <section className="dev-tools-section">
               <h4>快捷操作</h4>
               <div className="dev-tools-actions">
-                <button onClick={() => localStorage.clear()}>
+                <button type="button" onClick={() => localStorage.clear()}>
                   清除LocalStorage
                 </button>
-                <button onClick={() => sessionStorage.clear()}>
+                <button type="button" onClick={() => sessionStorage.clear()}>
                   清除SessionStorage
                 </button>
-                <button onClick={() => window.location.reload()}>
+                <button type="button" onClick={() => window.location.reload()}>
                   刷新页面
                 </button>
-                <button onClick={() => console.log('Debug Info:', debugInfo)}>
+                <button type="button" onClick={() => console.log('Debug Info:', debugInfo)}>
                   输出调试信息
                 </button>
               </div>
@@ -110,3 +111,5 @@ export default function DevTools() {
     </>
   )
 }
+
+export default memo(DevToolsImpl)

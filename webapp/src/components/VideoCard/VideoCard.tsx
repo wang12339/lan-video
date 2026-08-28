@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { formatDuration } from '../../api/utils'
 import SkeletonLoader from '../ui/SkeletonLoader'
 import LazyImage from '../ui/LazyImage'
 import './VideoCard.css'
@@ -30,12 +31,6 @@ function getCategoryKey(cat: string): string {
     '教程': 'tutorial', '娱乐': 'entertainment', '运动': 'sports', '记录': 'record'
   }
   return map[cat] || cat
-}
-
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 function relativeTime(dateStr: string): string {
@@ -88,8 +83,37 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
     [video.views, t]
   );
 
-  // 获取缩略图URL，优先使用thumbnail_url，然后是thumb
-  const thumbnailUrl = video.thumbnail_url || video.thumb || '';
+  const thumbnailUrl = useMemo(
+    () => video.thumbnail_url || video.thumb || '',
+    [video.thumbnail_url, video.thumb]
+  );
+
+  const categoryBadge = useMemo(() => {
+    if (!video.category || ['local_video', 'local', 'external'].includes(video.category)) return null
+    return (
+      <span className="cat-badge" data-cat={video.category}>
+        {t('home.categories.' + getCategoryKey(video.category), { defaultValue: video.category })}
+      </span>
+    )
+  }, [video.category, t]);
+
+  const durationBadge = useMemo(() => {
+    if (video.duration == null || video.duration <= 0) return null
+    return (
+      <span className="dur">
+        {formatDuration(video.duration)}
+      </span>
+    )
+  }, [video.duration]);
+
+  const progressBar = useMemo(() => {
+    if (video.progress == null || video.progress <= 0) return null
+    return (
+      <div className="vc-progress-bar">
+        <div className="vc-progress-fill" style={{ width: `${video.progress}%` }} />
+      </div>
+    )
+  }, [video.progress]);
 
   return (
     <div
@@ -123,23 +147,11 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
             </svg>
           </div>
         </div>
-        {video.duration != null && video.duration > 0 && (
-          <span className="dur">
-            {formatDuration(video.duration)}
-          </span>
-        )}
-        {video.progress != null && video.progress > 0 && (
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${video.progress}%` }} />
-          </div>
-        )}
+        {durationBadge}
+        {progressBar}
       </div>
       <div className="video-info">
-        {video.category && !['local_video', 'local', 'external'].includes(video.category) && (
-          <span className="cat-badge" data-cat={video.category}>
-            {t('home.categories.' + getCategoryKey(video.category), { defaultValue: video.category })}
-          </span>
-        )}
+        {categoryBadge}
         <h3 className="title">{video.title}</h3>
         <div className="video-meta">
           {video.views > 0
@@ -149,7 +161,7 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
                 </svg>
                 {viewsText}
               </span>
-            : <span className="video-badge-new" aria-label="新视频">新</span>
+            : <span className="video-badge-new" aria-label={t('gallery.newBadge')}>新</span>
           }
           {video.views > 0 && video.date && <span className="meta-sep" aria-hidden="true">·</span>}
           {video.date && <span className="video-date">{relativeTime(video.date)}</span>}
@@ -161,9 +173,12 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
 
 VideoCard.displayName = 'VideoCard';
 
-// VideoCard 骨架屏组件（委托给统一 SkeletonLoader）
-export function VideoCardSkeleton({ count = 1 }: { count?: number }) {
-  return <SkeletonLoader type="video-card" lines={count} />;
+interface VideoCardSkeletonProps {
+  count?: number
 }
+
+export const VideoCardSkeleton = memo(function VideoCardSkeleton({ count = 1 }: VideoCardSkeletonProps) {
+  return <SkeletonLoader type="video-card" lines={count} aria-hidden="true" />
+})
 
 export default VideoCard;

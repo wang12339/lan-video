@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { forgotPassword, resetPassword } from '../../api'
 import { verifyEmail } from '../../api/auth'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 import './AuthDialog.css'
 
 interface AuthDialogProps {
@@ -23,15 +24,7 @@ const PASSWORD_MAX = 128
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // 与后端 char::is_control 对齐（换行等控制字符）
 const CONTROL_RE = /[\p{Cc}]/u
-
-const FOCUSABLE_SELECTOR = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-
-function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
-  if (!root) return []
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    el => el.offsetParent !== null || el === document.activeElement
-  )
-}
+const MAX_TOKEN_LENGTH = 256
 
 function countPasswordCategories(pw: string): number {
   let upper = 0
@@ -83,11 +76,6 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   const submitLockRef = useRef(false)
   const switchTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const dialogRef = useRef<HTMLDivElement>(null)
-  const prevFocusRef = useRef<HTMLElement | null>(null)
-  // 在渲染期（autoFocus 生效前）记录触发元素，关闭时归还焦点
-  if (prevFocusRef.current === null) {
-    prevFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  }
 
   const validateForm = useCallback((m: Mode, values: {
     username: string; email: string; password: string; token: string;
@@ -121,6 +109,9 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   }, [t])
 
   const values = { username, email, password, token: resetToken }
+
+  const sanitizeUsername = (v: string) => v.replace(CONTROL_RE, '').slice(0, USERNAME_MAX)
+  const sanitizeToken = (v: string) => v.replace(/[^\w\-]/g, '').slice(0, MAX_TOKEN_LENGTH)
 
   const handleFieldChange = (field: FieldName, value: string, setter: (v: string) => void) => {
     setter(value)
@@ -160,12 +151,14 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
     setLoading(true)
     setError('')
     setSuccess('')
+    const safeUsername = sanitizeUsername(username)
+    const safeToken = sanitizeToken(resetToken)
     try {
       if (mode === 'login') {
-        await login(username.trim(), password)
+        await login(safeUsername, password)
         onClose?.()
       } else if (mode === 'register') {
-        const msg = await register(username.trim(), password)
+        const msg = await register(safeUsername, password)
         if (msg) {
           setSuccess(msg)
         } else {
@@ -175,7 +168,7 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
         const res = await forgotPassword(email.trim())
         setSuccess(res.message || t('auth.forgotSent'))
       } else if (mode === 'reset') {
-        const res = await resetPassword(resetToken.trim(), password)
+        const res = await resetPassword(safeToken, password)
         setSuccess(res.message || t('auth.resetDone'))
         switchTimerRef.current = setTimeout(() => switchMode('login'), 2200)
       }
@@ -192,49 +185,14 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
-    // 焦点移入弹层：优先 [autofocus]（表单输入），否则首个可聚焦元素
-    const timer = setTimeout(() => {
-      const dialog = dialogRef.current
-      if (!dialog) return
-      const autoFocused = dialog.querySelector<HTMLElement>('[autofocus]')
-      const target = autoFocused ?? getFocusableElements(dialog)[0]
-      target?.focus()
-    }, 50)
-
     return () => {
-      clearTimeout(timer)
       document.body.style.overflow = prevOverflow
-      prevFocusRef.current?.focus?.()
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current)
     }
   }, [])
 
-  // 焦点陷阱：Tab / Shift+Tab 循环限制在弹层内
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return
-      const focusables = getFocusableElements(dialogRef.current)
-      if (focusables.length === 0) {
-        e.preventDefault()
-        return
-      }
-      const first = focusables[0] as HTMLElement
-      const last = focusables[focusables.length - 1] as HTMLElement
-      const active = document.activeElement
-      const inside = active instanceof HTMLElement && dialogRef.current?.contains(active) === true
-      if (e.shiftKey) {
-        if (!inside || active === first) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (!inside || active === last) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [])
+  // 焦点陷阱
+  useFocusTrap(dialogRef, true)
 
   useEffect(() => {
     if (!closable) return
@@ -313,7 +271,10 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
               type="button"
               className={`auth-tab ${mode === 'login' ? 'active' : ''}`}
               role="tab"
+              id="auth-tab-login"
               aria-selected={mode === 'login'}
+              aria-controls="auth-panel"
+              tabIndex={mode === 'login' ? 0 : -1}
               onClick={() => switchMode('login')}
             >
               {t('auth.login')}
@@ -322,7 +283,10 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
               type="button"
               className={`auth-tab ${mode === 'register' ? 'active' : ''}`}
               role="tab"
+              id="auth-tab-register"
               aria-selected={mode === 'register'}
+              aria-controls="auth-panel"
+              tabIndex={mode === 'register' ? 0 : -1}
               onClick={() => switchMode('register')}
             >
               {t('auth.register')}
@@ -357,7 +321,7 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
             )}
           </div>
         ) : (
-          <form className="auth-form" onSubmit={handleSubmit} noValidate>
+          <form className="auth-form" id="auth-panel" role="tabpanel" onSubmit={handleSubmit} noValidate>
             {mode === 'reset' ? (
               <>
                 <label className="auth-label" htmlFor="auth-field-token">
@@ -375,6 +339,10 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
                     required
                     autoFocus
                     autoComplete="off"
+                    maxLength={MAX_TOKEN_LENGTH}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </label>
                 {renderError('token')}
@@ -426,6 +394,10 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
                     required
                     autoFocus
                     autoComplete="email"
+                    maxLength={254}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </label>
                 {renderError('email')}
@@ -448,6 +420,9 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
                     autoFocus
                     autoComplete="username"
                     maxLength={USERNAME_MAX}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </label>
                 {renderError('username')}

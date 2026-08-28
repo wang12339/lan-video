@@ -18,55 +18,49 @@ use crate::state::AppState;
 use crate::util::net::client_ip;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse};
 
-/// 邮箱验证成功页面模板
 const VERIFY_EMAIL_HTML: &str = include_str!("../../templates/verify_email.html");
-
-/// 邮箱验证失败页面模板
 const VERIFY_EMAIL_ERROR_HTML: &str = include_str!("../../templates/verify_email_error.html");
+const BODY_LIMIT: usize = 1_048_576;
+
+async fn parse_auth_request(
+    req: Request,
+) -> Result<AuthRequest, (StatusCode, Json<ErrorResponse>)> {
+    let body = req.into_body();
+    let body = axum::body::to_bytes(body, BODY_LIMIT).await.map_err(|e| {
+        tracing::error!("Failed to read request body: {}", e);
+        error_response(StatusCode::BAD_REQUEST, "invalid request body")
+    })?;
+    serde_json::from_slice(&body)
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "invalid request body"))
+}
 
 /// Build an auth response, setting the token cookie if present
 fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
-    if let Some(token) = resp.token.clone() {
-        let mut http_resp = Json(resp).into_response();
-        http_resp.headers_mut().insert(
-            axum::http::header::SET_COOKIE,
-            match HeaderValue::from_str(&auth_mw::set_token_cookie(
-                &token,
-                crate::services::auth_service::COOKIE_MAX_AGE,
-                state.config.cookie_secure,
-            )) {
-                Ok(val) => val,
-                Err(e) => {
-                    tracing::error!("Failed to create cookie header: {}", e);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(AuthResponse {
-                            ok: false,
-                            token: None,
-                            error: Some("Internal server error".to_string()),
-                        }),
-                    )
-                        .into_response();
-                }
-            },
+    if let Some(ref token) = resp.token {
+        let cookie_str = auth_mw::set_token_cookie(
+            token,
+            crate::services::auth_service::COOKIE_MAX_AGE,
+            state.config.cookie_secure,
         );
+        let mut http_resp = Json(resp).into_response();
+        if let Ok(val) = HeaderValue::from_str(&cookie_str) {
+            http_resp
+                .headers_mut()
+                .insert(axum::http::header::SET_COOKIE, val);
+        }
         http_resp
     } else {
         Json(resp).into_response()
     }
 }
 
-/// Handle an auth result (register or login), mapping errors appropriately
 fn handle_auth_result(
     result: Result<AuthResponse, crate::util::error::ServiceError>,
     state: &AppState,
 ) -> axum::response::Response {
     match result {
         Ok(resp) if resp.ok => auth_response(resp, state).into_response(),
-        Ok(resp) => {
-            // Auth failure (e.g. wrong password, user not found) — return 401
-            (StatusCode::UNAUTHORIZED, Json(resp)).into_response()
-        }
+        Ok(resp) => (StatusCode::UNAUTHORIZED, Json(resp)).into_response(),
         Err(crate::util::error::ServiceError::RateLimited) => {
             tracing::warn!("Auth request rate limited");
             (
@@ -103,19 +97,11 @@ fn handle_auth_result(
     }
 }
 
-/// POST /auth/register
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
-    // SECURITY (API F-002): the registration toggle is checked *before* JSON
-    // parsing so that the error response is uniform regardless of payload
-    // shape. Previously, `SafeJson` rejected empty/invalid bodies with 400
-    // while the toggle check returned 404, leaking both the endpoint's
-    // existence and the registration state.
-
-    // 检查全局配置或租户设置
     let global_enabled = state.config.registration_enabled();
     let tenant_enabled = state
         .repos
@@ -131,67 +117,51 @@ pub async fn register(
         return Err(error_response(StatusCode::NOT_FOUND, "Not Found"));
     }
 
-    // Real client IP from Cloudflare if available — falls back to socket peer.
     let ip = client_ip(&req);
+    let auth_req = parse_auth_request(req).await?;
 
-    // Extract the body bytes from the request.
-    let body = req.into_body();
-    let body = axum::body::to_bytes(body, 1_048_576).await.map_err(|e| {
-        tracing::error!("Failed to read request body: {}", e);
-        error_response(StatusCode::BAD_REQUEST, "invalid request body")
-    })?;
-
-    // Manually parse the JSON body so we control the error message.
-    let auth_req: AuthRequest = match serde_json::from_slice(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid request body",
-            ))
-        }
-    };
-
-    let svc = state.services.auth.clone();
     Ok(handle_auth_result(
-        svc.register(&auth_req, &ip, tenant.tenant_id).await,
+        state
+            .services
+            .auth
+            .register(&auth_req, &ip, tenant.tenant_id)
+            .await,
         &state,
     ))
 }
 
-/// POST /auth/login
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
-    // Real client IP from Cloudflare if available — falls back to socket peer.
     let ip = client_ip(&req);
+    let auth_req = parse_auth_request(req).await?;
 
-    // Extract the body bytes from the request.
-    let body = req.into_body();
-    let body = axum::body::to_bytes(body, 1_048_576).await.map_err(|e| {
-        tracing::error!("Failed to read request body: {}", e);
-        error_response(StatusCode::BAD_REQUEST, "invalid request body")
-    })?;
-
-    let auth_req: AuthRequest = match serde_json::from_slice(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid request body",
-            ))
+    let result = state
+        .services
+        .auth
+        .login(&auth_req, &ip, tenant.tenant_id)
+        .await;
+    if let Ok(ref resp) = result {
+        if !resp.ok {
+            let fail_key = format!("login_fail:{}", ip);
+            if state
+                .ip_rate_limiter
+                .check_with(&fail_key, 10, 300, 0)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    ip = %ip,
+                    "suspicious login activity: repeated failures from same IP"
+                );
+            }
         }
-    };
-    let svc = state.services.auth.clone();
-    Ok(handle_auth_result(
-        svc.login(&auth_req, &ip, tenant.tenant_id).await,
-        &state,
-    ))
+    }
+    Ok(handle_auth_result(result, &state))
 }
 
-/// POST /auth/logout
 pub async fn logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -203,20 +173,7 @@ pub async fn logout(
         .map(|s| s.to_string())
         .or_else(|| auth_mw::extract_token_from_cookie(&headers));
 
-    let username = match token.as_deref() {
-        Some(t) => state
-            .repos
-            .user
-            .find_user_by_token(t)
-            .await
-            .ok()
-            .flatten()
-            .map(|u| u.username),
-        None => None,
-    };
-
-    let svc = state.services.auth.clone();
-    svc.logout(username.as_deref(), token.as_deref()).await;
+    state.services.auth.logout(None, token.as_deref()).await;
 
     let mut resp = Json(AuthResponse {
         ok: true,
@@ -224,16 +181,11 @@ pub async fn logout(
         error: None,
     })
     .into_response();
-    resp.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        match HeaderValue::from_str(&auth_mw::clear_token_cookie(state.config.cookie_secure)) {
-            Ok(val) => val,
-            Err(e) => {
-                tracing::error!("Failed to create clear-cookie header: {}", e);
-                return resp;
-            }
-        },
-    );
+    if let Ok(val) = HeaderValue::from_str(&auth_mw::clear_token_cookie(state.config.cookie_secure))
+    {
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, val);
+    }
     resp
 }
 
@@ -242,8 +194,9 @@ pub async fn user_info(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<UserInfoResponse> {
-    let svc = state.services.auth.clone();
-    match svc
+    match state
+        .services
+        .auth
         .user_info(&auth_user.username, auth_user.is_admin, auth_user.tenant_id)
         .await
     {
@@ -264,8 +217,9 @@ pub async fn user_profile(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<UserProfileResponse> {
-    let svc = state.services.auth.clone();
-    match svc
+    match state
+        .services
+        .auth
         .user_profile(&auth_user.username, auth_user.is_admin, auth_user.tenant_id)
         .await
     {
@@ -306,9 +260,6 @@ pub async fn upload_avatar(
                     "头像文件不能超过 5MB",
                 ));
             }
-            // SECURITY (A08-02): don't trust the client's Content-Type. Use
-            // magic-byte sniffing to identify the real image format. This
-            // blocks uploads of HTML/SVG/JS renamed to .png/.jpg.
             let (ext, _mime) = match crate::services::media_service::infer_image(&data) {
                 Some(t) => t,
                 None => {
@@ -329,7 +280,6 @@ pub async fn upload_avatar(
     ))?;
     let ext = file_ext.unwrap_or_else(|| "jpg".into());
 
-    // Save to media/avatars/
     let avatars_dir = state.config.media_root.join("avatars");
     tokio::fs::create_dir_all(&avatars_dir).await.map_err(|e| {
         tracing::error!("Failed to create avatars dir: {}", e);
@@ -338,9 +288,9 @@ pub async fn upload_avatar(
 
     let filename = format!("{}.{}", auth_user.id, ext);
     let path = avatars_dir.join(&filename);
-    let path_clone = path.clone();
 
-    tokio::task::spawn_blocking(move || std::fs::write(&path_clone, &data))
+    let write_data = data;
+    tokio::task::spawn_blocking(move || std::fs::write(&path, &write_data))
         .await
         .map_err(|e| {
             tracing::error!("Spawn blocking error: {}", e);
@@ -353,7 +303,6 @@ pub async fn upload_avatar(
 
     let avatar_url = format!("/media/avatars/{}", filename);
 
-    // Update user avatar in database
     let db_result = state
         .repos
         .user
@@ -362,8 +311,7 @@ pub async fn upload_avatar(
 
     if let Err(e) = db_result {
         tracing::error!("Update avatar error: {}", e);
-        // Don't leave an orphan file behind: the DB no longer references it,
-        // so it would be unreachable garbage on disk.
+        let path = avatars_dir.join(&filename);
         let _ = tokio::fs::remove_file(&path).await;
         return Err(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -371,12 +319,10 @@ pub async fn upload_avatar(
         ));
     }
 
-    // Clean up old avatars with different extensions (incl. bmp, which
-    // infer_image can also accept)
-    let avatars_dir = state.config.media_root.join("avatars");
+    let current_path = avatars_dir.join(&filename);
     for ext in &["jpg", "png", "webp", "gif", "bmp"] {
         let old_path = avatars_dir.join(format!("{}.{}", auth_user.id, ext));
-        if old_path != path && tokio::fs::metadata(&old_path).await.is_ok() {
+        if old_path != current_path && tokio::fs::metadata(&old_path).await.is_ok() {
             let _ = tokio::fs::remove_file(old_path).await;
         }
     }
@@ -387,17 +333,14 @@ pub async fn upload_avatar(
     })))
 }
 
-/// POST /auth/forgot-password
 pub async fn forgot_password(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Json<ForgotPasswordResponse> {
-    // Extract the real client IP for rate limiting.
     let ip = client_ip(&req);
 
-    // Extract the JSON body from the request.
     let body = req.into_body();
-    let body = match axum::body::to_bytes(body, 1_048_576).await {
+    let body = match axum::body::to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
         Err(_) => {
             return Json(ForgotPasswordResponse {
@@ -416,11 +359,8 @@ pub async fn forgot_password(
         }
     };
 
-    // Emails are stored lowercased (see update_email), so normalise before
-    // both the rate-limit key and the lookup to stay consistent.
     let email = forgot_req.email.trim().to_lowercase();
 
-    // IP 级速率限制：每分钟最多 5 次请求
     let ip_key = format!("forgot_pwd:ip:{}", ip);
     if state
         .ip_rate_limiter
@@ -434,7 +374,6 @@ pub async fn forgot_password(
         });
     }
 
-    // 邮箱级速率限制：每 5 分钟最多 2 次请求
     let email_key = format!("forgot_pwd:email:{}", email);
     if state
         .rate_limiter
@@ -448,10 +387,6 @@ pub async fn forgot_password(
         });
     }
 
-    // SECURITY: the DB lookup, token creation and the (potentially hundreds of
-    // ms) SMTP round-trip happen in a background task. The response always
-    // returns immediately with the same body, so response *timing* cannot be
-    // used to enumerate which emails are registered.
     let state = state.clone();
     tokio::spawn(async move {
         let Some(user) = state.repos.user.find_by_email(&email).await.ok().flatten() else {
@@ -592,12 +527,10 @@ pub async fn update_email(
     ))
 }
 
-/// POST /auth/send-verification-email
 pub async fn send_verification_email(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<SendVerificationEmailResponse> {
-    // 用户级速率限制：每 5 分钟最多 2 次请求
     let key = format!("verify_email:user:{}", auth_user.id);
     if state
         .rate_limiter
@@ -645,7 +578,6 @@ pub async fn send_verification_email(
             message: "验证邮件已发送。如果您的邮箱没有收到，请稍后再试。".into(),
         })
     } else {
-        // SMTP 未配置时直接标记已验证（开发/测试模式）
         if email.is_some() {
             let _ = state.repos.user.verify_email(auth_user.id).await;
         }

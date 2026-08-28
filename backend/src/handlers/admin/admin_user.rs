@@ -9,19 +9,10 @@ use crate::middleware::auth::AuthUser;
 use crate::models::admin::{AdminResetPasswordRequest, ApproveRequest};
 use crate::models::video::OkResponse;
 use crate::state::AppState;
-use crate::util::error::ServiceError;
 use crate::util::response::{error_response, ErrorResponse, SafeJson};
 
-/// Convert a `ServiceError` into a tuple response.
-fn map_admin_err(e: ServiceError) -> (StatusCode, Json<ErrorResponse>) {
-    e.into_tuple()
-}
+use super::map_admin_err;
 
-/// Convert an `ActionOutcome` with `ok: false` into the appropriate HTTP error.
-/// Maps known error messages to proper status codes:
-/// - "用户不存在" → 404
-/// - "无权限"/"权限不足" → 403
-/// - Anything else → 500
 fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
     let msg = msg.unwrap_or_else(|| "操作失败".into());
     if msg.contains("不存在") {
@@ -33,10 +24,9 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
     }
 }
 
-/// GET /admin/users
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
+    Extension(auth_user): Extension<AuthUser>,
 ) -> Result<
     Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
     (StatusCode, Json<ErrorResponse>),
@@ -44,13 +34,12 @@ pub async fn list_users(
     let users = state
         .services
         .admin
-        .list_users(_auth_user.tenant_id)
+        .list_users(auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     Ok(Json(users))
 }
 
-/// DELETE /admin/users/{id}
 pub async fn delete_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -78,14 +67,25 @@ pub async fn delete_user(
     }
 }
 
-/// PUT /admin/users/{id}/password — 重置密码
-
 pub async fn reset_user_password(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<i64>,
     SafeJson(req): SafeJson<AdminResetPasswordRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let pw_len = req.password.chars().count();
+    if !(8..=128).contains(&pw_len) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "密码长度需在 8-128 个字符之间",
+        ));
+    }
+    if !crate::services::auth_service::is_password_strong_enough(&req.password) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "密码过于简单，请使用包含大小写字母、数字、特殊字符中至少三种的密码",
+        ));
+    }
     let outcome = state
         .services
         .admin
@@ -108,7 +108,6 @@ pub async fn reset_user_password(
     }
 }
 
-/// PUT /admin/users/{id}/admin — 切换管理员权限
 pub async fn toggle_user_admin(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -136,8 +135,6 @@ pub async fn toggle_user_admin(
         Err(outcome_error(outcome.error_msg))
     }
 }
-
-/// PUT /admin/users/{id}/approve — 审批用户
 
 pub async fn approve_user(
     State(state): State<Arc<AppState>>,
@@ -168,7 +165,6 @@ pub async fn approve_user(
     }
 }
 
-/// POST /admin/users/{id}/kick — 强制用户下线（删除所有 token）
 pub async fn kick_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

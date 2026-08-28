@@ -1,5 +1,7 @@
 .profile-page {
   min-height: 100vh;
+  container-type: inline-size;
+  container-name: profile;
 }
 
 /* Login prompt */
@@ -225,6 +227,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
+  contain: layout style;
 }
 
 .profile-empty {
@@ -252,6 +255,8 @@
   border-radius: var(--radius);
   cursor: pointer;
   transition: all 0.2s;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 124px;
 }
 
 .history-item:hover {
@@ -649,7 +654,7 @@
 }
 
 /* 作品分页 */
-.load-more-btn {
+.profile-load-more-btn {
   display: block;
   margin: 24px auto 0;
   padding: 10px 36px;
@@ -662,12 +667,12 @@
   transition: all 0.2s;
 }
 
-.load-more-btn:hover:not(:disabled) {
+.profile-load-more-btn:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.load-more-btn:disabled {
+.profile-load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -787,6 +792,10 @@
     min-width: 120px;
     height: 72px;
   }
+  .new-playlist-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 /* ── Shares tab ── */
@@ -819,10 +828,10 @@
   color: var(--accent, #4ade80);
 }
 .share-status.expired {
-  color: var(--fg3, #888);
+  color: var(--text3);
 }
 
 .share-meta {
   font-size: 12px;
-  color: var(--fg3, #888);
+  color: var(--text3);
 }

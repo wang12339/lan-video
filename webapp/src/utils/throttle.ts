@@ -1,8 +1,29 @@
-export function throttle<T extends (...args: any[]) => any>(fn: T, wait: number): (...args: Parameters<T>) => void {
+import { useState, useEffect } from 'react'
+
+export interface ThrottledFunction<T extends (...args: any[]) => any> {
+  (...args: Parameters<T>): void
+  cancel: () => void
+}
+
+export function throttle<T extends (...args: any[]) => any>(
+  fn: T,
+  wait: number
+): ThrottledFunction<T> {
   let last = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   let lastArgs: Parameters<T> | null = null
-  return (...args: Parameters<T>) => {
+
+  const invoke = () => {
+    last = Date.now()
+    timer = null
+    if (lastArgs) {
+      const a = lastArgs
+      lastArgs = null
+      fn(...a)
+    }
+  }
+
+  const throttled = (...args: Parameters<T>) => {
     const now = Date.now()
     const remaining = wait - (now - last)
     lastArgs = args
@@ -11,24 +32,66 @@ export function throttle<T extends (...args: any[]) => any>(fn: T, wait: number)
       last = now
       fn(...args)
     } else if (!timer) {
-      timer = setTimeout(() => {
-        last = Date.now()
-        timer = null
-        if (lastArgs) fn(...lastArgs)
-      }, remaining)
+      timer = setTimeout(invoke, remaining)
     }
   }
-}
 
-export function debounce<T extends (...args: any[]) => any>(fn: T, wait: number): (...args: Parameters<T>) => void {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  return (...args: Parameters<T>) => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => fn(...args), wait)
+  throttled.cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null }
+    lastArgs = null
   }
+
+  return throttled
 }
 
-export function useDebouncedValue<T>(value: T, _delay: number): T {
-  // placeholder for future hook; currently not used to avoid extra deps
-  return value
+export interface DebouncedFunction<T extends (...args: any[]) => any> {
+  (...args: Parameters<T>): void
+  cancel: () => void
+  flush: () => void
+}
+
+export function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  wait: number
+): DebouncedFunction<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let lastArgs: Parameters<T> | null = null
+
+  const debounced = (...args: Parameters<T>) => {
+    if (timer) clearTimeout(timer)
+    lastArgs = args
+    timer = setTimeout(() => {
+      timer = null
+      if (lastArgs) {
+        const a = lastArgs
+        lastArgs = null
+        fn(...a)
+      }
+    }, wait)
+  }
+
+  debounced.cancel = () => {
+    if (timer) { clearTimeout(timer); timer = null }
+    lastArgs = null
+  }
+
+  debounced.flush = () => {
+    if (timer) { clearTimeout(timer); timer = null }
+    if (lastArgs) {
+      const a = lastArgs
+      lastArgs = null
+      fn(...a)
+    }
+  }
+
+  return debounced
+}
+
+export function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+  return debounced
 }

@@ -44,11 +44,13 @@
   cursor: pointer;
   align-self: flex-end;
   white-space: nowrap;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
 .comment-submit:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .comment-submit.small {
@@ -77,6 +79,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  contain: layout style;
 }
 
 .comment-item {
@@ -85,6 +88,8 @@
   padding: 12px;
   background: var(--bg2);
   border-radius: var(--radius-sm);
+  contain: layout style;
+  transition: background 0.15s ease;
 }
 
 .comment-avatar img {
@@ -158,10 +163,12 @@
   cursor: pointer;
   padding: 6px 8px;
   border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .comment-action-btn:hover {
   color: var(--text);
+  background: var(--bg3);
 }
 
 .comment-action-btn.danger:hover {
@@ -213,6 +220,11 @@
   padding: 8px 4px;
   margin-top: 4px;
   border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.show-replies-btn:hover {
+  background: var(--bg3);
 }
 
 .reply-item {
@@ -240,6 +252,7 @@
   flex-direction: column;
   gap: 10px;
   margin-top: 10px;
+  contain: layout style;
 }
 
 .comments-empty {
@@ -249,7 +262,7 @@
   padding: 32px 0;
 }
 
-.load-more-btn {
+.comments-load-more-btn {
   display: block;
   width: 100%;
   padding: 12px;
@@ -261,13 +274,14 @@
   cursor: pointer;
   text-align: center;
   margin-top: 8px;
+  transition: background 0.15s ease;
 }
 
-.load-more-btn:hover {
+.comments-load-more-btn:hover {
   background: var(--bg3);
 }
 
-.load-more-btn:disabled {
+.comments-load-more-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -294,7 +308,7 @@
   padding-bottom: 8px;
 }
 
-.retry-btn {
+.comments-retry-btn {
   padding: 8px 24px;
   background: var(--accent);
   color: #fff;
@@ -304,12 +318,12 @@
   cursor: pointer;
 }
 
-.retry-btn.small {
+.comments-retry-btn.small {
   padding: 4px 12px;
   font-size: 12px;
 }
 
-.retry-btn:disabled {
+.comments-retry-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -395,7 +409,7 @@
     min-height: 40px;
   }
 
-  .load-more-btn {
+  .comments-load-more-btn {
     padding: 14px;
     font-size: 14px;
     min-height: 44px;

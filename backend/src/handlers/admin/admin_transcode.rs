@@ -13,9 +13,11 @@ use crate::util::response::{error_response, internal_error_log, ErrorResponse, S
 /// Start transcoding a video to multiple resolutions
 pub async fn transcode_video(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
+    Path(id): Path<String>,
     SafeJson(req): SafeJson<TranscodeRequest>,
 ) -> Result<Json<TranscodeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = crate::util::hashid::decode_id_or_numeric(&id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     // Validate resolutions
     let valid_resolutions = ["2160p", "1080p", "720p", "480p", "360p"];
     for res in &req.resolutions {
@@ -78,8 +80,10 @@ pub async fn transcode_video(
 /// Get transcoding status for a video
 pub async fn transcode_status(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
+    Path(id): Path<String>,
 ) -> Result<Json<TranscodeStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = crate::util::hashid::decode_id_or_numeric(&id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     // Check if video exists
     let _video = state
         .repos
@@ -107,8 +111,10 @@ pub async fn transcode_status(
 /// Delete a specific variant of a video
 pub async fn delete_variant(
     State(state): State<Arc<AppState>>,
-    Path((video_id, resolution)): Path<(i64, String)>,
+    Path((id, resolution)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = crate::util::hashid::decode_id_or_numeric(&id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     // Validate resolution
     let valid_resolutions = ["2160p", "1080p", "720p", "480p", "360p"];
     if !valid_resolutions.contains(&resolution.as_str()) {
@@ -170,8 +176,10 @@ pub async fn delete_variant(
 /// Cancel ongoing transcoding for a video
 pub async fn cancel_transcode(
     State(state): State<Arc<AppState>>,
-    Path(video_id): Path<i64>,
+    Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let video_id = crate::util::hashid::decode_id_or_numeric(&id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
     // Mark any pending/processing jobs as failed
     let affected = state
         .repos
@@ -225,24 +233,19 @@ pub async fn transcode_to_hls(
     let video_path = safe_media_path(&video.stream_url, &state.config.media_root)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频路径"))?;
 
-    // Start HLS transcoding in background
     let transcoder = state.transcoder.clone();
-    let video_id_clone = video_id;
 
     tokio::spawn(async move {
-        match transcoder
-            .transcode_to_hls(video_id_clone, &video_path)
-            .await
-        {
+        match transcoder.transcode_to_hls(video_id, &video_path).await {
             Ok(playlist) => {
                 tracing::info!(
-                    video_id = video_id_clone,
+                    video_id = video_id,
                     "HLS transcoding completed: {}",
                     playlist.master_url
                 );
             }
             Err(e) => {
-                tracing::error!(video_id = video_id_clone, "HLS transcoding failed: {}", e);
+                tracing::error!(video_id = video_id, "HLS transcoding failed: {}", e);
             }
         }
     });

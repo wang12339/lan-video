@@ -10,7 +10,7 @@
   border-radius: var(--radius);
   font-size: 13px;
   z-index: 1000;
-  animation: slideDown 0.3s ease;
+  animation: offline-slideDown 0.3s ease;
   max-width: 90%;
   width: 400px;
   max-height: 80vh;
@@ -18,7 +18,7 @@
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
-@keyframes slideDown {
+@keyframes offline-slideDown {
   from {
     opacity: 0;
     transform: translateX(-50%) translateY(-10px);
@@ -47,10 +47,10 @@
 
 .offline-alert.reconnecting {
   border-color: #f59e0b;
-  animation: pulse 2s infinite;
+  animation: offline-pulse 2s infinite;
 }
 
-@keyframes pulse {
+@keyframes offline-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.8; }
 }
@@ -251,7 +251,6 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* Mobile optimizations */
 @media (max-width: 480px) {
   .offline-alert {
     width: calc(100% - 32px);
@@ -261,7 +260,7 @@
     right: 16px;
   }
   
-  @keyframes slideDown {
+  @keyframes offline-slideDown {
     from {
       opacity: 0;
       transform: translateY(-10px);
@@ -273,7 +272,6 @@
   }
 }
 
-/* Dark mode support */
 @media (prefers-color-scheme: dark) {
   .offline-alert.offline {
     background: linear-gradient(135deg, #450a0a, #7f1d1d);

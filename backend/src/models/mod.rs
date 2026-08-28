@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod comment;
+pub mod danmaku;
 pub mod playback;
 pub mod playlist;
 pub mod recommendation;

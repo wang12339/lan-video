@@ -1011,6 +1011,59 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/videos/{id}/danmaku": {
+                "get": {
+                    "summary": "List danmaku for a video",
+                    "operationId": "listDanmaku",
+                    "description": "返回视频的全部弹幕（按出现时间升序）",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "Video ID", "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Danmaku list",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/DanmakuListResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                },
+                "post": {
+                    "summary": "Send a danmaku",
+                    "operationId": "createDanmaku",
+                    "description": "发送一条弹幕（需登录）",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "description": "Video ID", "schema": { "type": "integer" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SendDanmakuRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Danmaku created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/SendDanmakuResponse" }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
             "/comments/{id}/replies": {
                 "get": {
                     "summary": "List replies to a comment",
@@ -2817,6 +2870,8 @@ pub fn spec() -> serde_json::Value {
                         "views": { "type": "integer" },
                         "duration": { "type": "integer", "description": "Duration in seconds" },
                         "watchPosition": { "type": "integer", "nullable": true, "description": "Current user's watch position in ms" },
+                        "hasVariants": { "type": "boolean", "description": "Whether video has transcoded variants" },
+                        "uploaderId": { "type": "integer", "nullable": true, "description": "Uploader user ID" },
                         "createdAt": { "type": "string", "description": "Creation time (UTC, format %Y-%m-%d %H:%M:%S)" }
                     },
                     "required": ["id", "title", "streamUrl"]
@@ -2834,11 +2889,11 @@ pub fn spec() -> serde_json::Value {
                 "PlaybackHistoryRequest": {
                     "type": "object",
                     "properties": {
-                        "video_id": { "type": "integer", "description": "Video ID" },
-                        "position_ms": { "type": "integer", "minimum": 0, "description": "Current playback position in milliseconds" },
-                        "duration_ms": { "type": "integer", "minimum": 0, "description": "Total video duration in milliseconds (max 7 days)" }
+                        "videoId": { "type": "integer", "description": "Video ID" },
+                        "positionMs": { "type": "integer", "minimum": 0, "description": "Current playback position in milliseconds" },
+                        "durationMs": { "type": "integer", "minimum": 0, "description": "Total video duration in milliseconds (max 7 days)" }
                     },
-                    "required": ["video_id", "position_ms", "duration_ms"]
+                    "required": ["videoId", "positionMs", "durationMs"]
                 },
                 "PlaybackHistoryResponse": {
                     "type": "object",
@@ -2880,10 +2935,10 @@ pub fn spec() -> serde_json::Value {
                         "title": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Video title" },
                         "description": { "type": "string", "nullable": true, "description": "Video description" },
                         "category": { "type": "string", "nullable": true, "default": "general", "description": "Video category" },
-                        "stream_url": { "type": "string", "description": "External video URL (must start with http:// or https://)" },
-                        "cover_url": { "type": "string", "nullable": true, "description": "Cover image URL (must start with http:// or https://)" }
+                        "streamUrl": { "type": "string", "description": "External video URL (must start with http:// or https://)" },
+                        "coverUrl": { "type": "string", "nullable": true, "description": "Cover image URL (must start with http:// or https://)" }
                     },
-                    "required": ["title", "stream_url"]
+                    "required": ["title", "streamUrl"]
                 },
                 "VideoUpdateRequest": {
                     "type": "object",
@@ -2918,37 +2973,37 @@ pub fn spec() -> serde_json::Value {
                 "TenantConfig": {
                     "type": "object",
                     "properties": {
-                        "tenant_id": { "type": "integer", "description": "租户 ID" },
+                        "tenantId": { "type": "integer", "description": "租户 ID" },
                         "slug": { "type": "string", "description": "租户标识符" },
                         "name": { "type": "string", "description": "租户名称" },
                         "host": { "type": "string", "description": "租户域名" },
                         "settings": { "$ref": "#/components/schemas/TenantSettings" }
                     },
-                    "required": ["tenant_id", "slug", "name", "host", "settings"]
+                    "required": ["tenantId", "slug", "name", "host", "settings"]
                 },
                 "TenantSettings": {
                     "type": "object",
                     "properties": {
-                        "max_upload_size_mb": { "type": "integer", "description": "上传文件大小限制（MB）" },
-                        "max_videos_per_user": { "type": "integer", "description": "用户视频数量上限" },
-                        "registration_enabled": { "type": "boolean", "description": "是否允许注册" },
-                        "custom_theme": { "type": "string", "nullable": true, "description": "自定义主题标识" },
-                        "storage_quota_gb": { "type": "integer", "description": "存储配额（GB）" }
+                        "maxUploadSizeMb": { "type": "integer", "description": "上传文件大小限制（MB）" },
+                        "maxVideosPerUser": { "type": "integer", "description": "用户视频数量上限" },
+                        "registrationEnabled": { "type": "boolean", "description": "是否允许注册" },
+                        "customTheme": { "type": "string", "nullable": true, "description": "自定义主题标识" },
+                        "storageQuotaGb": { "type": "integer", "description": "存储配额（GB）" }
                     },
-                    "required": ["max_upload_size_mb", "max_videos_per_user", "registration_enabled", "storage_quota_gb"]
+                    "required": ["maxUploadSizeMb", "maxVideosPerUser", "registrationEnabled", "storageQuotaGb"]
                 },
                 "TenantStats": {
                     "type": "object",
                     "properties": {
-                        "tenant_id": { "type": "integer", "description": "租户 ID" },
+                        "tenantId": { "type": "integer", "description": "租户 ID" },
                         "slug": { "type": "string", "description": "租户标识符" },
                         "name": { "type": "string", "description": "租户名称" },
-                        "user_count": { "type": "integer", "description": "用户总数" },
-                        "video_count": { "type": "integer", "description": "视频总数" },
-                        "storage_used_bytes": { "type": "integer", "description": "已用存储（字节）" },
-                        "storage_limit_bytes": { "type": "integer", "description": "存储上限（字节）" }
+                        "userCount": { "type": "integer", "description": "用户总数" },
+                        "videoCount": { "type": "integer", "description": "视频总数" },
+                        "storageUsedBytes": { "type": "integer", "description": "已用存储（字节）" },
+                        "storageLimitBytes": { "type": "integer", "description": "存储上限（字节）" }
                     },
-                    "required": ["tenant_id", "slug", "name", "user_count", "video_count", "storage_used_bytes", "storage_limit_bytes"]
+                    "required": ["tenantId", "slug", "name", "userCount", "videoCount", "storageUsedBytes", "storageLimitBytes"]
                 },
                 "CheckHashesRequest": {
                     "type": "object",
@@ -3184,9 +3239,9 @@ pub fn spec() -> serde_json::Value {
                 "PlaybackSessionRequest": {
                     "type": "object",
                     "properties": {
-                        "video_id": { "type": "integer", "description": "视频 ID" }
+                        "videoId": { "type": "integer", "description": "视频 ID" }
                     },
-                    "required": ["video_id"]
+                    "required": ["videoId"]
                 },
                 "VideoVariantResponse": {
                     "type": "object",
@@ -3243,9 +3298,9 @@ pub fn spec() -> serde_json::Value {
                 "AddVideoToPlaylistRequest": {
                     "type": "object",
                     "properties": {
-                        "video_id": { "type": "integer", "description": "要添加的视频 ID" }
+                        "videoId": { "type": "integer", "description": "要添加的视频 ID" }
                     },
-                    "required": ["video_id"]
+                    "required": ["videoId"]
                 },
                 "PlaylistVideoItem": {
                     "type": "object",
@@ -3291,14 +3346,52 @@ pub fn spec() -> serde_json::Value {
                     "type": "object",
                     "properties": {
                         "content": { "type": "string", "description": "评论内容" },
-                        "parent_id": { "type": "integer", "nullable": true, "description": "父评论 ID（回复）" }
+                        "parentId": { "type": "integer", "nullable": true, "description": "父评论 ID（回复）" }
                     },
                     "required": ["content"]
+                },
+                "DanmakuItemResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "弹幕 ID（hashid）" },
+                        "text": { "type": "string", "description": "弹幕文本" },
+                        "time": { "type": "number", "description": "出现时间（秒）" },
+                        "color": { "type": "string", "nullable": true, "description": "颜色（十六进制）" },
+                        "fontSize": { "type": "integer", "nullable": true, "description": "字号" }
+                    },
+                    "required": ["id", "text", "time"]
+                },
+                "DanmakuListResponse": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/DanmakuItemResponse" }
+                        }
+                    },
+                    "required": ["items"]
+                },
+                "SendDanmakuRequest": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "弹幕文本" },
+                        "time": { "type": "number", "description": "出现时间（秒）" },
+                        "color": { "type": "string", "nullable": true, "description": "颜色（十六进制）" },
+                        "fontSize": { "type": "integer", "nullable": true, "description": "字号" }
+                    },
+                    "required": ["text", "time"]
+                },
+                "SendDanmakuResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "新创建的弹幕 ID（hashid）" }
+                    },
+                    "required": ["id"]
                 },
                 "CreateShareRequest": {
                     "type": "object",
                     "properties": {
-                        "expires_in_days": { "type": "integer", "nullable": true, "description": "有效天数（缺省为永不过期）" }
+                        "expiresInDays": { "type": "integer", "nullable": true, "description": "有效天数（缺省为永不过期）" }
                     }
                 },
                 "CreateShareResponse": {

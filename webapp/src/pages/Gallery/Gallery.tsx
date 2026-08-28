@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { listVideos, mapImage } from '../../api'
@@ -501,7 +502,7 @@ export default function Gallery() {
       )}
 
       {/* Lightbox */}
-      {lbOpen && currentImage && (
+      {lbOpen && currentImage && createPortal(
         <div
           className="lightbox"
           ref={lightboxRef}
@@ -511,25 +512,35 @@ export default function Gallery() {
           tabIndex={-1}
           onClick={closeLightbox}
         >
-          <img
-            className="lightbox-img"
-            src={currentImage.thumb || ''}
-            alt={currentImage.title}
-            decoding="async"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button className="lightbox-close" onClick={closeLightbox} aria-label={t('gallery.close')}>✕</button>
+          <div className="lightbox-topbar">
+            <span className="lightbox-title">{currentImage.title}</span>
+            <div className="lightbox-actions">
+              <button className="lightbox-close" onClick={closeLightbox} aria-label={t('gallery.close')}>✕</button>
+            </div>
+          </div>
+
+          <div className="lightbox-img-container" onClick={(e) => e.stopPropagation()}>
+            <img
+              className="lightbox-img"
+              src={currentImage.original || currentImage.thumb || ''}
+              alt={currentImage.title}
+              decoding="async"
+              draggable={false}
+            />
+          </div>
+
           {lbIndex > 0 && (
             <button className="lightbox-nav lightbox-prev" onClick={(e) => { e.stopPropagation(); lbPrev() }} aria-label={t('gallery.prev')}>‹</button>
           )}
           {lbIndex < images.length - 1 && (
             <button className="lightbox-nav lightbox-next" onClick={(e) => { e.stopPropagation(); lbNext() }} aria-label={t('gallery.next')}>›</button>
           )}
-          <div className="lightbox-info">
-            {currentImage.title}
-            <span>（{lbIndex + 1} / {images.length}）</span>
+
+          <div className="lightbox-bottombar">
+            <span className="lightbox-counter">{lbIndex + 1} / {images.length}</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       </>
       )}

@@ -166,6 +166,17 @@
   text-overflow: ellipsis;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .watch-stats,
+  .watch-stats-overlay,
+  .watch-stats-card,
+  .watch-stats-top-item,
+  .watch-stats-chart-bar {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* ─── Chart ────────────────────────────────────────────────────────────────── */
 
 .watch-stats-chart {

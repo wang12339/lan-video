@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, memo } from 'react'
 import './SkeletonLoader.css'
 
 type SkeletonShape = 'rect' | 'circle' | 'rounded'
@@ -18,7 +18,7 @@ interface SkeletonProps {
 
 const TABLE_COLUMNS = 7
 
-export default function SkeletonLoader({
+function SkeletonLoaderImpl({
   lines = 3,
   type = 'text',
   shape = 'rect',
@@ -146,3 +146,5 @@ export default function SkeletonLoader({
     </div>
   )
 }
+
+export default memo(SkeletonLoaderImpl)

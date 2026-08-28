@@ -1,8 +1,10 @@
+import { memo } from 'react'
 import { useOfflineAlert, useOfflineCapabilities } from '../../hooks/useNetworkState'
 import { useTranslation } from 'react-i18next'
+import { formatDuration } from '../../api/utils'
 import './OfflineAlert.css'
 
-export default function OfflineAlert() {
+function OfflineAlertImpl() {
   const { t } = useTranslation()
   const { 
     isOnline, 
@@ -21,13 +23,6 @@ export default function OfflineAlert() {
   const capabilities = useOfflineCapabilities()
 
   if (!showAlert) return null
-
-  const formatDuration = (seconds: number): string => {
-    if (seconds < 60) return `${seconds}${t('offline.seconds')}`
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = seconds % 60
-    return `${minutes}${t('offline.minutes')} ${remainingSeconds}${t('offline.seconds')}`
-  }
 
   return (
     <div 
@@ -146,6 +141,7 @@ export default function OfflineAlert() {
       <div className="offline-actions">
         {!isOnline && (
           <button 
+            type="button"
             className="offline-action-btn primary"
             onClick={retryConnection}
             disabled={isReconnecting}
@@ -155,7 +151,7 @@ export default function OfflineAlert() {
         )}
         
         {isOnline && syncStatus.pending > 0 && (
-          <button className="offline-action-btn secondary">
+          <button type="button" className="offline-action-btn secondary">
             {t('offline.syncNow')} ({syncStatus.pending})
           </button>
         )}
@@ -163,3 +159,5 @@ export default function OfflineAlert() {
     </div>
   )
 }
+
+export default memo(OfflineAlertImpl)

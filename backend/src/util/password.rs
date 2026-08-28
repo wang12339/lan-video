@@ -3,11 +3,15 @@ use argon2::{
     Argon2,
 };
 use std::fmt;
+use std::sync::OnceLock;
 
-/// 最小密码长度
 pub const MIN_PASSWORD_LEN: usize = 8;
-/// 最大密码长度
 pub const MAX_PASSWORD_LEN: usize = 128;
+
+fn argon2_instance() -> &'static Argon2<'static> {
+    static INSTANCE: OnceLock<Argon2<'static>> = OnceLock::new();
+    INSTANCE.get_or_init(Argon2::default)
+}
 
 #[derive(Debug)]
 pub enum PasswordError {
@@ -28,8 +32,7 @@ impl std::error::Error for PasswordError {}
 
 pub fn hash(password: &str) -> Result<String, PasswordError> {
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2
+    let hash = argon2_instance()
         .hash_password(password.as_bytes(), &salt)
         .map_err(PasswordError::Hash)?;
     Ok(hash.to_string())
@@ -37,7 +40,7 @@ pub fn hash(password: &str) -> Result<String, PasswordError> {
 
 pub fn verify(password: &str, hash: &str) -> Result<bool, PasswordError> {
     let parsed_hash = PasswordHash::new(hash).map_err(PasswordError::Parse)?;
-    Ok(Argon2::default()
+    Ok(argon2_instance()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())
 }

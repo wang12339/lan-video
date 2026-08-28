@@ -10,6 +10,7 @@ import {
   getHistoryStats,
   exportHistory,
   importHistory,
+  getRecentSearches,
 } from '../utils/searchHistory'
 
 // Mock localStorage
@@ -106,6 +107,7 @@ describe('Privacy Mode', () => {
 describe('History Management', () => {
   beforeEach(() => {
     localStorageMock.clear()
+    setPrivacyMode(false)
   })
 
   it('should clean expired history', () => {
@@ -152,6 +154,7 @@ describe('History Management', () => {
 describe('Data Validation', () => {
   beforeEach(() => {
     localStorageMock.clear()
+    setPrivacyMode(false)
   })
 
   it('should handle invalid JSON', () => {
@@ -184,6 +187,7 @@ describe('Data Validation', () => {
 describe('Capacity Limits', () => {
   beforeEach(() => {
     localStorageMock.clear()
+    setPrivacyMode(false)
   })
 
   it('should limit to 30 items', () => {
@@ -200,5 +204,120 @@ describe('Capacity Limits', () => {
     }
     const history = getSearchHistory()
     expect(history[0]?.query).toBe('query34')
+  })
+})
+
+describe('Edge Cases', () => {
+  beforeEach(() => {
+    localStorageMock.clear()
+    setPrivacyMode(false)
+  })
+
+  it('should not add queries longer than 100 characters', () => {
+    const longQuery = 'a'.repeat(101)
+    const result = addToSearchHistory(longQuery)
+    expect(result).toBe(false)
+    expect(getSearchHistory()).toHaveLength(0)
+  })
+
+  it('should add queries at exactly 100 characters', () => {
+    const query = 'a'.repeat(100)
+    addToSearchHistory(query)
+    expect(getSearchHistory()).toHaveLength(1)
+  })
+
+  it('should handle case-insensitive deduplication', () => {
+    addToSearchHistory('Test')
+    addToSearchHistory('test')
+    const history = getSearchHistory()
+    expect(history).toHaveLength(1)
+  })
+
+  it('should update timestamp when duplicate is added', () => {
+    addToSearchHistory('test')
+    const history1 = getSearchHistory()
+    const ts1 = history1[0]?.timestamp
+    addToSearchHistory('test')
+    const history2 = getSearchHistory()
+    expect(history2[0]?.timestamp).toBeGreaterThanOrEqual(ts1!)
+  })
+
+  it('addToSearchHistory returns false in privacy mode', () => {
+    setPrivacyMode(true)
+    expect(addToSearchHistory('test')).toBe(false)
+  })
+
+  it('should handle corrupt localStorage data', () => {
+    localStorageMock.setItem('atmos_search_history', '{corrupt')
+    expect(getSearchHistory()).toEqual([])
+  })
+
+  it('should handle non-array localStorage data', () => {
+    localStorageMock.setItem('atmos_search_history', '{"key": "value"}')
+    expect(getSearchHistory()).toEqual([])
+  })
+
+  it('should filter items with future timestamps beyond tolerance', () => {
+    const futureItem = {
+      query: 'future',
+      timestamp: Date.now() + 2 * 24 * 60 * 60 * 1000,
+      isPrivate: false,
+    }
+    localStorageMock.setItem('atmos_search_history', JSON.stringify([futureItem]))
+    expect(getSearchHistory()).toHaveLength(0)
+  })
+
+  it('getRecentSearches returns correct limit', () => {
+    for (let i = 0; i < 10; i++) {
+      addToSearchHistory(`q${i}`)
+    }
+    const recent = getRecentSearches(3)
+    expect(recent).toHaveLength(3)
+    expect(recent[0]).toBe('q9')
+  })
+
+  it('importHistory returns false for invalid JSON', () => {
+    expect(importHistory('not json')).toBe(false)
+  })
+
+  it('importHistory returns false for non-array', () => {
+    expect(importHistory('{"key": "value"}')).toBe(false)
+  })
+
+  it('importHistory deduplicates with existing entries', () => {
+    addToSearchHistory('existing')
+    const imported = [{ query: 'existing', timestamp: Date.now(), isPrivate: false }]
+    importHistory(JSON.stringify(imported))
+    const history = getSearchHistory()
+    expect(history).toHaveLength(1)
+  })
+
+  it('importHistory sorts by timestamp descending', () => {
+    const imported = [
+      { query: 'older', timestamp: Date.now() - 100000, isPrivate: false },
+      { query: 'newer', timestamp: Date.now(), isPrivate: false },
+    ]
+    importHistory(JSON.stringify(imported))
+    const history = getSearchHistory()
+    expect(history[0]?.query).toBe('newer')
+    expect(history[1]?.query).toBe('older')
+  })
+
+  it('cleanExpiredHistory returns 0 when nothing to clean', () => {
+    addToSearchHistory('recent')
+    expect(cleanExpiredHistory(30)).toBe(0)
+  })
+
+  it('getHistoryStats returns correct data with entries', () => {
+    addToSearchHistory('test1')
+    const stats = getHistoryStats()
+    expect(stats.total).toBe(1)
+    expect(stats.oldest).not.toBeNull()
+    expect(stats.newest).not.toBeNull()
+  })
+
+  it('removeFromSearchHistory returns false when query not found', () => {
+    addToSearchHistory('test')
+    expect(removeFromSearchHistory('nonexistent')).toBe(false)
   })
 })

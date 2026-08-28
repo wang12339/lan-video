@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useModalEscape } from './useModalEscape'
+import AdminModal from './AdminModal'
 
 interface Props {
   count: number
@@ -20,18 +20,18 @@ export default function BatchCatModal({ count, onSave, onClose }: Props) {
     finally { setSaving(false) }
   }
 
-  useModalEscape(onClose)
-
   return (
-    <div className="admin-modal-overlay" onClick={onClose}>
-      <div className="admin-modal" onClick={e => e.stopPropagation()}>
-        <h3>{t('admin.media.batchCatTitle', { count })}</h3>
-        <label><span>{t('admin.media.newCategory')}</span><input value={cat} onChange={e => setCat(e.target.value)} maxLength={100} placeholder={t('admin.media.categoryPlaceholder')} autoFocus onKeyDown={e => { if (e.key === 'Enter') void handleSave() }} /></label>
-        <div className="admin-modal-actions">
+    <AdminModal
+      title={t('admin.media.batchCatTitle', { count })}
+      onClose={onClose}
+      actions={
+        <>
           <button type="button" className="admin-btn" onClick={onClose} disabled={saving}>{t('admin.media.cancel')}</button>
           <button type="button" className="admin-btn admin-btn-primary" onClick={handleSave} disabled={saving || !cat.trim()}>{saving ? t('admin.media.modifying') : t('admin.media.confirm')}</button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <label><span>{t('admin.media.newCategory')}</span><input value={cat} onChange={e => setCat(e.target.value)} maxLength={100} placeholder={t('admin.media.categoryPlaceholder')} autoFocus onKeyDown={e => { if (e.key === 'Enter') void handleSave() }} /></label>
+    </AdminModal>
   )
 }

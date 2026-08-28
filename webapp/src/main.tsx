@@ -7,8 +7,11 @@ import { queryClient } from './lib/queryClient'
 import './i18n'
 import './styles/globals.css'
 
-// 初始化用户操作追踪
 initTrackRouter()
+
+if (import.meta.env.DEV) {
+  performance.mark('app:start')
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -17,3 +20,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </React.StrictMode>,
 )
+
+if (import.meta.env.DEV) {
+  requestAnimationFrame(() => {
+    performance.mark('app:mounted')
+    performance.measure('app:render', 'app:start', 'app:mounted')
+    const measure = performance.getEntriesByName('app:render')[0]
+    if (measure) {
+      console.log(`[Perf] Initial render: ${measure.duration.toFixed(1)}ms`)
+    }
+  })
+}

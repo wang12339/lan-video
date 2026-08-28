@@ -13,7 +13,10 @@ use crate::state::AppState;
 use crate::util::hashid;
 use crate::util::response::{error_response, ErrorResponse, SafeJson};
 
-/// Build the API response for a playlist row, consistent across all endpoints.
+const MAX_PLAYLIST_NAME_LEN: usize = 100;
+const MAX_PLAYLIST_DESC_LEN: usize = 500;
+const MAX_BATCH_ADD_VIDEOS: usize = 50;
+
 fn to_playlist_response(p: &PlaylistRow, count: i64) -> PlaylistResponse {
     PlaylistResponse {
         id: p.id,
@@ -63,6 +66,20 @@ pub async fn create_playlist(
     Extension(auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<CreatePlaylistRequest>,
 ) -> Result<(StatusCode, Json<PlaylistResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if req.name.trim().is_empty() || req.name.len() > MAX_PLAYLIST_NAME_LEN {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "播放列表名称长度需在 1-100 个字符之间",
+        ));
+    }
+    if let Some(ref desc) = req.description {
+        if desc.len() > MAX_PLAYLIST_DESC_LEN {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "播放列表描述不能超过 500 个字符",
+            ));
+        }
+    }
     let p = state
         .services
         .playlist
@@ -83,7 +100,7 @@ pub async fn get_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(playlist_id): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<PlaylistResponse>, (StatusCode, Json<ErrorResponse>)> {
     let playlist_id = decode_id_or_err(&playlist_id, "播放列表")?;
     let (p, count) = state
         .services
@@ -92,12 +109,9 @@ pub async fn get_playlist(
         .await
         .map_err(svc_err)?;
 
-    let value = serde_json::to_value(to_playlist_response(&p, count))
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误"))?;
-    Ok(Json(value))
+    Ok(Json(to_playlist_response(&p, count)))
 }
 
-/// PUT /playlists/{id}
 pub async fn update_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -105,6 +119,22 @@ pub async fn update_playlist(
     SafeJson(req): SafeJson<UpdatePlaylistRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let playlist_id = decode_id_or_err(&playlist_id, "播放列表")?;
+    if let Some(ref name) = req.name {
+        if name.trim().is_empty() || name.len() > MAX_PLAYLIST_NAME_LEN {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "播放列表名称长度需在 1-100 个字符之间",
+            ));
+        }
+    }
+    if let Some(ref desc) = req.description {
+        if desc.len() > MAX_PLAYLIST_DESC_LEN {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "播放列表描述不能超过 500 个字符",
+            ));
+        }
+    }
     state
         .services
         .playlist
@@ -209,4 +239,41 @@ pub async fn reorder_playlist(
         .map_err(svc_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BatchAddVideosRequest {
+    pub video_ids: Vec<i64>,
+}
+
+pub async fn batch_add_videos_to_playlist(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(playlist_id): Path<String>,
+    SafeJson(req): SafeJson<BatchAddVideosRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let playlist_id = decode_id_or_err(&playlist_id, "播放列表")?;
+    if req.video_ids.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "视频列表不能为空"));
+    }
+    if req.video_ids.len() > MAX_BATCH_ADD_VIDEOS {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "单次最多添加 50 个视频",
+        ));
+    }
+    let mut added = 0u64;
+    for video_id in &req.video_ids {
+        match state
+            .services
+            .playlist
+            .add_video_to_playlist(playlist_id, auth_user.id, *video_id)
+            .await
+        {
+            Ok(()) => added += 1,
+            Err(crate::util::error::ServiceError::Duplicate(_)) => {}
+            Err(e) => return Err(svc_err(e)),
+        }
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "added": added })))
 }

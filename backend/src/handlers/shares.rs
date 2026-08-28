@@ -35,6 +35,14 @@ pub async fn create_share_link(
 ) -> Result<(StatusCode, Json<CreateShareResponse>), (StatusCode, Json<ErrorResponse>)> {
     let video_id = hashid::decode_id_or_numeric(&video_id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    if let Some(days) = req.expires_in_days {
+        if !(1..=365).contains(&days) {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "有效期需在 1-365 天之间",
+            ));
+        }
+    }
 
     // SECURITY (H-02): a share link exposes the video to anonymous access,
     // so only the video's uploader (or an admin) may create one. The

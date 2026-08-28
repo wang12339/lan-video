@@ -1,11 +1,9 @@
-use atmos_video_backend::app;
-
 use std::future::Future;
 use std::net::SocketAddr;
 
 use tracing_subscriber::prelude::*;
 
-use crate::app::build_router;
+use atmos_video_backend::app::build_router;
 use atmos_video_backend::config::AppConfig;
 
 /// Initialize Sentry crash reporting from SENTRY_DSN env var (optional)
@@ -33,6 +31,7 @@ fn init_sentry() {
 }
 
 /// Create a shutdown signal future (Ctrl+C / SIGTERM)
+#[allow(clippy::expect_used)]
 fn shutdown_signal() -> impl Future<Output = ()> {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -60,6 +59,7 @@ fn shutdown_signal() -> impl Future<Output = ()> {
     }
 }
 
+#[allow(clippy::expect_used, clippy::panic)]
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -97,13 +97,12 @@ async fn main() {
     // init_sentry's own log lines are silently dropped.
     init_sentry();
 
-    // Initialize data and media directories
-    tokio::fs::create_dir_all(&config.data_dir)
-        .await
-        .unwrap_or_else(|e| panic!("Failed to create data directory: {}", e));
-    tokio::fs::create_dir_all(&config.media_root)
-        .await
-        .unwrap_or_else(|e| panic!("Failed to create media root directory: {}", e));
+    let (data_dir_result, media_root_result) = tokio::join!(
+        tokio::fs::create_dir_all(&config.data_dir),
+        tokio::fs::create_dir_all(&config.media_root)
+    );
+    data_dir_result.unwrap_or_else(|e| panic!("Failed to create data directory: {}", e));
+    media_root_result.unwrap_or_else(|e| panic!("Failed to create media root directory: {}", e));
 
     let app = build_router(config.clone()).await;
 
@@ -113,10 +112,6 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("failed to bind TCP listener on {}: {}", addr, e));
 
-    // SECURITY: refuse plain-HTTP requests on any non-/health path and
-    // redirect to HTTPS. /health is exempt so k8s liveness probes keep
-    // working while the TLS edge is being rolled out.
-    // Disabled in development mode for local testing.
     let is_dev = matches!(
         std::env::var("APP_ENV")
             .ok()
@@ -132,7 +127,6 @@ async fn main() {
                 let cfg = cfg.clone();
                 async move {
                     use axum::response::Response;
-                    let path = req.uri().path().to_string();
 
                     let is_https = req
                         .headers()
@@ -140,25 +134,23 @@ async fn main() {
                         .and_then(|v| v.to_str().ok())
                         .map(|v| v.eq_ignore_ascii_case("https"))
                         .unwrap_or(false);
-                    if !is_https && path != "/health" && !path.starts_with("/health/") {
-                        let target = format!(
-                            "{}{}{}",
-                            cfg.public_url.trim_end_matches('/'),
-                            path,
-                            req.uri()
-                                .query()
-                                .map(|q| format!("?{}", q))
-                                .unwrap_or_default()
-                        );
-                        // Skip the redirect if the target is not a valid header
-                        // value (e.g. an attacker-supplied path with control
-                        // characters) — better to serve the request than to panic.
-                        if let Ok(header) = axum::http::HeaderValue::from_str(&target) {
-                            return Response::builder()
-                                .status(axum::http::StatusCode::PERMANENT_REDIRECT)
-                                .header(axum::http::header::LOCATION, header)
-                                .body(axum::body::Body::empty())
-                                .unwrap();
+                    if !is_https {
+                        let path = req.uri().path();
+                        if path != "/health" && !path.starts_with("/health/") {
+                            let public_url = cfg.public_url.trim_end_matches('/');
+                            let target = match req.uri().query() {
+                                Some(q) => format!("{public_url}{path}?{q}"),
+                                None => format!("{public_url}{path}"),
+                            };
+                            if let Ok(header) = axum::http::HeaderValue::from_str(&target) {
+                                if let Ok(resp) = Response::builder()
+                                    .status(axum::http::StatusCode::PERMANENT_REDIRECT)
+                                    .header(axum::http::header::LOCATION, header)
+                                    .body(axum::body::Body::empty())
+                                {
+                                    return resp;
+                                }
+                            }
                         }
                     }
                     next.run(req).await

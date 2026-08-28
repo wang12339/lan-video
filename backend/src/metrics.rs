@@ -57,6 +57,7 @@ impl Default for Metrics {
 }
 
 impl Metrics {
+    #[allow(clippy::expect_used)]
     pub fn new() -> Self {
         let registry = Registry::new();
 
@@ -329,7 +330,7 @@ impl Metrics {
     pub fn encode_metrics(&self) -> String {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
-        let mut buffer = Vec::new();
+        let mut buffer = Vec::with_capacity(metric_families.len() * 256);
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
             tracing::error!("metrics: failed to encode: {}", e);
             return String::new();
@@ -457,39 +458,37 @@ impl Metrics {
 ///   `/videos/123/comments/456` → `/videos/:id/comments/:id`
 ///   `/videos/550e8400-e29b-41d4-a716-446655440000` → `/videos/:id`
 fn normalize_path(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').collect();
-    let normalized: Vec<String> = parts
-        .iter()
-        .map(|part| {
-            if part.is_empty() {
-                return String::new();
-            }
-            // 纯数字
-            if part.chars().all(|c| c.is_ascii_digit()) {
-                return ":id".to_string();
-            }
-            // UUID 格式 (8-4-4-4-12)
-            if part.len() == 36
-                && part.chars().enumerate().all(|(i, c)| {
-                    matches!(i, 8 | 13 | 18 | 23) && c == '-' || c.is_ascii_hexdigit()
-                })
-            {
-                return ":id".to_string();
-            }
-            // HashID（纯字母数字，长度 8-32）
-            if part.len() >= 8
+    let mut result = String::with_capacity(path.len());
+    for (i, part) in path.split('/').enumerate() {
+        if i > 0 {
+            result.push('/');
+        }
+        if part.is_empty() {
+            continue;
+        }
+        let is_id = part.bytes().all(|b| b.is_ascii_digit())
+            || (part.len() == 36 && is_uuid(part))
+            || (part.len() >= 8
                 && part.len() <= 32
-                && part.chars().all(|c| c.is_ascii_alphanumeric())
-                && !part.chars().all(|c| c.is_ascii_digit())
-                && part.chars().any(|c| c.is_ascii_digit())
-                && part.chars().any(|c| c.is_ascii_alphabetic())
-            {
-                return ":id".to_string();
-            }
-            part.to_string()
-        })
-        .collect();
-    normalized.join("/")
+                && part.bytes().all(|b| b.is_ascii_alphanumeric())
+                && !part.bytes().all(|b| b.is_ascii_digit())
+                && part.bytes().any(|b| b.is_ascii_digit())
+                && part.bytes().any(|b| b.is_ascii_alphabetic()));
+        if is_id {
+            result.push_str(":id");
+        } else {
+            result.push_str(part);
+        }
+    }
+    result
+}
+
+#[inline]
+fn is_uuid(s: &str) -> bool {
+    s.as_bytes()
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| matches!(i, 8 | 13 | 18 | 23) && b == b'-' || b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

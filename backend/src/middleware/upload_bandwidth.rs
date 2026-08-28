@@ -15,17 +15,9 @@ const MAX_BYTES_PER_SEC_PER_IP: u64 = 500 * 1024 * 1024;
 const WINDOW_SECS: u64 = 1;
 const CLEANUP_INTERVAL: usize = 10_000;
 
-/// Charge for a request with no Range header: a full-file GET, so assume at
-/// least this much will be transferred. The previous flat 256 KiB charge let
-/// a single connection stream an arbitrarily large file for one token.
 const NO_RANGE_CHARGE_BYTES: u64 = 512 * 1024;
-/// Charge for an open-ended range (`bytes=N-`): the response size is
-/// unbounded and unknowable up front, so charge the upper clamp.
 const OPEN_ENDED_RANGE_CHARGE_BYTES: u64 = 8 * 1024 * 1024;
-/// Floor for a finite range charge — prevents floods of tiny 1-byte range
-/// requests from evading the cap entirely.
 const MIN_RANGE_CHARGE_BYTES: u64 = 256 * 1024;
-/// Ceiling for a single finite range charge.
 const MAX_RANGE_CHARGE_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -61,14 +53,24 @@ impl IpBandwidth {
         }
 
         let now = Instant::now();
+
+        if let Some(mut bucket) = self.buckets.get_mut(ip) {
+            if now >= bucket.reset_at {
+                bucket.bytes = 0;
+                bucket.reset_at = now + std::time::Duration::from_secs(WINDOW_SECS);
+            }
+            let charged = bucket.bytes.saturating_add(bytes);
+            if charged > MAX_BYTES_PER_SEC_PER_IP {
+                return false;
+            }
+            bucket.bytes = charged;
+            return true;
+        }
+
         let mut bucket = self.buckets.entry(ip.to_string()).or_insert(Bucket {
             bytes: 0,
             reset_at: now + std::time::Duration::from_secs(WINDOW_SECS),
         });
-        if now >= bucket.reset_at {
-            bucket.bytes = 0;
-            bucket.reset_at = now + std::time::Duration::from_secs(WINDOW_SECS);
-        }
         let charged = bucket.bytes.saturating_add(bytes);
         if charged > MAX_BYTES_PER_SEC_PER_IP {
             return false;
@@ -270,9 +272,9 @@ mod tests {
     #[tokio::test]
     async fn budget_is_charged_per_finite_range() {
         let app = bw_app();
-        // Each request charges 4 MiB (the ceiling); 200 MiB budget lasts for
-        // 50 requests, the 51st is rejected.
-        for i in 0..50 {
+        // Each request charges 4 MiB (the ceiling); 500 MiB budget lasts for
+        // 125 requests, the 126th is rejected.
+        for i in 0..125 {
             let res = app
                 .clone()
                 .oneshot(bw_req(
@@ -286,23 +288,22 @@ mod tests {
         }
         let res = app
             .oneshot(bw_req(
-                "/media/51",
+                "/media/126",
                 Some("198.51.100.3"),
                 Some("bytes=0-999999999"),
             ))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
-        // The 429 path never reaches the response-header insertion
         assert!(!res.headers().contains_key("x-bandwidth-throttled"));
     }
 
     #[tokio::test]
     async fn budget_is_charged_when_range_header_missing() {
         let app = bw_app();
-        // No Range header → NO_RANGE_CHARGE_BYTES (2 MiB) per request.
-        // 200 MiB / 2 MiB = 100 requests fit; the 101st is rejected.
-        for i in 0..100 {
+        // No Range header → NO_RANGE_CHARGE_BYTES (512 KiB) per request.
+        // 500 MiB / 512 KiB = 1000 requests fit; the 1001st is rejected.
+        for i in 0..1000 {
             let res = app
                 .clone()
                 .oneshot(bw_req(&format!("/media/{i}"), Some("198.51.100.4"), None))
@@ -311,7 +312,7 @@ mod tests {
             assert_eq!(res.status(), StatusCode::OK, "request {i}");
         }
         let res = app
-            .oneshot(bw_req("/media/101", Some("198.51.100.4"), None))
+            .oneshot(bw_req("/media/1001", Some("198.51.100.4"), None))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);

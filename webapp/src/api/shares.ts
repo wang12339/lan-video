@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, ValidationError } from './client'
 
 export interface ShareLink {
   id: string
@@ -9,7 +9,6 @@ export interface ShareLink {
   createdAt: string
 }
 
-/** Response from GET /auth/user/shares — no raw token is ever returned. */
 export interface ShareListItem {
   id: string
   expiresAt: string | null
@@ -31,29 +30,39 @@ export interface ShareVideoInfo {
   }
 }
 
+const VALID_ID = /^[a-zA-Z0-9_-]+$/
+
+function assertValidId(id: string, label: string): void {
+  if (!id || !VALID_ID.test(id)) {
+    throw new ValidationError(`Invalid ${label}`, label)
+  }
+}
+
 export async function createShareLink(videoId: string, expiresInDays?: number): Promise<ShareLink> {
-  // 未指定有效期时不传字段，交给后端默认策略（不依赖 JSON.stringify 丢弃 undefined 的行为）
+  assertValidId(videoId, 'videoId')
+  if (expiresInDays !== undefined && (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365)) {
+    throw new ValidationError('expiresInDays must be between 1 and 365', 'expiresInDays')
+  }
   const body = expiresInDays !== undefined ? { expiresInDays } : {}
-  return request<ShareLink>(`/videos/${videoId}/share`, {
-    method: 'POST',
-    body,
-  })
+  return request<ShareLink>(`/videos/${videoId}/share`, { method: 'POST', body })
 }
 
 export async function getShareVideo(token: string): Promise<ShareVideoInfo> {
+  assertValidId(token, 'token')
   return request<ShareVideoInfo>(`/share/${token}`)
 }
 
 export async function deleteShareLink(videoId: string, shareId: string): Promise<void> {
+  assertValidId(videoId, 'videoId')
+  assertValidId(shareId, 'shareId')
   await request(`/videos/${videoId}/share/${shareId}`, { method: 'DELETE' })
 }
 
-/** GET /auth/user/shares — list share links owned by the current user. */
 export async function listMyShares(): Promise<ShareListItem[]> {
   return request<ShareListItem[]>('/auth/user/shares')
 }
 
-/** DELETE /auth/user/shares/{shareId} — revoke a share by its id. */
 export async function revokeMyShare(shareId: string): Promise<void> {
+  assertValidId(shareId, 'shareId')
   await request(`/auth/user/shares/${shareId}`, { method: 'DELETE' })
 }

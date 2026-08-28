@@ -29,6 +29,8 @@ use crate::middleware::request_log::request_log;
 use crate::middleware::security::{create_cors_layer, security_headers};
 use crate::middleware::upload_bandwidth::bandwidth_throttle;
 use crate::repositories::comment_repo::CommentRepository;
+use crate::repositories::danmaku_repo::DanmakuRepository;
+use crate::repositories::plan_repo::PlanRepository;
 use crate::repositories::playback_repo::PlaybackRepository;
 use crate::repositories::playlist_repo::PlaylistRepository;
 use crate::repositories::registration_repo::RegistrationRepository;
@@ -42,6 +44,7 @@ use crate::services::auth_service::AuthService;
 use crate::services::comment_service::CommentService;
 use crate::services::email_service::EmailService;
 use crate::services::media_service::MediaService;
+use crate::services::plan_service::PlanService;
 use crate::services::playback_service::PlaybackService;
 use crate::services::playlist_service::PlaylistService;
 use crate::services::recommendation_service::RecommendationService;
@@ -91,7 +94,9 @@ pub async fn build_router(config: AppConfig) -> Router {
     let share_repo = ShareRepository::new(pool.clone());
     let tag_repo = TagRepository::new(pool.clone());
     let tenant_repo = TenantRepository::new(pool.clone());
+    let plan_repo = PlanRepository::new(pool.clone());
     let registration_repo = RegistrationRepository::new(pool.clone());
+    let danmaku_repo = DanmakuRepository::new(pool.clone());
 
     let video_service = VideoService::new(video_repo.clone(), config.clone());
     let media_service = MediaService::new(video_repo.clone(), config.clone());
@@ -104,6 +109,7 @@ pub async fn build_router(config: AppConfig) -> Router {
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
     let tenant_service = TenantService::new(tenant_repo.clone());
+    let plan_service = PlanService::new(plan_repo.clone());
     let email_service = EmailService::new(config.clone());
     // Initialize Redis early so the rate limiter can use it for persistence.
     let redis_cm = crate::services::redis::init_redis(&config.redis_url).await;
@@ -126,6 +132,7 @@ pub async fn build_router(config: AppConfig) -> Router {
     );
     let auth_service = AuthService::new(
         user_repo.clone(),
+        tenant_repo.clone(),
         playback_service.clone(),
         rate_limiter.clone(),
         ip_rate_limiter.clone(),
@@ -171,9 +178,11 @@ pub async fn build_router(config: AppConfig) -> Router {
             playback: playback_repo,
             playlist: playlist_repo,
             comment: comment_repo,
+            danmaku: danmaku_repo,
             share: share_repo,
             tag: tag_repo,
             tenant: tenant_repo,
+            plan: plan_repo,
         },
         services: ServiceLayer {
             video: video_service.clone(),
@@ -189,6 +198,7 @@ pub async fn build_router(config: AppConfig) -> Router {
             share: share_service,
             admin: admin_service,
             tenant: tenant_service,
+            plan: plan_service,
         },
         config: config.clone(),
         redis: redis_cm.map(|cm| (*cm).clone()),
@@ -393,6 +403,10 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/videos/{id}/tags/{tag_id}",
                 delete(handlers::tags::remove_tag_from_video),
             )
+            .route(
+                "/videos/{id}/danmaku",
+                get(handlers::videos::list_danmaku).post(handlers::videos::create_danmaku),
+            )
             .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         30,
@@ -513,7 +527,7 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/admin/videos/{id}/hls/status",
                 get(handlers::admin::hls_status),
             )
-            .route("/admin/tags", post(handlers::tags::create_tag))
+            .route("/admin/tags", get(handlers::tags::list_tags).post(handlers::tags::create_tag))
             .route("/admin/tags/{id}", put(handlers::tags::update_tag))
             .route("/admin/tags/{id}", delete(handlers::tags::delete_tag))
             .route("/admin/stats", get(handlers::admin::get_stats))
@@ -549,10 +563,31 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/admin/performance/reset",
                 post(handlers::admin::reset_performance_metrics),
             )
+            // 套餐管理路由
+            .route(
+                "/admin/plans",
+                get(handlers::admin::admin_plan::list_plans)
+                    .post(handlers::admin::admin_plan::create_plan),
+            )
+            .route(
+                "/admin/plans/all",
+                get(handlers::admin::admin_plan::list_all_plans),
+            )
+            .route(
+                "/admin/plans/{id}",
+                get(handlers::admin::admin_plan::get_plan)
+                    .put(handlers::admin::admin_plan::update_plan)
+                    .delete(handlers::admin::admin_plan::delete_plan),
+            )
+            .route(
+                "/admin/plans/{id}/toggle",
+                post(handlers::admin::admin_plan::toggle_plan),
+            )
             // 租户管理路由
             .route(
                 "/admin/tenants",
-                get(handlers::admin::admin_tenant::list_tenants),
+                get(handlers::admin::admin_tenant::list_tenants)
+                    .post(handlers::admin::admin_tenant::create_tenant),
             )
             .route(
                 "/admin/tenants/{id}",
@@ -714,12 +749,12 @@ pub async fn build_router(config: AppConfig) -> Router {
         let body = webapp_index.clone();
         async move {
             let path = req.uri().path();
-            // `/webapp/*` is always an SPA route (deep links like
-            // /webapp/admin, /webapp/player/123) and must receive the app
-            // shell. The API-prefix check only applies to top-level API
-            // paths — an admin page URL must never be mistaken for a
-            // missing `/admin/...` endpoint.
             let is_api_path = !path.starts_with("/webapp")
+                && path
+                    .as_bytes()
+                    .iter()
+                    .position(|&b| b == b'/' && b != b' ')
+                    .is_some()
                 && API_PATH_PREFIXES.iter().any(|p| path.starts_with(p));
             if is_api_path {
                 return (

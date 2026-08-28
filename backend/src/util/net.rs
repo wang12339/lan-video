@@ -3,15 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use crate::util::cloudflare_ips::is_cloudflare_peer;
 
-/// Extract the real client IP from Cloudflare headers (when present) and fall
-/// back to the direct socket peer. Used by rate limiters and auth middleware.
-///
-/// SECURITY: this IP feeds per-IP rate limits, so trusting a spoofable header
-/// would let attackers evade them. `cf-connecting-ip` is therefore only
-/// honoured when the direct peer is inside Cloudflare's published ranges
-/// (origin sits behind Cloudflare in production), or unconditionally when
-/// `TRUSTED_PROXY=1` is set for custom proxies. A peer connecting straight to
-/// the origin can never spoof the client IP used for rate limiting.
+#[inline]
 pub fn client_ip(req: &Request) -> String {
     let trusted_proxy = std::env::var("TRUSTED_PROXY")
         .ok()
@@ -21,8 +13,6 @@ pub fn client_ip(req: &Request) -> String {
     let peer = req.extensions().get::<ConnectInfo<SocketAddr>>();
 
     if trusted_proxy {
-        // X-Forwarded-For is "client, proxy1, proxy2" — the leftmost entry is
-        // the client. cf-connecting-ip (Cloudflare) may also be present.
         for name in ["cf-connecting-ip", "x-forwarded-for"] {
             if let Some(ip) = req
                 .headers()

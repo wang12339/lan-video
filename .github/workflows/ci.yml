@@ -187,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: 'atmos-video:ci'
           format: 'sarif'
@@ -267,7 +267,6 @@ jobs:
           path: /tmp/atmos-video-ci.tar.gz
           retention-days: 3
 
-  # ─── Docker 镜像构建与推送（仅 main 分支）────────────────────────────
   docker-publish:
     name: Docker Build & Publish
     runs-on: ubuntu-latest
@@ -311,7 +310,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ─── 自动部署到生产环境（仅 main 分支）────────────────────────────────
+      - name: Generate build summary
+        run: |
+          echo "## Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Tags: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
@@ -333,6 +338,6 @@ jobs:
           script: |
             cd /opt/atmos-video
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
-            docker-compose down
-            docker-compose up -d
+            docker compose down
+            docker compose up -d
             docker system prune -f

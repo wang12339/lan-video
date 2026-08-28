@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listTags, createTag, updateTag, deleteTag, type Tag } from '../../api'
 import { ConfirmDialog, AlertDialog, SkeletonLoader } from '../../components/ui'
-import { useModalEscape } from './components/useModalEscape'
+import AdminModal from './components/AdminModal'
 
 const PRESET_COLORS = [
   '#3b82f6', '#ec4899', '#8b5cf6', '#10b981', '#f59e0b',
@@ -54,21 +54,19 @@ export default function TagsTab() {
     },
   })
 
-  useModalEscape(() => setShowForm(false), showForm)
-
-  function openCreate() {
+  const openCreate = useCallback(() => {
     setEditingTag(null)
     setFormName('')
     setFormColor('#3b82f6')
     setShowForm(true)
-  }
+  }, [])
 
-  function openEdit(tag: Tag) {
+  const openEdit = useCallback((tag: Tag) => {
     setEditingTag(tag)
     setFormName(tag.name)
     setFormColor(tag.color || '#3b82f6')
     setShowForm(true)
-  }
+  }, [])
 
   const handleSave = () => {
     const name = formName.trim()
@@ -119,59 +117,61 @@ export default function TagsTab() {
       )}
 
       {showForm && (
-        <div className="admin-modal-overlay" onClick={() => setShowForm(false)}>
-          <div className="admin-modal" onClick={e => e.stopPropagation()}>
-            <h3>{editingTag ? t('admin.tags.editTag') : t('admin.tags.createTag')}</h3>
-            <div className="form-group">
-              <label htmlFor="tag-name">{t('admin.tags.tagName')}</label>
-              <input
-                id="tag-name"
-                type="text"
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder={t('admin.tags.tagNamePlaceholder')}
-                maxLength={50}
-                autoFocus
-                onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
-              />
-            </div>
-            <div className="form-group">
-              <label>{t('admin.tags.tagColor')}</label>
-              <div className="color-picker">
-                {PRESET_COLORS.map(c => (
-                  <button
-                    key={c}
-                    type="button"
-                    className={`color-swatch ${formColor === c ? 'selected' : ''}`}
-                    style={{ background: c }}
-                    aria-label={c}
-                    aria-pressed={formColor === c}
-                    onClick={() => setFormColor(c)}
-                  />
-                ))}
-                <label className="color-custom">
-                  <input
-                    type="color"
-                    value={formColor}
-                    onChange={e => setFormColor(e.target.value)}
-                    aria-label={t('admin.tags.tagColor')}
-                  />
-                  <span className="color-custom-hex">{formColor}</span>
-                </label>
-              </div>
-            </div>
-            <div className="form-group">
-              <label>{t('admin.tags.preview')}</label>
-              <span className="tag-badge" style={{ background: formColor }}>{formName || t('admin.tags.preview')}</span>
-            </div>
-            <div className="admin-modal-actions">
+        <AdminModal
+          title={editingTag ? t('admin.tags.editTag') : t('admin.tags.createTag')}
+          onClose={() => setShowForm(false)}
+          actions={
+            <>
               <button type="button" className="admin-btn" onClick={() => setShowForm(false)} disabled={saveMut.isPending}>{t('common.cancel')}</button>
               <button type="button" className="admin-btn admin-btn-primary" onClick={handleSave} disabled={saveMut.isPending || !formName.trim()}>
                 {saveMut.isPending ? t('common.loading') : editingTag ? t('common.save') : t('common.create')}
               </button>
+            </>
+          }
+        >
+          <div className="form-group">
+            <label htmlFor="tag-name">{t('admin.tags.tagName')}</label>
+            <input
+              id="tag-name"
+              type="text"
+              value={formName}
+              onChange={e => setFormName(e.target.value)}
+              placeholder={t('admin.tags.tagNamePlaceholder')}
+              maxLength={50}
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+            />
+          </div>
+          <div className="form-group">
+            <label>{t('admin.tags.tagColor')}</label>
+            <div className="color-picker">
+              {PRESET_COLORS.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`color-swatch ${formColor === c ? 'selected' : ''}`}
+                  style={{ background: c }}
+                  aria-label={c}
+                  aria-pressed={formColor === c}
+                  onClick={() => setFormColor(c)}
+                />
+              ))}
+              <label className="color-custom">
+                <input
+                  type="color"
+                  value={formColor}
+                  onChange={e => setFormColor(e.target.value)}
+                  aria-label={t('admin.tags.tagColor')}
+                />
+                <span className="color-custom-hex">{formColor}</span>
+              </label>
             </div>
           </div>
-        </div>
+          <div className="form-group">
+            <label>{t('admin.tags.preview')}</label>
+            <span className="tag-badge" style={{ background: formColor }}>{formName || t('admin.tags.preview')}</span>
+          </div>
+        </AdminModal>
       )}
 
       {confirmDelete && (

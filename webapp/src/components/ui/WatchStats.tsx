@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import './WatchStats.css'
 
@@ -86,7 +86,7 @@ export function recordWatchTime(videoId: string, title: string, seconds: number)
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
     } catch (e) {
       // QuotaExceededError: 丢弃最旧 200 条重试
-      if ((e as any)?.name === 'QuotaExceededError' && data.records.length > 200) {
+      if (e instanceof DOMException && e.name === 'QuotaExceededError' && data.records.length > 200) {
         data.records = data.records.slice(-800)
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch {}
       }
@@ -194,6 +194,8 @@ function MiniChart({
   )
 }
 
+export default memo(WatchStatsImpl)
+
 // ─── Export Utility ───────────────────────────────────────────────────────────
 
 function exportToCSV(records: WatchRecord[]) {
@@ -214,7 +216,7 @@ function exportToCSV(records: WatchRecord[]) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function WatchStats({ visible, onClose }: WatchStatsProps) {
+function WatchStatsImpl({ visible, onClose }: WatchStatsProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState<TimeFilter>('7d')
   const [data, setData] = useState<WatchData>(getWatchData())
@@ -277,12 +279,14 @@ export default function WatchStats({ visible, onClose }: WatchStatsProps) {
     return Math.round(filteredTotalMinutes / days)
   }, [filteredTotalMinutes, chartDays])
 
-  const formatMinutes = (minutes: number) => {
-    if (minutes < 60) return `${minutes}分钟`
-    const hours = Math.floor(minutes / 60)
-    const mins = minutes % 60
-    return mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`
-  }
+  const formatMinutes = useMemo(() => {
+    return (minutes: number) => {
+      if (minutes < 60) return `${minutes}分钟`
+      const hours = Math.floor(minutes / 60)
+      const mins = minutes % 60
+      return mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`
+    }
+  }, [])
 
   const isEmpty = data.records.length === 0
 
@@ -334,7 +338,9 @@ export default function WatchStats({ visible, onClose }: WatchStatsProps) {
                 {(['7d', '30d', '90d', 'all'] as TimeFilter[]).map((f) => (
                   <button
                     key={f}
+                    type="button"
                     className={`watch-stats-filter-btn ${filter === f ? 'active' : ''}`}
+                    aria-pressed={filter === f}
                     onClick={() => setFilter(f)}
                   >
                     {FILTER_LABELS[f]}
@@ -424,10 +430,11 @@ export default function WatchStats({ visible, onClose }: WatchStatsProps) {
 
               {/* Export */}
               <button
+                type="button"
                 className="watch-stats-export-btn"
                 onClick={() => exportToCSV(filteredRecords)}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />

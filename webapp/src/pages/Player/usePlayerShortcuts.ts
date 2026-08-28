@@ -1,13 +1,5 @@
-import { useEffect, useRef } from 'react'
-
-// Speed options for playback rate adjustment
-export const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2]
-
-// Seek step in seconds for arrow key navigation
-export const SEEK_STEP_S = 10
-
-// Volume adjustment step (0-1 range)
-const VOLUME_STEP = 0.05
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { SPEED_STEPS, SEEK_STEP_S, VOLUME_STEP } from './constants'
 
 interface ShortcutHandlers {
   togglePlay: () => void
@@ -27,6 +19,9 @@ export function usePlayerShortcuts(
 ) {
   const handlersRef = useRef(handlers)
   handlersRef.current = handlers
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false)
+
+  const toggleShortcutHelp = useCallback(() => setShowShortcutHelp(v => !v), [])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -139,6 +134,13 @@ export function usePlayerShortcuts(
           break
         }
 
+        // Help overlay: ?
+        case '?':
+          e.preventDefault()
+          e.stopPropagation()
+          setShowShortcutHelp(v => !v)
+          break
+
         // Jump to percentage: 0-9 keys
         default:
           if (key >= '0' && key <= '9' && video.duration) {
@@ -155,4 +157,6 @@ export function usePlayerShortcuts(
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [videoRef])
+
+  return { showShortcutHelp, toggleShortcutHelp }
 }

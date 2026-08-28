@@ -1,18 +1,20 @@
-# 阶段1: 构建Rust后端
-FROM rust:1.75 as backend-builder
+FROM rust:1.75-slim AS backend-builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY backend/ .
-RUN cargo build --release --locked
+COPY backend/Cargo.toml backend/Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release --locked && rm -rf src
+COPY backend/src ./src
+RUN touch src/main.rs && cargo build --release --locked
 
-# 阶段2: 构建前端
-FROM node:20 as frontend-builder
+FROM node:20-slim AS frontend-builder
 WORKDIR /app
+COPY webapp/package.json webapp/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY webapp/ .
-RUN npm ci && npm run build
+RUN npm run build
 
-# 阶段3: 运行时
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     ffmpeg \
     ca-certificates \

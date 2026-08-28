@@ -1,0 +1,129 @@
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: adminModalFadeIn 0.15s ease;
+}
+
+@keyframes adminModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes adminModalSlideIn {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.admin-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 90%;
+  max-width: 480px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  animation: adminModalSlideIn 0.2s ease;
+}
+
+.admin-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
+.admin-modal-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.admin-modal-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--text2);
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.admin-modal-close:hover {
+  color: var(--text);
+}
+
+.admin-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.admin-modal-body label {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.admin-modal-body label span {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
+  margin-bottom: 6px;
+}
+
+.admin-modal-body input,
+.admin-modal-body textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.admin-modal-body input:focus,
+.admin-modal-body textarea:focus {
+  border-color: var(--accent);
+}
+
+.admin-modal-body textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.admin-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 0 24px 20px;
+}
+
+@media (max-width: 640px) {
+  .admin-modal {
+    max-width: 95%;
+    padding: 0;
+  }
+
+  .admin-modal-header {
+    padding: 16px 20px 0;
+  }
+
+  .admin-modal-body {
+    padding: 16px 20px;
+  }
+
+  .admin-modal-actions {
+    padding: 0 20px 16px;
+  }
+}

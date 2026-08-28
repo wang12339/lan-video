@@ -26,6 +26,7 @@ const STRONG_PASSWORD: &str = "Str0ng!Pass1";
 fn auth_service(state: &atmos_video_backend::state::AppState) -> AuthService {
     AuthService::new(
         state.repos.user.clone(),
+        state.repos.tenant.clone(),
         state.services.playback.clone(),
         state.rate_limiter.clone(),
         state.ip_rate_limiter.clone(),

@@ -4,7 +4,6 @@
   margin: 0 auto;
 }
 
-/* ── Auth Required ────────────────────────────── */
 .gallery-auth-required {
   text-align: center;
   padding: 80px 24px;
@@ -27,7 +26,6 @@
   margin-bottom: 24px;
 }
 
-/* ── Header ─────────────────────────────────── */
 .gallery-header {
   text-align: center;
   padding: 40px 16px 28px;
@@ -58,7 +56,6 @@
   color: var(--text3);
 }
 
-/* ── Toolbar ────────────────────────────────── */
 .gallery-toolbar {
   display: flex;
   justify-content: space-between;
@@ -147,18 +144,17 @@
   box-shadow: 0 2px 8px rgba(255, 68, 51, 0.25);
 }
 
-/* ── Grid ───────────────────────────────────── */
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
+  contain: layout style;
 }
 
 .gallery-grid.wide {
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
 }
 
-/* ── Card ───────────────────────────────────── */
 .gallery-card {
   border-radius: 12px;
   overflow: hidden;
@@ -169,15 +165,17 @@
   aspect-ratio: 4 / 3;
   position: relative;
   animation: cardFadeIn 0.4s ease both;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+  contain: layout style paint;
 }
 
-/* 图片加载占位符 */
 .gallery-card-placeholder {
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
   background-size: 200% 100%;
-  animation: skeletonShimmer 1.5s ease-in-out infinite;
+  animation: shimmer 1.5s ease-in-out infinite;
 }
 
 .gallery-card:nth-child(1)  { animation-delay: 0ms; }
@@ -243,11 +241,11 @@
   aspect-ratio: 16 / 9;
 }
 
-/* ── Skeleton loading grid ──────────────────── */
 .gallery-skeleton-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
+  contain: layout style;
 }
 
 .gallery-skeleton-card {
@@ -256,32 +254,27 @@
   aspect-ratio: 4 / 3;
   background: linear-gradient(90deg, var(--bg2) 25%, var(--bg3) 50%, var(--bg2) 75%);
   background-size: 200% 100%;
-  animation: skeletonShimmer 1.5s ease-in-out infinite;
+  animation: shimmer 1.5s ease-in-out infinite;
   border: 1px solid var(--border);
 }
 
-@keyframes skeletonShimmer {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .gallery-skeleton-card {
+  .gallery-skeleton-card,
+  .gallery-card {
     animation: none;
     background: var(--bg2);
   }
 }
 
-/* ── Empty / Error states ───────────────────── */
 .gallery-empty,
 .gallery-error {
   text-align: center;
   padding: 80px 20px;
   color: var(--text3);
-  animation: fadeUp 0.4s ease;
+  animation: galleryFadeUp 0.4s ease;
 }
 
-@keyframes fadeUp {
+@keyframes galleryFadeUp {
   from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: translateY(0); }
 }
@@ -318,7 +311,6 @@
   transform: translateY(0);
 }
 
-/* ── Loading spinner (append) ───────────────── */
 .gallery-loading {
   display: flex;
   align-items: center;
@@ -339,11 +331,6 @@
   animation: spin 0.7s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ── Append error ───────────────────────────── */
 .gallery-append-error {
   display: flex;
   align-items: center;
@@ -359,7 +346,6 @@
   padding: 7px 18px;
 }
 
-/* ── End sentinel ───────────────────────────── */
 .gallery-end {
   padding: 24px;
   text-align: center;
@@ -368,24 +354,19 @@
   opacity: 0.7;
 }
 
-/* ── IntersectionObserver 哨兵 ─────────────── */
 .gallery-sentinel {
   height: 1px;
   width: 100%;
   pointer-events: none;
 }
 
-/* ── Lightbox ───────────────────────────────── */
 .lightbox {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: 99999;
   background: rgba(0, 0, 0, 0.92);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   cursor: zoom-out;
   animation: lbFadeIn 0.25s ease;
 }
@@ -395,14 +376,29 @@
   to   { opacity: 1; }
 }
 
+.lightbox-img-container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .lightbox-img {
   max-width: 90vw;
   max-height: 85vh;
   object-fit: contain;
-  border-radius: 10px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   cursor: default;
   animation: lbImgIn 0.3s ease;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.lightbox-img.zoomed {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+  transform-origin: center center;
 }
 
 @keyframes lbImgIn {
@@ -416,11 +412,42 @@
   }
 }
 
-.lightbox-close {
-  position: fixed;
-  top: 20px;
-  right: 20px;
-  z-index: 301;
+.lightbox-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+  z-index: 99999;
+}
+
+.lightbox-title {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 15px;
+  font-weight: 500;
+  max-width: 60%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lightbox-counter {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.lightbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lightbox-close,
+.lightbox-action-btn {
   width: 42px;
   height: 42px;
   border-radius: 50%;
@@ -435,16 +462,21 @@
   -webkit-backdrop-filter: blur(8px);
 }
 
-.lightbox-close:hover {
+.lightbox-close:hover,
+.lightbox-action-btn:hover {
   background: rgba(255, 255, 255, 0.16);
   transform: scale(1.08);
 }
 
+.lightbox-action-btn.active {
+  background: var(--accent);
+}
+
 .lightbox-nav {
-  position: fixed;
+  position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 301;
+  z-index: 99999;
   width: 50px;
   height: 50px;
   border-radius: 50%;
@@ -472,18 +504,23 @@
   right: 20px;
 }
 
+.lightbox-bottombar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent);
+  z-index: 99999;
+}
+
 .lightbox-info {
-  position: fixed;
-  bottom: 28px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.7);
   font-size: 13px;
   text-align: center;
-  max-width: 80vw;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: 8px 20px;
   background: rgba(0, 0, 0, 0.4);
   border-radius: 20px;
@@ -495,7 +532,6 @@ html.overflow-hidden {
   overflow: hidden;
 }
 
-/* ── Responsive ─────────────────────────────── */
 @media (max-width: 1200px) {
   .gallery-grid {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -577,8 +613,7 @@ html.overflow-hidden {
   }
   .lightbox-img {
     max-width: 96vw;
-    max-height: 78vh;
-    border-radius: 8px;
+    max-height: 85vh;
   }
   .lightbox-nav {
     width: 44px;
@@ -591,11 +626,17 @@ html.overflow-hidden {
   .lightbox-next {
     right: 8px;
   }
-  .lightbox-close {
-    width: 44px;
-    height: 44px;
-    top: 12px;
-    right: 12px;
+  .lightbox-close,
+  .lightbox-action-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .lightbox-topbar {
+    padding: 12px 16px;
+  }
+  .lightbox-title {
+    font-size: 14px;
+    max-width: 50%;
   }
   .gv-btn {
     width: 44px;
@@ -628,5 +669,9 @@ html.overflow-hidden {
   }
   .gallery-card {
     border-radius: 6px;
+    content-visibility: visible;
+  }
+  .gallery-page {
+    padding: 8px;
   }
 }

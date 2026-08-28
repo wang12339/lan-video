@@ -17,11 +17,10 @@ use super::{
 };
 use crate::services::share_service::is_valid_share_token;
 
-/// Cache for media auth token → user lookups.
-/// Reduces DB queries on bursts of Range requests from the same client.
 static MEDIA_AUTH_CACHE: std::sync::OnceLock<Cache<String, CachedAuthUser>> =
     std::sync::OnceLock::new();
 
+#[inline]
 fn media_auth_cache() -> &'static Cache<String, CachedAuthUser> {
     MEDIA_AUTH_CACHE.get_or_init(|| {
         Cache::builder()
@@ -33,7 +32,7 @@ fn media_auth_cache() -> &'static Cache<String, CachedAuthUser> {
 
 #[derive(Clone)]
 struct CachedAuthUser {
-    username: String,
+    username: std::sync::Arc<str>,
     tenant_id: i64,
 }
 
@@ -308,7 +307,7 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                 "无效的登录凭证",
             ));
         }
-        c.username.clone()
+        c.username.to_string()
     } else {
         match state.repos.user.find_user_by_token(token).await {
             Ok(Some(u)) => {
@@ -320,14 +319,15 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                         "无效的登录凭证",
                     ));
                 }
+                let username_arc: std::sync::Arc<str> = u.username.clone().into();
                 media_auth_cache().insert(
                     token.to_string(),
                     CachedAuthUser {
-                        username: u.username.clone(),
+                        username: username_arc.clone(),
                         tenant_id,
                     },
                 );
-                u.username
+                username_arc.to_string()
             }
             Ok(None) => return MediaAuthResult::Pass,
             Err(e) => {
@@ -343,14 +343,7 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
     MediaAuthResult::Authorized(username)
 }
 
-/// Extract a video id (i64) from a `/media/...` path if present.
-/// Recognises the canonical layouts:
-/// - `videos/{id}/...`
-/// - `thumb_{id}.jpg` / `cover_{id}.jpg` (also `cover_{id}_{timestamp}.{ext}`)
-/// - `variants/{id}_{resolution}.mp4` — transcoded renditions (M-03): these
-///   must be bound to the same playback session / share token as the source
-///   video, so the id is extracted and authorised like any other video file.
-///   Returns None for avatars and other non-video-scoped paths.
+#[inline]
 fn extract_video_id_from_path(path: &str) -> Option<i64> {
     let stripped = path.strip_prefix("/media/").unwrap_or(path);
 
@@ -384,29 +377,38 @@ fn extract_video_id_from_path(path: &str) -> Option<i64> {
         }
     }
 
+    // Flat transcoded-variant layout returned by GET /videos/{id}/variants:
+    //   /media/{video_id}_{resolution}.mp4   (resolution like 720p/1080p/...)
+    // `video_id` is numeric; the resolution suffix is a whitelisted value
+    // (digits followed by 'p'). This keeps arbitrary "{timestamp}_{filename}.mp4"
+    // orphan files from being treated as a video (M-03).
+    let basename = stripped.rsplit('/').next().unwrap_or(stripped);
+    if let Some((id_str, res)) = basename.rsplit_once('_') {
+        let res_stem = res.rsplit_once('.').map(|(s, _)| s).unwrap_or(res);
+        let res_core = res_stem.strip_suffix('p').unwrap_or(res_stem);
+        if !res_core.is_empty() && res_core.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(id) = id_str.parse::<i64>() {
+                return Some(id);
+            }
+        }
+    }
+
     None
 }
 
-/// SECURITY (M-03): explicit whitelist of public static media paths that any
-/// logged-in user may fetch without a playback session or share token.
-/// Avatars are public-facing by design (rendered next to every user's name)
-/// and are never video content, so they hold no tenant-private media data.
-/// Every other non-video-scoped path (orphan files, `.upload_*` temp files)
-/// is denied by media_auth.
+#[inline]
 fn is_public_static_media_path(path: &str) -> bool {
     path.starts_with("/media/avatars/") || path.starts_with("/media/hls/")
 }
 
-/// True for `/media/thumb_{id}.*` and `/media/cover_{id}*` paths. These are
-/// low-sensitivity preview images shown on public pages (home, gallery).
-/// Since HTML `<img>` tags cannot send Authorization headers, these paths
-/// are publicly accessible without authentication.
+#[inline]
 fn is_thumbnail_or_cover_path(path: &str) -> bool {
     let stripped = path.strip_prefix("/media/").unwrap_or(path);
     let first = stripped.split('/').next().unwrap_or("");
     first.starts_with("thumb_") || first.starts_with("cover_") || first.ends_with("_121.jpg")
 }
 
+#[inline]
 fn extract_share_token(uri: &axum::http::Uri) -> Option<String> {
     let query = uri.query()?;
     for pair in query.split('&') {
@@ -418,11 +420,7 @@ fn extract_share_token(uri: &axum::http::Uri) -> Option<String> {
     None
 }
 
-/// SECURITY (H-08): also read the share token from a SameSite=Strict cookie
-/// so that media requests don't need the token in the URL. The cookie is
-/// set on the first GET /share/{token} call and used by the browser to
-/// authenticate subsequent media range requests without leaking the token
-/// into server access logs or browser history.
+#[inline]
 fn extract_share_token_from_cookie(headers: &HeaderMap) -> Option<String> {
     let cookie = headers.get("Cookie")?.to_str().ok()?;
     for pair in cookie.split(';') {
@@ -652,6 +650,20 @@ mod tests {
         assert_eq!(extract_video_id_from_path("/media/.upload_abc123"), None);
         assert_eq!(
             extract_video_id_from_path("/media/variants/no_id.mp4"),
+            None
+        );
+        // Flat transcoded-variant layout used by GET /videos/{id}/variants
+        assert_eq!(
+            extract_video_id_from_path("/media/12345_720p.mp4"),
+            Some(12345)
+        );
+        assert_eq!(
+            extract_video_id_from_path("/media/12345_1080p.mp4"),
+            Some(12345)
+        );
+        // Orphan files with a non-resolution suffix must stay unresolved (M-03)
+        assert_eq!(
+            extract_video_id_from_path("/media/1699999999_hello.mp4"),
             None
         );
     }

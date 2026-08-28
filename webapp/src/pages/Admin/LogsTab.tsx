@@ -1,148 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { TFunction } from 'i18next'
 import { clearLogs, type LogEntry, type LogsResponse } from '../../api/logs'
 import { request } from '../../api/client'
 import { ConfirmDialog } from './components'
+import { formatLog, TYPE_STYLES, TYPE_ICONS, fmtTimeFull } from './utils/logFormatter'
+import LogFilters from './components/LogFilters'
+import UserTimeline from './components/UserTimeline'
 import './LogsTab.css'
 
 const PAGE_SIZE = 200
 // 2 秒轮询：/admin/logs 无后端限流，且页签隐藏/失焦时已暂停，频率合理
 const POLL_INTERVAL_MS = 2000
-const LEVELS = ['INFO', 'WARN', 'ERROR', 'DEBUG']
-
-// 路由 → i18n key（路径是数据，文案走 t 翻译）
-const ROUTE_KEYS: Record<string, string> = {
-  '/auth/login': 'admin.logs.routes.authLogin',
-  '/auth/logout': 'admin.logs.routes.authLogout',
-  '/auth/register': 'admin.logs.routes.authRegister',
-  '/auth/user': 'admin.logs.routes.authUser',
-  '/auth/user/profile': 'admin.logs.routes.authProfile',
-  '/auth/refresh': 'admin.logs.routes.authRefresh',
-  '/videos': 'admin.logs.routes.videosList',
-  '/videos/favorites': 'admin.logs.routes.videosFavorites',
-  '/playback/history': 'admin.logs.routes.playbackHistory',
-  '/playback/session/start': 'admin.logs.routes.sessionStart',
-  '/playback/session/stop': 'admin.logs.routes.sessionStop',
-  '/playback/session/heartbeat': 'admin.logs.routes.sessionHeartbeat',
-  '/server/info': 'admin.logs.routes.serverInfo',
-  '/health': 'admin.logs.routes.health',
-  '/admin/logs': 'admin.logs.routes.adminLogs',
-  '/admin/stats': 'admin.logs.routes.adminStats',
-  '/admin/system': 'admin.logs.routes.adminSystem',
-  '/admin/users': 'admin.logs.routes.adminUsers',
-  '/admin/config/registration': 'admin.logs.routes.regConfig',
-  '/admin/videos/scan': 'admin.logs.routes.scanMedia',
-  '/admin/videos/upload': 'admin.logs.routes.uploadVideo',
-  '/admin/videos/upload-resume': 'admin.logs.routes.uploadResume',
-  '/admin/videos/upload-status': 'admin.logs.routes.uploadStatus',
-  '/admin/videos/backfill-thumbnails': 'admin.logs.routes.backfillThumbs',
-  '/admin/videos/check-hashes': 'admin.logs.routes.checkHashes',
-  '/admin/videos/check-files': 'admin.logs.routes.checkFiles',
-  '/admin/videos/batch-category': 'admin.logs.routes.batchCategory',
-  '/admin/track': 'admin.logs.routes.track',
-}
-
-// 中文日志翻译
-function formatLog(entry: LogEntry, t: TFunction): { desc: string; type: string } {
-  const msg = entry.message || ''
-  const vid = entry.video_id
-
-  if (entry.method && entry.path) {
-    const s = entry.status || 0
-    const ms = entry.duration_ms || 0
-
-    const routeKey = ROUTE_KEYS[entry.path]
-    let action = routeKey ? t(routeKey) : ''
-    let type = 'view'
-
-    if (!action) {
-      if (entry.path.match(/\/videos\/\d+\/like/)) { action = t('admin.logs.actions.like'); type = 'like' }
-      else if (entry.path.match(/\/videos\/\d+\/favorite/)) { action = t('admin.logs.actions.favorite'); type = 'fav' }
-      else if (entry.path.match(/\/videos\/\d+\/play$/)) { action = t('admin.logs.actions.play'); type = 'play' }
-      else if (entry.path.match(/\/videos\/\d+\/view/)) { action = t('admin.logs.actions.viewVideo'); type = 'view' }
-      else if (entry.path.match(/\/videos\/\d+\/stop/)) { action = t('admin.logs.actions.stop'); type = 'stop' }
-      else if (entry.path.match(/\/videos\/\d+\/heartbeat/)) { action = t('admin.logs.actions.play'); type = 'play' }
-      else if (entry.path.match(/\/videos\/\d+$/)) { action = t('admin.logs.actions.viewDetail') }
-      else if (entry.path.match(/\/playback\/history\/\d+$/)) { action = t('admin.logs.actions.getHistory') }
-      else if (entry.path.match(/\/admin\/videos\/\d+\/cover/)) { action = t('admin.logs.actions.uploadCover') }
-      else if (entry.path.match(/\/admin\/videos\/\d+$/)) {
-        action = entry.method === 'PUT' ? t('admin.logs.actions.editVideo') : t('admin.logs.actions.deleteVideo')
-        type = entry.method === 'DELETE' ? 'danger' : 'view'
-      }
-      else if (entry.path === '/admin/videos/external') { action = t('admin.logs.actions.addExternal') }
-      else if (entry.path === '/admin/videos/batch') { action = t('admin.logs.actions.batchDelete'); type = 'danger' }
-      else if (entry.path.match(/\/admin\/videos\/batch-category/)) { action = t('admin.logs.routes.batchCategory') }
-      else if (entry.path.match(/\/admin\/users\/\d+\/password/)) { action = t('admin.logs.actions.resetPassword') }
-      else if (entry.path.match(/\/admin\/users\/\d+\/approve/)) {
-        action = t('admin.logs.actions.approveUser'); type = 'admin'
-      }
-      else if (entry.path.match(/\/admin\/users\/\d+\/admin/)) { action = t('admin.logs.actions.toggleAdmin') }
-      else if (entry.path.match(/\/admin\/users\/\d+$/)) {
-        action = t('admin.logs.actions.deleteUser'); type = 'danger'
-      }
-      else { action = entry.path }
-    }
-
-    if (s >= 500) type = 'error'
-    else if (s >= 400) type = 'warn'
-
-    const timeStr = ms > 0 ? t('admin.logs.ms', { ms }) : ''
-    return { desc: `${action}${timeStr}`, type }
-  }
-
-  if (msg.includes('server starting')) return { desc: t('admin.logs.system.serverStart'), type: 'system' }
-  if (msg.includes('shutdown')) return { desc: t('admin.logs.system.serverShutdown'), type: 'system' }
-  if (msg.includes('Database connection')) return { desc: t('admin.logs.system.dbConnection'), type: 'system' }
-  if (msg.includes('expired tokens')) return { desc: t('admin.logs.system.clearTokens'), type: 'system' }
-  if (msg.includes('开始播放')) return { desc: t('admin.logs.system.playVideo', { id: vid }), type: 'play' }
-  if (msg.includes('停止播放')) return { desc: t('admin.logs.system.stopVideo', { id: vid }), type: 'stop' }
-  if (msg.includes('toggle like')) return { desc: msg.includes('liked: true') ? t('admin.logs.system.liked') : t('admin.logs.system.unliked'), type: 'like' }
-  if (msg.includes('toggle favorite')) return { desc: msg.includes('favorited: true') ? t('admin.logs.system.favorited') : t('admin.logs.system.unfavorited'), type: 'fav' }
-  if (msg.includes('user logged in')) return { desc: t('admin.logs.system.loginSuccess'), type: 'login' }
-  if (msg.includes('failed login')) return { desc: t('admin.logs.system.loginFailed'), type: 'error' }
-  if (msg.includes('rate limit')) return { desc: t('admin.logs.system.rateLimit'), type: 'danger' }
-  if (msg.includes('Path traversal')) return { desc: t('admin.logs.system.pathTraversal'), type: 'danger' }
-  if (msg.includes('invalid file')) return { desc: t('admin.logs.system.invalidFile'), type: 'danger' }
-  if (msg.includes('admin deleted')) return { desc: t('admin.logs.system.adminDeleted'), type: 'danger' }
-  if (msg.includes('admin approved')) return { desc: t('admin.logs.system.adminApproved'), type: 'admin' }
-  if (msg.includes('registration toggle')) return { desc: t('admin.logs.system.regToggle'), type: 'system' }
-  if (msg.includes('media scan')) return { desc: t('admin.logs.system.mediaScan'), type: 'system' }
-  if (msg.includes('thumbnail backfill')) return { desc: t('admin.logs.system.thumbBackfill'), type: 'system' }
-  if (msg.includes('rate limiter cleanup')) return { desc: t('admin.logs.system.rateLimitCleanup'), type: 'system' }
-
-  // 用户操作追踪
-  if (msg.includes('用户操作') && entry.action) {
-    let desc = entry.action
-    if (entry.target) desc += ` ${entry.target}`
-    if (entry.page) desc += ` (${entry.page})`
-    return { desc, type: 'view' }
-  }
-
-  const displayMsg = msg.length > 30 ? msg.slice(0, 30) + '...' : msg
-  return { desc: displayMsg, type: 'default' }
-}
-
-const TYPE_STYLES: Record<string, { color: string; labelKey: string }> = {
-  play: { color: '#8b5cf6', labelKey: 'admin.logs.types.play' },
-  stop: { color: '#6b7280', labelKey: 'admin.logs.types.stop' },
-  like: { color: '#ec4899', labelKey: 'admin.logs.types.like' },
-  fav: { color: '#f59e0b', labelKey: 'admin.logs.types.fav' },
-  login: { color: '#3b82f6', labelKey: 'admin.logs.types.login' },
-  view: { color: '#10b981', labelKey: 'admin.logs.types.view' },
-  admin: { color: '#f97316', labelKey: 'admin.logs.types.admin' },
-  danger: { color: '#ef4444', labelKey: 'admin.logs.types.danger' },
-  error: { color: '#ef4444', labelKey: 'admin.logs.types.error' },
-  warn: { color: '#f59e0b', labelKey: 'admin.logs.types.warn' },
-  system: { color: '#6b7280', labelKey: 'admin.logs.types.system' },
-  default: { color: '#9ca3af', labelKey: 'admin.logs.types.default' },
-}
-
-const TYPE_ICONS: Record<string, string> = {
-  play: '▶', stop: '■', like: '♥', fav: '★',
-  login: '→', view: '○', admin: '⚡', danger: '⚠',
-  error: '✗', warn: '!', system: '⚙', default: '·',
-}
 
 export default function LogsTab() {
   const { t } = useTranslation()
@@ -164,7 +32,6 @@ export default function LogsTab() {
   const [page, setPage] = useState(0)
 
   const [selectedUser, setSelectedUser] = useState<string | null>(null)
-  const [expandedIndex, setExpandedIndex] = useState<string | null>(null)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
 
   // silent：轮询静默请求——失败只显示页内小提示，不触发全局 toast（request 的 silent 跳过 onErrorCb）
@@ -259,18 +126,6 @@ export default function LogsTab() {
     })
   }, [entries, timeFrom, timeTo])
 
-  const fmtTime = (ts: string) => {
-    if (!ts) return ''
-    try { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
-    catch { return ts }
-  }
-
-  const fmtTimeFull = (ts: string) => {
-    if (!ts) return '--'
-    try { return new Date(ts).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
-    catch { return ts }
-  }
-
   // 用户数据
   const userData = useMemo(() => {
     const map: Record<string, {
@@ -305,30 +160,7 @@ export default function LogsTab() {
       .sort((a, b) => b.count - a.count)
   }, [visibleEntries, t])
 
-  // 选中用户的路线数据
-  const userRoute = useMemo(() => {
-    if (!selectedUser) return null
-    const u = userData.find(d => d.user === selectedUser)
-    if (!u) return null
-
-    // 按时间分组（每5分钟一组）
-    const groups: { time: string; entries: { entry: LogEntry; formatted: ReturnType<typeof formatLog> }[] }[] = []
-    let lastGroup = ''
-
-    u.logs.forEach(entry => {
-      const ts = entry.timestamp || ''
-      const tk = ts.slice(0, 16) // YYYY-MM-DDTHH:MM
-      if (tk !== lastGroup) {
-        lastGroup = tk
-        groups.push({ time: ts, entries: [] })
-      }
-      groups[groups.length - 1]!.entries.push({ entry, formatted: formatLog(entry, t) })
-    })
-
-    return { ...u, groups }
-  }, [userData, selectedUser, t])
-
-  const errorCount = visibleEntries.filter(e => e.level === 'ERROR').length
+  const errorCount = useMemo(() => visibleEntries.filter(e => e.level === 'ERROR').length, [visibleEntries])
   const hasMore = entries.length >= PAGE_SIZE
 
   return (
@@ -360,23 +192,18 @@ export default function LogsTab() {
         </div>
       </div>
 
-      {/* 过滤栏 */}
-      <div className="a-filter-bar">
-        <span className="a-filter-label">{t('admin.logs.level')}</span>
-        <select className="a-filter" value={level} onChange={e => setLevel(e.target.value)} aria-label={t('admin.logs.levelAria')}>
-          <option value="">{t('admin.logs.all')}</option>
-          {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
-        </select>
-        <div className="a-search">
-          <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setSearch(searchInput.trim())} placeholder={t('admin.logs.searchPlaceholder')} aria-label={t('admin.logs.searchAria')} />
-          <button onClick={() => setSearch(searchInput.trim())}>{t('common.search')}</button>
-          {search && <button onClick={() => { setSearch(''); setSearchInput('') }} title={t('admin.media.clearSearch')}>×</button>}
-        </div>
-        <span className="a-filter-label">{t('admin.logs.from')}</span>
-        <input type="datetime-local" className="a-filter" value={timeFrom} onChange={e => setTimeFrom(e.target.value)} aria-label={t('admin.logs.startTimeAria')} />
-        <span className="a-filter-label">{t('admin.logs.to')}</span>
-        <input type="datetime-local" className="a-filter" value={timeTo} onChange={e => setTimeTo(e.target.value)} aria-label={t('admin.logs.endTimeAria')} />
-      </div>
+      <LogFilters
+        level={level}
+        onLevelChange={setLevel}
+        searchInput={searchInput}
+        onSearchInputChange={setSearchInput}
+        search={search}
+        onSearchChange={setSearch}
+        timeFrom={timeFrom}
+        onTimeFromChange={setTimeFrom}
+        timeTo={timeTo}
+        onTimeToChange={setTimeTo}
+      />
 
       {error && (
         <div className="a-error">
@@ -433,94 +260,10 @@ export default function LogsTab() {
         </div>
 
         {/* 右侧：路线详情 */}
-        <div className="a-main">
-          {userRoute ? (
-            <>
-              {/* 用户概况 */}
-              <div className="a-profile">
-                <div className="a-profile-avatar" style={{ background: TYPE_STYLES[Object.entries(userRoute.types).sort((a, b) => b[1] - a[1])[0]?.[0] || 'default']?.color || '#6b7280' }}>
-                  {selectedUser?.[0]?.toUpperCase()}
-                </div>
-                <div className="a-profile-info">
-                  <h2 className="a-profile-name">{selectedUser}</h2>
-                  <div className="a-profile-stats">
-                    <span>{t('admin.logs.operations', { count: userRoute.count })}</span>
-                    <span>·</span>
-                    <span>{t('admin.logs.videos', { count: userRoute.videos })}</span>
-                    <span>·</span>
-                    <span>{t('admin.logs.lastActiveShort', { time: fmtTime(userRoute.lastActive) })}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 操作分布条 */}
-              <div className="a-type-bar">
-                {Object.entries(userRoute.types).sort((a, b) => b[1] - a[1]).map(([type, n]) => (
-                  <div
-                    key={type}
-                    className="a-type-seg"
-                    style={{
-                      width: `${(n / userRoute.count) * 100}%`,
-                      background: TYPE_STYLES[type]?.color || '#6b7280',
-                    }}
-                    title={t('admin.logs.typeCount', { label: TYPE_STYLES[type] ? t(TYPE_STYLES[type].labelKey) : type, count: n })}
-                  />
-                ))}
-              </div>
-
-              {/* 操作路线时间线 */}
-              <div className="a-route">
-                <h3 className="a-route-title">{t('admin.logs.route')}</h3>
-                {userRoute.groups.map((group) => (
-                  <div key={group.time} className="a-route-group">
-                    <div className="a-route-time">
-                      <span className="a-route-date">{new Date(group.time).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}</span>
-                      <span className="a-route-hour">{fmtTime(group.time)}</span>
-                    </div>
-                    <div className="a-route-line">
-                      {group.entries.map(({ entry, formatted }) => {
-                        const style = TYPE_STYLES[formatted.type] || { color: '#6b7280', labelKey: 'admin.logs.types.default' }
-                        const nodeKey = entry.timestamp + entry.method + entry.path + String(entry.video_id ?? '') + (entry.user ?? '')
-                        const isExpanded = expandedIndex === nodeKey
-                        return (
-                          <div
-                            key={nodeKey}
-                            className={`a-route-node ${isExpanded ? 'expanded' : ''}`}
-                            style={{ '--node-color': style.color } as React.CSSProperties}
-                            onClick={() => setExpandedIndex(isExpanded ? null : nodeKey)}
-                          >
-                            <div className="a-node-dot">{TYPE_ICONS[formatted.type] || '·'}</div>
-                            <div className="a-node-content">
-                              <span className="a-node-desc">{formatted.desc}</span>
-                              {entry.video_id && <span className="a-node-vid">{t('admin.logs.videoId', { id: entry.video_id })}</span>}
-                            </div>
-                            {isExpanded && (
-                              <div className="a-node-details">
-                                {entry.path && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.path')}</span><span className="a-detail-value">{entry.method} {entry.path}</span></div>}
-                                {entry.status && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.status')}</span><span className="a-detail-value">{entry.status}</span></div>}
-                                {entry.duration_ms && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.duration')}</span><span className="a-detail-value">{entry.duration_ms}ms</span></div>}
-                                {entry.request_id && <div className="a-node-detail"><span className="a-detail-key">{t('admin.logs.requestId')}</span><span className="a-detail-value">{entry.request_id.slice(0, 8)}</span></div>}
-                                {entry.error && <div className="a-node-detail a-detail-error"><span className="a-detail-key">{t('admin.logs.error')}</span><span className="a-detail-value">{entry.error}</span></div>}
-                              </div>
-                            )}
-                            <svg className="a-node-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none' }}>
-                              <polyline points="6 9 12 15 18 9"/>
-                            </svg>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="a-empty">
-              <div className="a-empty-icon">👤</div>
-              <div className="a-empty-text">{t('admin.logs.selectUser')}</div>
-            </div>
-          )}
-        </div>
+        <UserTimeline
+          selectedUser={selectedUser}
+          userData={userData}
+        />
       </div>
 
       {/* 分页 */}

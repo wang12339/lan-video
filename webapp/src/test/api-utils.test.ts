@@ -105,6 +105,7 @@ describe('mapImage', () => {
       title: '测试视频',
       category: '科技',
       thumb: '/media/v1.jpg',
+      original: '/media/v1.mp4',
       sourceType: 'local_video',
     })
   })

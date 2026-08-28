@@ -180,11 +180,15 @@ impl EmailService {
             }
         };
 
-        let from: lettre::message::Mailbox = self
-            .config
-            .smtp_from
-            .parse()
-            .unwrap_or_else(|_| "noreply@localhost".parse().unwrap());
+        let from: lettre::message::Mailbox = self.config.smtp_from.parse().unwrap_or_else(|_| {
+            tracing::warn!("invalid SMTP_FROM, falling back to noreply@localhost");
+            #[allow(clippy::expect_used)]
+            {
+                "noreply@localhost"
+                    .parse()
+                    .expect("hardcoded fallback address is valid")
+            }
+        });
 
         tracing::info!(
             "Sending email to {}: subject={} (SMTP: {}:{})",

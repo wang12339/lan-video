@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, memo } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AuthProvider } from './context/AuthContext'
@@ -16,7 +16,7 @@ const NotFound = lazy(() => import('./pages/NotFound/NotFound'))
 
 import './components/ui/PageTransition.css'
 
-function Loading() {
+const Loading = memo(function Loading() {
   const { t } = useTranslation()
   return (
     <div className="page-loading">
@@ -24,7 +24,7 @@ function Loading() {
       <span>{t('common.loading')}</span>
     </div>
   )
-}
+})
 
 function App() {
   return (

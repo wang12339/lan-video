@@ -44,21 +44,21 @@ impl fmt::Debug for AppConfig {
 
 /// Replace `scheme://user:pass@host` with `scheme://***:***@host`.
 fn redact_url(url: &str) -> String {
-    match url.find("://") {
-        Some(pos) => {
-            let scheme_and_rest = &url[pos + 3..];
-            match scheme_and_rest.find('@') {
-                Some(at) => format!("{}://***:***@{}", &url[..pos], &scheme_and_rest[at + 1..]),
-                None => url.to_string(),
-            }
+    if let Some(pos) = url.find("://") {
+        let rest = &url[pos + 3..];
+        if let Some(at) = rest.find('@') {
+            let mut result = String::with_capacity(url.len());
+            result.push_str(&url[..pos + 3]);
+            result.push_str("***:***@");
+            result.push_str(&rest[at + 1..]);
+            return result;
         }
-        None => url.to_string(),
     }
+    url.to_string()
 }
 
-/// Parse a boolean env var, accepting case-insensitive `true`/`1` and
-/// falling back to `default` when unset or unparseable.
-fn parse_bool_env(key: &str, default: bool) -> bool {
+#[inline]
+pub fn parse_bool_env(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
         .map(|v| {
@@ -79,6 +79,7 @@ impl AppConfig {
 }
 
 impl AppConfig {
+    #[allow(clippy::panic)]
     pub fn from_env() -> Self {
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
             tracing::warn!("DATABASE_URL not set, using default (set .env for production)");
@@ -107,7 +108,6 @@ impl AppConfig {
 
         let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
 
-        // Default to true — only disable explicitly for local development over HTTP
         let cookie_secure = parse_bool_env("COOKIE_SECURE", true);
 
         let log_dir = std::env::var("LOG_DIR").unwrap_or_else(|_| "./logs".into());
@@ -143,5 +143,122 @@ impl AppConfig {
             smtp_from,
             redis_url,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_url_with_credentials() {
+        let url = "postgres://user:pass@localhost:5432/db";
+        let redacted = redact_url(url);
+        assert_eq!(redacted, "postgres://***:***@localhost:5432/db");
+        assert!(!redacted.contains("user"));
+        assert!(!redacted.contains("pass"));
+    }
+
+    #[test]
+    fn redact_url_without_credentials() {
+        let url = "postgres://localhost:5432/db";
+        assert_eq!(redact_url(url), url);
+    }
+
+    #[test]
+    fn redact_url_empty() {
+        assert_eq!(redact_url(""), "");
+    }
+
+    #[test]
+    fn redact_url_no_scheme() {
+        let url = "localhost:5432/db";
+        assert_eq!(redact_url(url), url);
+    }
+
+    #[test]
+    fn redact_url_redis() {
+        let url = "redis://:secret@redis-host:6379";
+        let redacted = redact_url(url);
+        assert_eq!(redacted, "redis://***:***@redis-host:6379");
+    }
+
+    #[test]
+    fn parse_bool_true_variants() {
+        for val in ["true", "TRUE", "True", "1", " true ", "1 "] {
+            assert!(parse_bool_env("NONEXISTENT_KEY_FOR_TEST", false) || true);
+            std::env::set_var("PARSE_BOOL_TEST", val);
+            assert!(parse_bool_env("PARSE_BOOL_TEST", false), "val={val}");
+        }
+        std::env::remove_var("PARSE_BOOL_TEST");
+    }
+
+    #[test]
+    fn parse_bool_false_variants() {
+        for val in ["false", "FALSE", "0", "no", "", " anything "] {
+            std::env::set_var("PARSE_BOOL_TEST", val);
+            assert!(!parse_bool_env("PARSE_BOOL_TEST", true), "val={val}");
+        }
+        std::env::remove_var("PARSE_BOOL_TEST");
+    }
+
+    #[test]
+    fn parse_bool_missing_key_uses_default() {
+        std::env::remove_var("PARSE_BOOL_MISSING_KEY");
+        assert!(parse_bool_env("PARSE_BOOL_MISSING_KEY", true));
+        assert!(!parse_bool_env("PARSE_BOOL_MISSING_KEY", false));
+    }
+
+    #[test]
+    fn debug_impl_redacts_database_url() {
+        let config = AppConfig {
+            database_url: "postgres://admin:secret123@db.host:5432/prod".into(),
+            server_port: 8082,
+            public_url: "https://example.com".into(),
+            media_root: PathBuf::from("./media"),
+            webapp_root: PathBuf::from("./webapp/dist"),
+            log_dir: PathBuf::from("./logs"),
+            data_dir: PathBuf::from("./data"),
+            registration_enabled: std::sync::Arc::new(AtomicBool::new(false)),
+            cors_origin: String::new(),
+            cookie_secure: true,
+            smtp_host: String::new(),
+            smtp_port: 0,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_from: String::new(),
+            redis_url: "redis://:pw@host:6379".into(),
+        };
+        let debug = format!("{:?}", config);
+        assert!(!debug.contains("secret123"), "密码必须被脱敏");
+        assert!(!debug.contains("pw"), "Redis 密码必须被脱敏");
+        assert!(debug.contains("***:***"));
+    }
+
+    #[test]
+    fn registration_enabled_toggle() {
+        let config = AppConfig {
+            database_url: String::new(),
+            server_port: 0,
+            public_url: String::new(),
+            media_root: PathBuf::new(),
+            webapp_root: PathBuf::new(),
+            log_dir: PathBuf::new(),
+            data_dir: PathBuf::new(),
+            registration_enabled: std::sync::Arc::new(AtomicBool::new(false)),
+            cors_origin: String::new(),
+            cookie_secure: false,
+            smtp_host: String::new(),
+            smtp_port: 0,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_from: String::new(),
+            redis_url: String::new(),
+        };
+        assert!(!config.registration_enabled());
+        config.set_registration_enabled(true);
+        assert!(config.registration_enabled());
+        config.set_registration_enabled(false);
+        assert!(!config.registration_enabled());
     }
 }

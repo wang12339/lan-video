@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { listReplies, createComment, deleteComment } from '../../api'
 import type { Comment } from '../../api'
@@ -19,7 +19,7 @@ function CommentAvatar({ url, username, small = false }: { url: string | null; u
   return <div className={`comment-avatar-placeholder${small ? ' small' : ''}`}>{getInitial(username)}</div>
 }
 
-export default function CommentItem({ comment, onDelete, videoId }: Props) {
+export default memo(function CommentItem({ comment, onDelete, videoId }: Props) {
   const { t } = useTranslation()
   const { user } = useAuth()
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -169,7 +169,7 @@ export default function CommentItem({ comment, onDelete, videoId }: Props) {
             {repliesError && (
               <div className="reply-error-block">
                 <p className="comments-error compact" role="alert">{repliesError}</p>
-                <button className="retry-btn small" onClick={() => void loadReplies()}>
+                <button className="comments-retry-btn small" onClick={() => void loadReplies()}>
                   {t('common.retry')}
                 </button>
               </div>
@@ -210,4 +210,4 @@ export default function CommentItem({ comment, onDelete, videoId }: Props) {
       />
     </div>
   )
-}
+})

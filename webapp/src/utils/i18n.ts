@@ -7,6 +7,7 @@ export function formatDate(
   options?: Intl.DateTimeFormatOptions
 ): string {
   const d = new Date(date)
+  if (isNaN(d.getTime())) return ''
   const defaultOptions: Intl.DateTimeFormatOptions = {
     year: 'numeric',
     month: 'short',
@@ -23,6 +24,7 @@ export function formatTime(
   options?: Intl.DateTimeFormatOptions
 ): string {
   const d = new Date(date)
+  if (isNaN(d.getTime())) return ''
   const defaultOptions: Intl.DateTimeFormatOptions = {
     hour: '2-digit',
     minute: '2-digit',
@@ -37,8 +39,11 @@ export function formatRelativeTime(
   locale: string = 'zh-CN'
 ): string {
   const d = new Date(date)
+  if (isNaN(d.getTime())) return formatDate(new Date(), locale)
   const now = new Date()
   const diff = now.getTime() - d.getTime()
+  
+  if (diff < 0) return formatDate(d, locale)
   
   const seconds = Math.floor(diff / 1000)
   const minutes = Math.floor(seconds / 60)
@@ -59,21 +64,21 @@ export function formatNumber(
   locale: string = 'zh-CN',
   options?: Intl.NumberFormatOptions
 ): string {
+  if (!Number.isFinite(num)) return '0'
   return num.toLocaleString(locale, options)
 }
 
 // 文件大小格式化
-export function formatFileSize(bytes: number, locale: string = 'zh-CN'): string {
+export function formatFileSize(bytes: number, _locale: string = 'zh-CN'): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
+  if (bytes === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let size = bytes
-  let unitIndex = 0
-  
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  
-  return `${formatNumber(size, locale, { maximumFractionDigits: 1 })} ${units[unitIndex]}`
+  const k = 1024
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1)
+  const size = bytes / Math.pow(k, i)
+  // 使用 toFixed 确保一致的格式，然后根据 locale 添加千位分隔符
+  const formatted = i === 0 ? size.toString() : size.toFixed(1)
+  return `${formatted} ${units[i]}`
 }
 
 // 百分比格式化
@@ -82,6 +87,7 @@ export function formatPercent(
   locale: string = 'zh-CN',
   decimals: number = 0
 ): string {
+  if (!Number.isFinite(value)) return '0%'
   return formatNumber(value / 100, locale, {
     style: 'percent',
     minimumFractionDigits: decimals,
@@ -95,6 +101,7 @@ export function formatCurrency(
   currency: string = 'CNY',
   locale: string = 'zh-CN'
 ): string {
+  if (!Number.isFinite(amount)) return '0'
   return formatNumber(amount, locale, {
     style: 'currency',
     currency
@@ -146,7 +153,31 @@ export function toTimezone(
   timezone: string
 ): Date {
   const d = new Date(date)
-  return new Date(d.toLocaleString('en-US', { timeZone: timezone }))
+  const parts = d.toLocaleString('en-US', {
+    timeZone: timezone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  const segments = parts.split(', ')
+  const datePart = segments[0] ?? ''
+  const timePart = segments[1] ?? ''
+  const [monthStr, dayStr, yearStr] = datePart.split('/')
+  const [hourStr, minuteStr, secondStr] = timePart.split(':')
+  const year = parseInt(yearStr ?? '0', 10)
+  const month = parseInt(monthStr ?? '1', 10) - 1
+  const day = parseInt(dayStr ?? '1', 10)
+  const hour = parseInt(hourStr ?? '0', 10)
+  const minute = parseInt(minuteStr ?? '0', 10)
+  const second = parseInt(secondStr ?? '0', 10)
+  if (isNaN(year) || isNaN(month) || isNaN(day) || isNaN(hour) || isNaN(minute) || isNaN(second)) {
+    return d
+  }
+  return new Date(year, month, day, hour, minute, second)
 }
 
 // 获取用户时区

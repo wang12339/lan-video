@@ -1,5 +1,7 @@
 import { request } from './client';
 
+export { formatBytes } from './utils';
+
 export interface Tenant {
   tenant_id: number;
   slug: string;
@@ -85,20 +87,28 @@ export async function toggleTenant(
   });
 }
 
-/**
- * 格式化字节大小
- */
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+export interface CreateTenantRequest {
+  name: string;
+  slug: string;
+  custom_domain?: string;
+  plan?: string;
+  max_users?: number;
+  max_storage_bytes?: number;
+  settings?: Partial<TenantSettings>;
 }
 
 /**
- * 获取状态颜色
+ * 创建新租户
  */
+export async function createTenant(
+  data: CreateTenantRequest
+): Promise<{ ok: boolean; tenant: Tenant }> {
+  return request<{ ok: boolean; tenant: Tenant }>('/admin/tenants', {
+    method: 'POST',
+    body: data,
+  });
+}
+
 export function getStatusColor(status: string): string {
   switch (status) {
     case 'active': return '#4caf50';

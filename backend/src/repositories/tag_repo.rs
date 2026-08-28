@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgRow;
 use sqlx::PgPool;
-use sqlx::Row;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tag {
     pub id: i32,
     pub name: String,
@@ -22,7 +20,7 @@ impl TagRepository {
     }
 
     pub async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<Tag, sqlx::Error> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             INSERT INTO tags (name, color)
             VALUES ($1, $2)
@@ -32,13 +30,11 @@ impl TagRepository {
         .bind(name)
         .bind(color)
         .fetch_one(&self.pool)
-        .await?;
-
-        Ok(row_to_tag(row))
+        .await
     }
 
     pub async fn find_tag_by_name(&self, name: &str) -> Result<Option<Tag>, sqlx::Error> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT id, name, color, usage_count
             FROM tags
@@ -47,13 +43,11 @@ impl TagRepository {
         )
         .bind(name)
         .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.map(row_to_tag))
+        .await
     }
 
     pub async fn find_tag_by_id(&self, id: i32) -> Result<Option<Tag>, sqlx::Error> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT id, name, color, usage_count
             FROM tags
@@ -62,13 +56,11 @@ impl TagRepository {
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.map(row_to_tag))
+        .await
     }
 
     pub async fn list_tags(&self, limit: i64, offset: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT id, name, color, usage_count
             FROM tags
@@ -79,9 +71,7 @@ impl TagRepository {
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(row_to_tag).collect())
+        .await
     }
 
     pub async fn update_tag(
@@ -90,7 +80,7 @@ impl TagRepository {
         name: Option<&str>,
         color: Option<&str>,
     ) -> Result<Tag, sqlx::Error> {
-        let row = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             UPDATE tags
             SET 
@@ -104,9 +94,7 @@ impl TagRepository {
         .bind(name)
         .bind(color)
         .fetch_one(&self.pool)
-        .await?;
-
-        Ok(row_to_tag(row))
+        .await
     }
 
     pub async fn delete_tag(&self, id: i32) -> Result<(), sqlx::Error> {
@@ -201,7 +189,7 @@ impl TagRepository {
     }
 
     pub async fn get_video_tags(&self, video_id: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT t.id, t.name, t.color, t.usage_count
             FROM tags t
@@ -212,13 +200,11 @@ impl TagRepository {
         )
         .bind(video_id)
         .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(row_to_tag).collect())
+        .await
     }
 
     pub async fn get_popular_tags(&self, limit: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        let rows = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT id, name, color, usage_count
             FROM tags
@@ -229,16 +215,14 @@ impl TagRepository {
         )
         .bind(limit)
         .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(row_to_tag).collect())
+        .await
     }
 
     pub async fn find_tags_by_ids(&self, ids: &[i32]) -> Result<Vec<Tag>, sqlx::Error> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows = sqlx::query(
+        sqlx::query_as::<_, Tag>(
             r#"
             SELECT id, name, color, usage_count
             FROM tags
@@ -247,27 +231,14 @@ impl TagRepository {
         )
         .bind(ids)
         .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(row_to_tag).collect())
+        .await
     }
 
     pub async fn count_tags(&self) -> Result<i64, sqlx::Error> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM tags")
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags")
             .fetch_one(&self.pool)
             .await?;
-
-        Ok(row.get("count"))
-    }
-}
-
-/// Map a `tags` table row into a [`Tag`].
-fn row_to_tag(row: PgRow) -> Tag {
-    Tag {
-        id: row.get("id"),
-        name: row.get("name"),
-        color: row.get("color"),
-        usage_count: row.get("usage_count"),
+        Ok(count)
     }
 }
 
