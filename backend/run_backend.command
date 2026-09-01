@@ -6,8 +6,49 @@ PID_FILE="$SCRIPT_DIR/backend.pid"
 LOG_FILE="$SCRIPT_DIR/backend.log"
 PORT=8082
 STOP_TIMEOUT=10
+PROFILE_FILE="$SCRIPT_DIR/.build_profile"
 
 cd "$SCRIPT_DIR"
+
+# ── 构建模式(quick=推荐/release=最佳性能/debug=最快编译) ──
+BUILD_PROFILE="${BUILD_PROFILE:-}"
+if [[ -z "$BUILD_PROFILE" ]]; then
+    BUILD_PROFILE="quick"
+    [[ -f "$PROFILE_FILE" ]] && BUILD_PROFILE="$(cat "$PROFILE_FILE")"
+fi
+case "$BUILD_PROFILE" in
+    quick|release|debug) ;;
+    *) BUILD_PROFILE="quick" ;;
+esac
+
+# 根据构建模式解析二进制路径与 cargo 参数
+build_target() {
+    case "$BUILD_PROFILE" in
+        debug)
+            echo "$SCRIPT_DIR/target/debug/atmos-video-backend"
+            ;;
+        quick)
+            echo "$SCRIPT_DIR/target/quick/atmos-video-backend"
+            ;;
+        release)
+            echo "$SCRIPT_DIR/target/release/atmos-video-backend"
+            ;;
+    esac
+}
+
+cargo_args_for_profile() {
+    case "$BUILD_PROFILE" in
+        debug)
+            echo "build"
+            ;;
+        quick)
+            echo "build --profile quick"
+            ;;
+        release)
+            echo "build --release"
+            ;;
+    esac
+}
 
 # ── 颜色 ──
 RED='\033[0;31m'
@@ -123,10 +164,12 @@ start_backend() {
     fi
 
     # 构建后端
-    local binary="$SCRIPT_DIR/target/release/atmos-video-backend"
+    local binary
+    binary="$(build_target)"
     if [[ ! -x "$binary" ]] || find "$SCRIPT_DIR/src" -name "*.rs" -newer "$binary" -print -quit | grep -q .; then
-        echo "正在构建后端..."
-        cargo build --release 2>&1 | tail -3
+        echo "正在构建后端 [$BUILD_PROFILE]..."
+        # shellcheck disable=SC2046
+        cargo $(cargo_args_for_profile) 2>&1 | tail -3
     fi
 
     # 构建前端
@@ -181,6 +224,14 @@ show_logs() {
 }
 
 # ── 菜单 ──
+profile_label() {
+    case "$BUILD_PROFILE" in
+        debug)   echo "debug  (最快编译)" ;;
+        quick)   echo "quick  (推荐: 快编译+接近 release 性能)" ;;
+        release) echo "release (最佳性能, 编译最慢)" ;;
+    esac
+}
+
 show_menu() {
     clear
     echo -e "${CYAN}╔════════════════════════════════════╗${NC}"
@@ -193,15 +244,44 @@ show_menu() {
     echo -e "  ${RED}2)${NC} 停止后端"
     echo -e "  ${YELLOW}3)${NC} 重启后端"
     echo -e "  ${CYAN}4)${NC} 查看日志"
+    echo -e "  ${CYAN}5)${NC} 构建模式: $(profile_label)"
     echo -e "  ${NC}0)${NC} 退出"
     echo ""
+}
+
+# ── 构建模式选择 ──
+select_profile() {
+    while true; do
+        clear
+        echo -e "${CYAN}构建模式选择${NC}"
+        echo ""
+        echo "  1) quick    - 推荐: thin LTO, 编译快 3-5 倍, 性能接近 release"
+        echo "  2) release  - 最佳性能: full LTO, 编译最慢 (~1分钟+ 增量)"
+        echo "  3) debug    - 最快编译, 性能最差, 仅开发调试"
+        echo ""
+        echo -e "  当前: ${GREEN}$(profile_label)${NC}"
+        echo "  0) 返回"
+        echo ""
+        read -p "请选择 [0-3]: " choice
+        case $choice in
+            1) BUILD_PROFILE="quick" ;;
+            2) BUILD_PROFILE="release" ;;
+            3) BUILD_PROFILE="debug" ;;
+            0) return ;;
+            *) error "无效选择" ; continue ;;
+        esac
+        echo "$BUILD_PROFILE" > "$PROFILE_FILE"
+        info "构建模式已切换: $(profile_label)"
+        read -p "按回车返回..."
+        return
+    done
 }
 
 # ── 交互模式 ──
 interactive_mode() {
     while true; do
         show_menu
-        read -p "请选择操作 [0-4]: " choice
+        read -p "请选择操作 [0-5]: " choice
         echo ""
         case $choice in
             1)
@@ -222,6 +302,9 @@ interactive_mode() {
             4)
                 show_logs 30
                 ;;
+            5)
+                select_profile
+                ;;
             0)
                 echo "再见！"
                 exit 0
@@ -237,7 +320,7 @@ interactive_mode() {
 
 # ── 帮助 ──
 usage() {
-    echo "用法: $0 [命令]"
+    echo "用法: $0 [命令] [构建模式]"
     echo ""
     echo "命令:"
     echo "  (无参数)     打开交互菜单"
@@ -248,11 +331,23 @@ usage() {
     echo "  logs [N]     查看最近 N 行日志"
     echo "  help         显示帮助"
     echo ""
+    echo "构建模式 (仅 start/restart, 可选):"
+    echo "  quick  (默认) thin LTO, 编译快 3-5 倍, 性能接近 release"
+    echo "  release        full LTO, 最佳性能, 编译最慢"
+    echo "  debug          最快编译, 仅开发调试"
+    echo ""
+    echo "示例: $0 start quick    # 用 quick 模式启动"
+    echo ""
 }
 
 # ── 主程序 ──
 case "${1:-}" in
     start)
+        # 支持 `start [quick|release|debug]`
+        if [[ -n "${2:-}" ]] && [[ "$2" == "quick" || "$2" == "release" || "$2" == "debug" ]]; then
+            BUILD_PROFILE="$2"
+            echo "$BUILD_PROFILE" > "$PROFILE_FILE"
+        fi
         if is_running; then
             warn "后端已在运行"
         else
@@ -263,6 +358,10 @@ case "${1:-}" in
         stop_backend
         ;;
     restart)
+        if [[ -n "${2:-}" ]] && [[ "$2" == "quick" || "$2" == "release" || "$2" == "debug" ]]; then
+            BUILD_PROFILE="$2"
+            echo "$BUILD_PROFILE" > "$PROFILE_FILE"
+        fi
         stop_backend
         sleep 1
         start_backend

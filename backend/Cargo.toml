@@ -45,6 +45,14 @@ harness = false
 lto = true
 codegen-units = 1
 
+# 日常开发用的快速 release 构建:thin LTO + 多编译单元,
+# 相比 release 编译快 3-5 倍,运行性能差异极小。
+# 由 run_backend.command 的"构建模式"选择 quick / release / debug。
+[profile.quick]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [lints.clippy]
 # 警告
 unwrap_used = "warn"
