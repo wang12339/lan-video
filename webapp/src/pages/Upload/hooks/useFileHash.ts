@@ -1,11 +1,11 @@
 import { Sha256 } from '../utils/chunkUpload'
 
-export const CHUNK_SIZE = 5 * 1024 * 1024
+export const CHUNK_SIZE = 16 * 1024 * 1024
 export const VIDEO_MAX_SIZE = 50 * 1024 * 1024 * 1024
 export const IMAGE_MAX_SIZE = 50 * 1024 * 1024
 export const MAX_CHUNK_RETRIES = 3
 export const RETRY_BASE_DELAY_MS = 800
-export const CONCURRENT_UPLOADS = 2
+export const CONCURRENT_UPLOADS = 4
 export const SMALL_FILE_BYTES = 4 * 1024 * 1024
 export const HASH_SLICE_BYTES = 8 * 1024 * 1024
 
@@ -56,7 +56,9 @@ function verifyStreamingHash(): boolean {
 }
 
 function hexFromBuffer(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('')
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 export async function computeContentHash(file: File, isCancelled: () => boolean): Promise<string> {
@@ -70,7 +72,9 @@ export async function computeContentHash(file: File, isCancelled: () => boolean)
   const hasher = new Sha256()
   for (let offset = 0; offset < file.size; offset += HASH_SLICE_BYTES) {
     if (isCancelled()) throw new CancelledError()
-    const buf = await file.slice(offset, Math.min(offset + HASH_SLICE_BYTES, file.size)).arrayBuffer()
+    const buf = await file
+      .slice(offset, Math.min(offset + HASH_SLICE_BYTES, file.size))
+      .arrayBuffer()
     hasher.update(new Uint8Array(buf))
   }
   return hasher.digest()

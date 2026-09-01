@@ -23,6 +23,7 @@ impl ShareService {
     /// 未指定时默认为 3 小时。
     ///
     /// # Arguments
+    /// * `tenant_id` - 当前认证用户所属租户 ID（视频必须属于同一租户）
     /// * `video_id` - 要分享的视频 ID
     /// * `user_id` - 当前认证用户的 ID（必须是视频上传者或管理员）
     /// * `expires_in_days` - 可选的过期天数（1..=365），默认为 3 小时
@@ -37,6 +38,7 @@ impl ShareService {
     /// 请勿从未经认证或非上传者的路径直接调用此方法。
     pub async fn create_share_link(
         &self,
+        tenant_id: i64,
         video_id: i64,
         user_id: i64,
         expires_in_days: Option<i32>,
@@ -51,7 +53,7 @@ impl ShareService {
         };
         let share = self
             .repo
-            .create_share_link(video_id, user_id, &token, Some(expires_at))
+            .create_share_link(tenant_id, video_id, user_id, &token, Some(expires_at))
             .await?;
         Ok((token, share))
     }

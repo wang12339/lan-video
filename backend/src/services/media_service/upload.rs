@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use axum::extract::multipart::Field;
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::util::error::ServiceError;
@@ -13,7 +14,8 @@ use crate::util::error::ServiceError;
 /// 流式读取 multipart 字段并写入临时文件。
 ///
 /// 从 `field` 中逐块读取数据，写入 `file_path`，累计字节数超过
-/// `max_size` 时立即清理临时文件并返回错误。成功返回写入的总字节数；
+/// `max_size` 时立即清理临时文件并返回错误。**边写边计算 SHA-256**，
+/// 返回 `(总字节数, sha256 hex)`，避免落库阶段对 50GB 大文件二次全量读取。
 /// 写入 0 字节视为"文件为空"错误。
 ///
 /// # 参数
@@ -33,11 +35,14 @@ pub async fn stream_multipart_to_file(
     mut field: Field<'_>,
     file_path: &Path,
     max_size: u64,
-) -> Result<u64, ServiceError> {
-    let mut f = tokio::fs::File::create(file_path)
+) -> Result<(u64, String), ServiceError> {
+    let file = tokio::fs::File::create(file_path)
         .await
         .map_err(|e| ServiceError::Internal(format!("创建临时文件失败: {}", e)))?;
+    // 缓冲写入：大文件减少系统调用，显著提升吞吐。
+    let mut writer = tokio::io::BufWriter::with_capacity(1024 * 1024, file);
 
+    let mut hasher = Sha256::new();
     let mut total: u64 = 0;
     loop {
         let chunk = field
@@ -55,25 +60,29 @@ pub async fn stream_multipart_to_file(
                         format_size(max_size),
                     )));
                 }
-                f.write_all(&data)
+                writer
+                    .write_all(&data)
                     .await
                     .map_err(|e| ServiceError::Internal(format!("写入文件失败: {}", e)))?;
+                hasher.update(&data);
             }
             None => break,
         }
     }
 
-    f.flush()
+    // BufWriter 必须显式 flush（同时刷底层文件）后再 drop，否则数据可能丢失。
+    writer
+        .flush()
         .await
         .map_err(|e| ServiceError::Internal(format!("保存文件失败: {}", e)))?;
-    drop(f);
+    drop(writer);
 
     if total == 0 {
         let _ = tokio::fs::remove_file(file_path).await;
         return Err(ServiceError::BadRequest("文件为空".into()));
     }
 
-    Ok(total)
+    Ok((total, format!("{:x}", hasher.finalize())))
 }
 
 /// 校验上传的 Content-Type 是否在允许列表中。

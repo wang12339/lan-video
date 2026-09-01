@@ -230,6 +230,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Json<MetricsResponse
         auth_login_total: metrics.auth_login_total.get(),
         auth_login_failed_total: metrics.auth_login_failed_total.get(),
         auth_register_total: metrics.auth_register_total.get(),
+        auth_password_reset_total: metrics.auth_password_reset_total.get(),
         cache_hits_total: metrics.cache_hits_total.get(),
         cache_misses_total: metrics.cache_misses_total.get(),
         active_connections: metrics.active_connections.get(),

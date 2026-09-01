@@ -84,7 +84,17 @@ async fn spa_status_fix(req: Request, next: axum_mw::Next) -> axum::response::Re
 }
 
 pub async fn build_router(config: AppConfig) -> Router {
-    let pool = init_pool(&config.database_url).await;
+    // 进程级安全/工具配置：优先使用 AppConfig 显式值（env 已由 from_env 收归）。
+    crate::util::net::configure_trusted_proxy(config.trusted_proxy);
+    crate::util::hashid::configure(&config.hashid_salt);
+
+    let pool = init_pool(
+        &config.database_url,
+        config.db_max_connections,
+        config.db_min_connections,
+        config.migrations_dir.clone(),
+    )
+    .await;
 
     let user_repo = UserRepository::new(pool.clone());
     let video_repo = VideoRepository::new(pool.clone());
@@ -93,7 +103,7 @@ pub async fn build_router(config: AppConfig) -> Router {
     let comment_repo = CommentRepository::new(pool.clone());
     let share_repo = ShareRepository::new(pool.clone());
     let tag_repo = TagRepository::new(pool.clone());
-    let tenant_repo = TenantRepository::new(pool.clone());
+    let tenant_repo = TenantRepository::new(pool.clone(), config.public_url.clone());
     let plan_repo = PlanRepository::new(pool.clone());
     let registration_repo = RegistrationRepository::new(pool.clone());
     let danmaku_repo = DanmakuRepository::new(pool.clone());
@@ -155,8 +165,8 @@ pub async fn build_router(config: AppConfig) -> Router {
         .build();
 
     let metrics = Metrics::new();
-    let transcoder = Transcoder::new(&config.media_root);
-    let task_queue = TaskQueue::new(transcoder.clone(), pool.clone());
+    let transcoder = Transcoder::new(&config.media_root, config.transcode_settings());
+    let task_queue = TaskQueue::new(transcoder.clone(), pool.clone(), config.media_root.clone());
 
     // Start task queue worker
     task_queue.start_worker().await;
@@ -527,7 +537,10 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/admin/videos/{id}/hls/status",
                 get(handlers::admin::hls_status),
             )
-            .route("/admin/tags", get(handlers::tags::list_tags).post(handlers::tags::create_tag))
+            .route(
+                "/admin/tags",
+                get(handlers::tags::list_tags).post(handlers::tags::create_tag),
+            )
             .route("/admin/tags/{id}", put(handlers::tags::update_tag))
             .route("/admin/tags/{id}", delete(handlers::tags::delete_tag))
             .route("/admin/stats", get(handlers::admin::get_stats))

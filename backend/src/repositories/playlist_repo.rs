@@ -33,16 +33,18 @@ impl PlaylistRepository {
 
     pub async fn create_playlist(
         &self,
+        tenant_id: i64,
         user_id: i64,
         name: &str,
         description: Option<&str>,
         is_public: bool,
     ) -> Result<PlaylistRow, sqlx::Error> {
         sqlx::query_as::<_, PlaylistRow>(
-            r#"INSERT INTO playlists (user_id, name, description, is_public)
-               VALUES ($1, $2, $3, $4)
+            r#"INSERT INTO playlists (tenant_id, user_id, name, description, is_public)
+               VALUES ($1, $2, $3, $4, $5)
                RETURNING id, user_id, name, description, is_public, cover_url, created_at, updated_at"#,
         )
+        .bind(tenant_id)
         .bind(user_id)
         .bind(name)
         .bind(description)
@@ -51,17 +53,23 @@ impl PlaylistRepository {
         .await
     }
 
-    pub async fn get_playlist(&self, playlist_id: i64) -> Result<Option<PlaylistRow>, sqlx::Error> {
+    pub async fn get_playlist(
+        &self,
+        tenant_id: i64,
+        playlist_id: i64,
+    ) -> Result<Option<PlaylistRow>, sqlx::Error> {
         sqlx::query_as::<_, PlaylistRow>(
-            "SELECT id, user_id, name, description, is_public, cover_url, created_at, updated_at FROM playlists WHERE id = $1",
+            "SELECT id, user_id, name, description, is_public, cover_url, created_at, updated_at FROM playlists WHERE id = $1 AND tenant_id = $2",
         )
         .bind(playlist_id)
+        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await
     }
 
     pub async fn update_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         name: Option<&str>,
         description: Option<&str>,
@@ -73,20 +81,26 @@ impl PlaylistRepository {
                description = COALESCE($3, description),
                is_public = COALESCE($4, is_public),
                updated_at = CURRENT_TIMESTAMP
-               WHERE id = $1"#,
+               WHERE id = $1 AND tenant_id = $5"#,
         )
         .bind(playlist_id)
         .bind(name)
         .bind(description)
         .bind(is_public)
+        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn delete_playlist(&self, playlist_id: i64) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM playlists WHERE id = $1")
+    pub async fn delete_playlist(
+        &self,
+        tenant_id: i64,
+        playlist_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM playlists WHERE id = $1 AND tenant_id = $2")
             .bind(playlist_id)
+            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -94,6 +108,7 @@ impl PlaylistRepository {
 
     pub async fn add_video(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         video_id: i64,
     ) -> Result<Option<PlaylistItemRow>, sqlx::Error> {
@@ -108,24 +123,33 @@ impl PlaylistRepository {
             .execute(&mut *tx)
             .await?;
         let row = sqlx::query_as::<_, PlaylistItemRow>(
-            r#"INSERT INTO playlist_items (playlist_id, video_id, position)
-               VALUES ($1, $2, (SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = $1))
+            r#"INSERT INTO playlist_items (tenant_id, playlist_id, video_id, position)
+               VALUES ($1, $2, $3, (SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = $2))
                ON CONFLICT (playlist_id, video_id) DO NOTHING
                RETURNING *"#,
         )
+        .bind(tenant_id)
         .bind(playlist_id)
         .bind(video_id)
         .fetch_optional(&mut *tx)
         .await?;
-        sqlx::query("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1")
-            .bind(playlist_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(playlist_id)
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(row)
     }
 
-    pub async fn remove_video(&self, playlist_id: i64, video_id: i64) -> Result<bool, sqlx::Error> {
+    pub async fn remove_video(
+        &self,
+        tenant_id: i64,
+        playlist_id: i64,
+        video_id: i64,
+    ) -> Result<bool, sqlx::Error> {
         // Serialize with add_video (same advisory lock) so the renumbering
         // below can never race a MAX(position)+1 insert.
         let mut tx = self.pool.begin().await?;
@@ -134,9 +158,10 @@ impl PlaylistRepository {
             .execute(&mut *tx)
             .await?;
         let result =
-            sqlx::query("DELETE FROM playlist_items WHERE playlist_id = $1 AND video_id = $2")
+            sqlx::query("DELETE FROM playlist_items WHERE playlist_id = $1 AND video_id = $2 AND tenant_id = $3")
                 .bind(playlist_id)
                 .bind(video_id)
+                .bind(tenant_id)
                 .execute(&mut *tx)
                 .await?;
         if result.rows_affected() > 0 {
@@ -146,10 +171,11 @@ impl PlaylistRepository {
                 r#"UPDATE playlist_items
                    SET position = sub.rn
                    FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY position, added_at) - 1 AS rn
-                         FROM playlist_items WHERE playlist_id = $1) AS sub
+                         FROM playlist_items WHERE playlist_id = $1 AND tenant_id = $2) AS sub
                    WHERE playlist_items.id = sub.id AND playlist_items.position <> sub.rn"#,
             )
             .bind(playlist_id)
+            .bind(tenant_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -159,6 +185,7 @@ impl PlaylistRepository {
 
     pub async fn list_user_playlists_with_counts(
         &self,
+        tenant_id: i64,
         user_id: i64,
     ) -> Result<Vec<(PlaylistRow, i64)>, sqlx::Error> {
         #[derive(sqlx::FromRow)]
@@ -179,10 +206,11 @@ impl PlaylistRepository {
                       p.created_at, p.updated_at, COALESCE(i.item_count, 0) as item_count
                FROM playlists p
                LEFT JOIN (SELECT playlist_id, COUNT(*) as item_count FROM playlist_items GROUP BY playlist_id) i ON i.playlist_id = p.id
-               WHERE p.user_id = $1
+               WHERE p.user_id = $1 AND p.tenant_id = $2
                ORDER BY p.updated_at DESC"#,
         )
         .bind(user_id)
+        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -204,17 +232,24 @@ impl PlaylistRepository {
             .collect())
     }
 
-    pub async fn count_playlist_items(&self, playlist_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM playlist_items WHERE playlist_id = $1")
-                .bind(playlist_id)
-                .fetch_one(&self.pool)
-                .await?;
+    pub async fn count_playlist_items(
+        &self,
+        tenant_id: i64,
+        playlist_id: i64,
+    ) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM playlist_items WHERE playlist_id = $1 AND tenant_id = $2",
+        )
+        .bind(playlist_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
     pub async fn list_playlist_videos(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
     ) -> Result<Vec<PlaylistVideoRow>, sqlx::Error> {
         sqlx::query_as::<_, PlaylistVideoRow>(
@@ -222,10 +257,11 @@ impl PlaylistRepository {
                       v.category, v.views, v.duration
                FROM playlist_items i
                JOIN videos v ON i.video_id = v.id
-               WHERE i.playlist_id = $1
+               WHERE i.playlist_id = $1 AND i.tenant_id = $2 AND v.tenant_id = $2
                ORDER BY i.position ASC, i.added_at ASC"#,
         )
         .bind(playlist_id)
+        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
     }
@@ -237,6 +273,7 @@ impl PlaylistRepository {
     /// so concurrent mutations are serialized.
     pub async fn reorder_videos(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         video_ids: &[i64],
     ) -> Result<(), sqlx::Error> {
@@ -261,13 +298,18 @@ impl PlaylistRepository {
         }
         separated.push_unseparated(") AS sub(vid, pos) WHERE playlist_items.playlist_id = ");
         builder.push_bind(playlist_id);
+        builder.push(" AND playlist_items.tenant_id = ");
+        builder.push_bind(tenant_id);
         builder.push(" AND playlist_items.video_id = sub.vid");
         builder.build().execute(&mut *tx).await?;
 
-        sqlx::query("UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1")
-            .bind(playlist_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE playlists SET updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND tenant_id = $2",
+        )
+        .bind(playlist_id)
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(())

@@ -136,8 +136,13 @@ impl TagService {
     /// - `ServiceError::Conflict`：标签名已存在（唯一约束冲突）
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `req`：创建标签的请求参数
-    pub async fn create_tag(&self, req: CreateTagRequest) -> Result<TagResponse, ServiceError> {
+    pub async fn create_tag(
+        &self,
+        tenant_id: i64,
+        req: CreateTagRequest,
+    ) -> Result<TagResponse, ServiceError> {
         let name = validate_tag_name(&req.name)?;
 
         // Trim + validate color
@@ -148,7 +153,11 @@ impl TagService {
 
         // Insert directly and rely on the unique constraint on tags.name — this
         // is race-safe (check-then-insert would allow concurrent duplicates).
-        match self.tag_repo.create_tag(&name, color.as_deref()).await {
+        match self
+            .tag_repo
+            .create_tag(tenant_id, &name, color.as_deref())
+            .await
+        {
             Ok(tag) => Ok(tag.into()),
             Err(e) => {
                 if db_error::is_unique_violation(&e) {
@@ -169,16 +178,18 @@ impl TagService {
     /// - `ServiceError::Conflict`：新标签名已被其他标签使用
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `id`：要更新的标签 ID
     /// - `req`：更新请求参数（所有字段可选）
     pub async fn update_tag(
         &self,
+        tenant_id: i64,
         id: i32,
         req: UpdateTagRequest,
     ) -> Result<TagResponse, ServiceError> {
         // Check if tag exists
         self.tag_repo
-            .find_tag_by_id(id)
+            .find_tag_by_id(tenant_id, id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?
             .ok_or_else(|| ServiceError::NotFound("标签不存在".into()))?;
@@ -191,7 +202,7 @@ impl TagService {
                 // Check if the normalized name is taken by another tag
                 if let Some(other) = self
                     .tag_repo
-                    .find_tag_by_name(&normalized)
+                    .find_tag_by_name(tenant_id, &normalized)
                     .await
                     .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?
                 {
@@ -212,7 +223,7 @@ impl TagService {
 
         match self
             .tag_repo
-            .update_tag(id, name.as_deref(), color.as_deref())
+            .update_tag(tenant_id, id, name.as_deref(), color.as_deref())
             .await
         {
             Ok(tag) => Ok(tag.into()),
@@ -233,18 +244,19 @@ impl TagService {
     /// - `ServiceError::NotFound`：指定 ID 的标签不存在
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `id`：要删除的标签 ID
-    pub async fn delete_tag(&self, id: i32) -> Result<(), ServiceError> {
+    pub async fn delete_tag(&self, tenant_id: i64, id: i32) -> Result<(), ServiceError> {
         // Check if tag exists
         let _existing = self
             .tag_repo
-            .find_tag_by_id(id)
+            .find_tag_by_id(tenant_id, id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?
             .ok_or_else(|| ServiceError::NotFound("标签不存在".into()))?;
 
         self.tag_repo
-            .delete_tag(id)
+            .delete_tag(tenant_id, id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
@@ -257,11 +269,12 @@ impl TagService {
     /// - `ServiceError::NotFound`：指定 ID 的标签不存在
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `id`：标签 ID
-    pub async fn get_tag(&self, id: i32) -> Result<TagResponse, ServiceError> {
+    pub async fn get_tag(&self, tenant_id: i64, id: i32) -> Result<TagResponse, ServiceError> {
         let tag = self
             .tag_repo
-            .find_tag_by_id(id)
+            .find_tag_by_id(tenant_id, id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?
             .ok_or_else(|| ServiceError::NotFound("标签不存在".into()))?;
@@ -272,12 +285,18 @@ impl TagService {
     /// 分页获取标签列表。
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `page`：页码（从 0 开始）
     /// - `size`：每页数量
-    pub async fn list_tags(&self, page: i64, size: i64) -> Result<Vec<TagResponse>, ServiceError> {
+    pub async fn list_tags(
+        &self,
+        tenant_id: i64,
+        page: i64,
+        size: i64,
+    ) -> Result<Vec<TagResponse>, ServiceError> {
         let tags = self
             .tag_repo
-            .list_tags(size, page.saturating_mul(size))
+            .list_tags(tenant_id, size, page.saturating_mul(size))
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
@@ -287,11 +306,16 @@ impl TagService {
     /// 获取热门标签列表（按使用次数降序排列）。
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `limit`：返回的最大标签数量
-    pub async fn get_popular_tags(&self, limit: i64) -> Result<Vec<TagResponse>, ServiceError> {
+    pub async fn get_popular_tags(
+        &self,
+        tenant_id: i64,
+        limit: i64,
+    ) -> Result<Vec<TagResponse>, ServiceError> {
         let tags = self
             .tag_repo
-            .get_popular_tags(limit)
+            .get_popular_tags(tenant_id, limit)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
@@ -308,12 +332,14 @@ impl TagService {
     /// - `ServiceError::NotFound`：视频或某个标签 ID 不存在
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `video_id`：目标视频 ID
     /// - `tag_ids`：要添加的标签 ID 列表
     /// - `user_id`：当前操作用户 ID
     /// - `is_admin`：当前用户是否为管理员
     pub async fn add_tags_to_video(
         &self,
+        tenant_id: i64,
         video_id: i64,
         tag_ids: &[i32],
         user_id: i64,
@@ -332,13 +358,14 @@ impl TagService {
 
         // 视频所有权检查：只有视频所有者或管理员才能添加标签
         if !is_admin {
-            self.check_video_ownership(video_id, user_id).await?;
+            self.check_video_ownership(tenant_id, video_id, user_id)
+                .await?;
         }
 
         // Batch verify tags exist
         let existing_tags = self
             .tag_repo
-            .find_tags_by_ids(&ids)
+            .find_tags_by_ids(tenant_id, &ids)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
@@ -351,7 +378,7 @@ impl TagService {
         }
 
         self.tag_repo
-            .add_tags_to_video_batch(video_id, &ids)
+            .add_tags_to_video_batch(tenant_id, video_id, &ids)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
@@ -366,12 +393,14 @@ impl TagService {
     /// - `ServiceError::Forbidden`：非视频所有者尝试操作
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `video_id`：目标视频 ID
     /// - `tag_ids`：要移除的标签 ID 列表
     /// - `user_id`：当前操作用户 ID
     /// - `is_admin`：当前用户是否为管理员
     pub async fn remove_tags_from_video(
         &self,
+        tenant_id: i64,
         video_id: i64,
         tag_ids: &[i32],
         user_id: i64,
@@ -382,10 +411,11 @@ impl TagService {
             return Ok(());
         }
         if !is_admin {
-            self.check_video_ownership(video_id, user_id).await?;
+            self.check_video_ownership(tenant_id, video_id, user_id)
+                .await?;
         }
         self.tag_repo
-            .remove_tags_from_video_batch(video_id, &ids)
+            .remove_tags_from_video_batch(tenant_id, video_id, &ids)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
         Ok(())
@@ -399,45 +429,58 @@ impl TagService {
     /// - `ServiceError::Forbidden`：非视频所有者尝试操作
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID（标签隔离）
     /// - `video_id`：目标视频 ID
     /// - `tag_id`：要移除的标签 ID
     /// - `user_id`：当前操作用户 ID
     /// - `is_admin`：当前用户是否为管理员
     pub async fn remove_tag_from_video(
         &self,
+        tenant_id: i64,
         video_id: i64,
         tag_id: i32,
         user_id: i64,
         is_admin: bool,
     ) -> Result<(), ServiceError> {
         if !is_admin {
-            self.check_video_ownership(video_id, user_id).await?;
+            self.check_video_ownership(tenant_id, video_id, user_id)
+                .await?;
         }
         self.tag_repo
-            .remove_tag_from_video(video_id, tag_id)
+            .remove_tag_from_video(tenant_id, video_id, tag_id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
         Ok(())
     }
 
-    /// 获取指定视频的所有标签。
+    /// 获取指定视频的所有标签（按租户隔离）。
     ///
     /// # 参数
+    /// - `tenant_id`：租户 ID
     /// - `video_id`：视频 ID
-    pub async fn get_video_tags(&self, video_id: i64) -> Result<Vec<TagResponse>, ServiceError> {
+    pub async fn get_video_tags(
+        &self,
+        tenant_id: i64,
+        video_id: i64,
+    ) -> Result<Vec<TagResponse>, ServiceError> {
         let tags = self
             .tag_repo
-            .get_video_tags(video_id)
+            .get_video_tags(tenant_id, video_id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?;
 
         Ok(tags.into_iter().map(TagResponse::from).collect())
     }
 
-    async fn check_video_ownership(&self, video_id: i64, user_id: i64) -> Result<(), ServiceError> {
+    async fn check_video_ownership(
+        &self,
+        tenant_id: i64,
+        video_id: i64,
+        user_id: i64,
+    ) -> Result<(), ServiceError> {
         let video = self
             .video_repo
-            .find_by_id(video_id)
+            .find_by_id(tenant_id, video_id)
             .await
             .map_err(|e| ServiceError::Internal(format!("标签操作失败: {}", e)))?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;

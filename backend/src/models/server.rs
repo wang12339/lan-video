@@ -56,6 +56,7 @@ pub struct MetricsResponse {
     pub auth_login_total: u64,
     pub auth_login_failed_total: u64,
     pub auth_register_total: u64,
+    pub auth_password_reset_total: u64,
     pub cache_hits_total: u64,
     pub cache_misses_total: u64,
     pub active_connections: f64,

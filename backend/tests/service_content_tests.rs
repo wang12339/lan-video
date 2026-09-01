@@ -511,6 +511,7 @@ async fn db_fixture(pool: &PgPool, tag: &str) -> (i64, i64) {
     let video_repo = VideoRepository::new(pool.clone());
     let video_id = video_repo
         .save_external_video(
+            1,
             &format!("svc_test_video_{tag}"),
             "fixture",
             "fixture",
@@ -560,6 +561,7 @@ async fn db_comment_sanitize_strips_html_and_trims() {
 
     let row = svc
         .create_comment(
+            1,
             video_id,
             user_id,
             "  <script>alert(1)</script>你好<b>世界</b>  ",
@@ -588,21 +590,21 @@ async fn db_comment_length_limit_enforced() {
 
     // 2001 字符 → 拒绝
     let err = svc
-        .create_comment(video_id, user_id, &"a".repeat(2001), None, false)
+        .create_comment(1, video_id, user_id, &"a".repeat(2001), None, false)
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::BadRequest(_)), "{err:?}");
 
     // 空/纯空白 → 拒绝
     assert!(matches!(
-        svc.create_comment(video_id, user_id, "   ", None, false)
+        svc.create_comment(1, video_id, user_id, "   ", None, false)
             .await,
         Err(ServiceError::BadRequest(_))
     ));
 
     // 恰好 2000 字符 → 通过
     let row = svc
-        .create_comment(video_id, user_id, &"a".repeat(2000), None, false)
+        .create_comment(1, video_id, user_id, &"a".repeat(2000), None, false)
         .await
         .expect("2000 字符应通过");
     assert_eq!(row.content.len(), 2000);
@@ -621,18 +623,18 @@ async fn db_comment_reply_depth_normalized_to_two_levels() {
     );
 
     let root = svc
-        .create_comment(video_id, user_id, "root", None, false)
+        .create_comment(1, video_id, user_id, "root", None, false)
         .await
         .expect("root comment");
     let reply = svc
-        .create_comment(video_id, user_id, "reply", Some(root.id), false)
+        .create_comment(1, video_id, user_id, "reply", Some(root.id), false)
         .await
         .expect("reply");
     assert_eq!(reply.parent_id, Some(root.id));
 
     // 对回复再回复 → 父节点必须被归一化到顶层评论（线程最多两层）
     let nested = svc
-        .create_comment(video_id, user_id, "nested", Some(reply.id), false)
+        .create_comment(1, video_id, user_id, "nested", Some(reply.id), false)
         .await
         .expect("nested reply");
     assert_eq!(
@@ -643,7 +645,7 @@ async fn db_comment_reply_depth_normalized_to_two_levels() {
 
     // 父评论不存在 → 明确报错
     assert!(matches!(
-        svc.create_comment(video_id, user_id, "x", Some(999_999_999), false)
+        svc.create_comment(1, video_id, user_id, "x", Some(999_999_999), false)
             .await,
         Err(ServiceError::BadRequest(_))
     ));
@@ -663,20 +665,20 @@ async fn db_comment_rejects_parent_from_other_video() {
     );
 
     let comment_on_a = svc
-        .create_comment(video_a, user_id, "on A", None, false)
+        .create_comment(1, video_a, user_id, "on A", None, false)
         .await
         .expect("comment on video A");
 
     // 在视频 B 下回复视频 A 的评论 → 拒绝
     let err = svc
-        .create_comment(video_b, user_id, "cross", Some(comment_on_a.id), true)
+        .create_comment(1, video_b, user_id, "cross", Some(comment_on_a.id), true)
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::BadRequest(_)));
 
     // 不存在的视频 → 拒绝
     assert!(matches!(
-        svc.create_comment(999_999_999, user_id, "no video", None, true)
+        svc.create_comment(1, 999_999_999, user_id, "no video", None, true)
             .await,
         Err(ServiceError::BadRequest(_))
     ));
@@ -694,7 +696,7 @@ async fn db_share_link_expiry_math_default_and_clamped() {
 
     // 默认（无参数）：固定 3 小时
     let (token, share) = expect_share_ok(
-        svc.create_share_link(video_id, user_id, None).await,
+        svc.create_share_link(1, video_id, user_id, None).await,
         "create share",
     );
     assert_eq!(token.len(), 32, "token 必须为 32 位");
@@ -708,7 +710,7 @@ async fn db_share_link_expiry_math_default_and_clamped() {
 
     // 1 天
     let (_, share) = expect_share_ok(
-        svc.create_share_link(video_id, user_id, Some(1)).await,
+        svc.create_share_link(1, video_id, user_id, Some(1)).await,
         "create 1-day share",
     );
     assert_eq!(
@@ -722,7 +724,7 @@ async fn db_share_link_expiry_math_default_and_clamped() {
     // clamp：0 / 负数 → 1 天；超大值 → 365 天
     for clamped in [0, -10] {
         let (_, share) = expect_share_ok(
-            svc.create_share_link(video_id, user_id, Some(clamped))
+            svc.create_share_link(1, video_id, user_id, Some(clamped))
                 .await,
             "clamped share",
         );
@@ -736,7 +738,7 @@ async fn db_share_link_expiry_math_default_and_clamped() {
         );
     }
     let (_, share) = expect_share_ok(
-        svc.create_share_link(video_id, user_id, Some(999)).await,
+        svc.create_share_link(1, video_id, user_id, Some(999)).await,
         "clamped share",
     );
     assert_eq!(
@@ -763,7 +765,7 @@ async fn db_share_link_create_then_lookup_and_revoke() {
     let svc = ShareService::new(ShareRepository::new(pool.clone()));
 
     let (token, _) = expect_share_ok(
-        svc.create_share_link(video_id, user_id, Some(30)).await,
+        svc.create_share_link(1, video_id, user_id, Some(30)).await,
         "create share",
     );
 
@@ -803,10 +805,13 @@ async fn db_tag_name_normalized_color_validated_and_deduped() {
 
     // 名称归一化 + 颜色 trim 后才落库
     let tag = svc
-        .create_tag(CreateTagRequest {
-            name: "  Rust   Lang  ".to_string(),
-            color: Some("  #FF5733  ".to_string()),
-        })
+        .create_tag(
+            1,
+            CreateTagRequest {
+                name: "  Rust   Lang  ".to_string(),
+                color: Some("  #FF5733  ".to_string()),
+            },
+        )
         .await
         .expect("create tag");
     assert_eq!(tag.name, "Rust Lang", "内部连续空白必须折叠为单个空格");
@@ -814,59 +819,71 @@ async fn db_tag_name_normalized_color_validated_and_deduped() {
 
     // 重复名 → 唯一约束冲突
     let err = svc
-        .create_tag(CreateTagRequest {
-            name: "Rust Lang".to_string(),
-            color: None,
-        })
+        .create_tag(
+            1,
+            CreateTagRequest {
+                name: "Rust Lang".to_string(),
+                color: None,
+            },
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::Duplicate(_)), "{err}");
 
     // 非法颜色 → 校验失败
     let err = svc
-        .create_tag(CreateTagRequest {
-            name: "bad-color-tag".to_string(),
-            color: Some("GGGGGG".to_string()),
-        })
+        .create_tag(
+            1,
+            CreateTagRequest {
+                name: "bad-color-tag".to_string(),
+                color: Some("GGGGGG".to_string()),
+            },
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::Validation(_)), "{err}");
 
     // 空名 / 超长名 → 校验失败
     assert!(svc
-        .create_tag(CreateTagRequest {
-            name: "   ".to_string(),
-            color: None,
-        })
+        .create_tag(
+            1,
+            CreateTagRequest {
+                name: "   ".to_string(),
+                color: None,
+            }
+        )
         .await
         .is_err());
     assert!(svc
-        .create_tag(CreateTagRequest {
-            name: "a".repeat(101),
-            color: None,
-        })
+        .create_tag(
+            1,
+            CreateTagRequest {
+                name: "a".repeat(101),
+                color: None,
+            }
+        )
         .await
         .is_err());
 
     // 加标签：重复 id 去重后成功；不存在的 id → 报错；超量 → 报错
     let id = tag.id;
-    svc.add_tags_to_video(video_id, &[id, id, id], user_id, false)
+    svc.add_tags_to_video(1, video_id, &[id, id, id], user_id, false)
         .await
         .expect("dedupe then add");
     let err = svc
-        .add_tags_to_video(video_id, &[999_999], user_id, false)
+        .add_tags_to_video(1, video_id, &[999_999], user_id, false)
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::NotFound(_)), "{err}");
     let too_many: Vec<i32> = (1..=101).collect();
     let err = svc
-        .add_tags_to_video(video_id, &too_many, user_id, false)
+        .add_tags_to_video(1, video_id, &too_many, user_id, false)
         .await
         .unwrap_err();
     assert!(matches!(err, ServiceError::Validation(_)), "{err}");
 
     // 空列表直接成功（幂等）
-    svc.add_tags_to_video(video_id, &[], user_id, false)
+    svc.add_tags_to_video(1, video_id, &[], user_id, false)
         .await
         .expect("empty ok");
 
@@ -883,20 +900,20 @@ async fn db_playlist_name_boundary_matches_varchar_200() {
     // 200 字符（中文按字符计数）→ DB 层可存
     let ok_name = "名".repeat(200);
     let playlist = repo
-        .create_playlist(user_id, &ok_name, None, true)
+        .create_playlist(1, user_id, &ok_name, None, true)
         .await
         .expect("200 字符名称应可存储");
     assert_eq!(playlist.name.chars().count(), 200);
 
     // 201 字符 → DB VARCHAR(200) 拒绝（与 handler 的 is_valid_playlist_name 边界一致）
     assert!(repo
-        .create_playlist(user_id, &"名".repeat(201), None, true)
+        .create_playlist(1, user_id, &"名".repeat(201), None, true)
         .await
         .is_err());
 
     // 空名在 DB 层不被拦截（验证校验责任在 handler/service 层）
     let empty = repo
-        .create_playlist(user_id, "", None, false)
+        .create_playlist(1, user_id, "", None, false)
         .await
         .expect("DB 允许空名，handler 负责拦截");
     assert!(empty.name.is_empty());

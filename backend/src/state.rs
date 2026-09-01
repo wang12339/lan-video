@@ -39,8 +39,9 @@ use crate::services::video_service::VideoService;
 pub type VideoListCache = Cache<String, PagedVideoResponse>;
 pub type RecommendationCache = Cache<String, (Vec<VideoRecommendation>, i64)>;
 /// 单视频详情缓存（`GET /videos/{id}` 热路径）：60 秒 TTL。
+/// 键为 `(tenant_id, video_id)` 以防缓存跨租户串扰。
 /// 视频列表/详情查询共享同一失效入口 `AppState::invalidate_caches`。
-pub type VideoDetailCache = Cache<i64, VideoItem>;
+pub type VideoDetailCache = Cache<(i64, i64), VideoItem>;
 
 /// Tracks active playback sessions: key = "username:video_id", value = last heartbeat time
 pub struct PlaybackSessionTracker {

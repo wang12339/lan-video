@@ -28,12 +28,11 @@ pub async fn get_playback_history_for_video(
         // video exists, so reject before hitting the database.
         return Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"));
     }
-    let username = &auth_user.username;
 
     let (position_ms, duration_ms) = state
         .services
         .playback
-        .get_playback_data(username, video_id)
+        .get_playback_data(auth_user.tenant_id, &auth_user.username, video_id)
         .await
         .map_err(|e| internal_error_log("get_playback_data", &e))?
         .unwrap_or((0, 0));
@@ -59,7 +58,7 @@ pub async fn list_playback_history(
     let (items, total) = state
         .services
         .playback
-        .get_playback_history(&auth_user.username, size, offset)
+        .get_playback_history(auth_user.tenant_id, &auth_user.username, size, offset)
         .await
         .map_err(|e| internal_error_log("get_playback_history", &e))?;
     Ok(Json(PagedRecentWatchResponse {
@@ -106,6 +105,7 @@ pub async fn update_playback_history(
         .services
         .playback
         .update_playback(
+            auth_user.tenant_id,
             &auth_user.username,
             payload.video_id,
             payload.position_ms,

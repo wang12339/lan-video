@@ -472,6 +472,8 @@ pub async fn reset_password(
         tracing::error!("revoke_tokens_by_user_id after password reset: {}", e);
     }
 
+    state.metrics.record_password_reset();
+
     Ok(Json(
         serde_json::json!({ "ok": true, "message": "密码已重置" }),
     ))

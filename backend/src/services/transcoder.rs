@@ -2,58 +2,46 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 
-/// Max time for a single ffmpeg transcode before the child is killed.
-/// Override with `TRANSCODE_TIMEOUT_SECS` (default 1 hour).
-fn transcode_timeout() -> Duration {
-    Duration::from_secs(
-        std::env::var("TRANSCODE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3600),
-    )
+/// 转码器配置（由 `AppConfig::transcode_settings()` 构造，测试可用默认值）。
+#[derive(Debug, Clone)]
+pub struct TranscodeSettings {
+    /// 单次 ffmpeg 转码超时。
+    pub transcode_timeout: Duration,
+    /// 单次 ffprobe 调用超时。
+    pub ffprobe_timeout: Duration,
+    /// 允许同时进行的 ffmpeg 转码数。
+    pub concurrency: usize,
+    /// 计算各分辨率输出大小上限时假设的源视频最大时长（秒）。
+    pub max_duration_secs: u64,
+    pub ffmpeg_path: String,
+    pub ffprobe_path: String,
 }
 
-/// Max time for a single ffprobe invocation.
-fn ffprobe_timeout() -> Duration {
-    Duration::from_secs(
-        std::env::var("FFPROBE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30),
-    )
-}
-
-/// How many ffmpeg transcodes may run concurrently (default 1 — each one is
-/// CPU-heavy). Override with `TRANSCODE_CONCURRENCY`.
-fn transcode_concurrency() -> usize {
-    std::env::var("TRANSCODE_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1)
-        .max(1)
-}
-
-/// Upper bound (seconds) on the source duration assumed when computing the
-/// per-variant output size cap. Override with `TRANSCODE_MAX_DURATION_SECS`
-/// (default 2 hours).
-fn transcode_max_duration_secs() -> u64 {
-    std::env::var("TRANSCODE_MAX_DURATION_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(7200)
+impl Default for TranscodeSettings {
+    fn default() -> Self {
+        Self {
+            transcode_timeout: Duration::from_secs(3600),
+            ffprobe_timeout: Duration::from_secs(30),
+            concurrency: 1,
+            max_duration_secs: 7200,
+            ffmpeg_path: "ffmpeg".into(),
+            ffprobe_path: "ffprobe".into(),
+        }
+    }
 }
 
 /// Max output size in bytes for a variant at the given resolution, derived
 /// from the target bitrate and the maximum assumed source duration. A
 /// malicious or pathological input cannot make ffmpeg fill the disk: any
 /// output beyond this cap is deleted right after encoding.
-fn max_variant_size_bytes(resolution: &str) -> Option<u64> {
+fn max_variant_size_bytes(resolution: &str, max_duration_secs: u64) -> Option<u64> {
     let (_, _, bitrate_kbps) = resolution_params(resolution)?;
-    Some(bitrate_kbps as u64 * 1000 / 8 * transcode_max_duration_secs())
+    Some(bitrate_kbps as u64 * 1000 / 8 * max_duration_secs)
 }
 
 /// ffmpeg stderr can be arbitrarily large (a hostile media file may produce
@@ -67,12 +55,6 @@ fn truncate_stderr(stderr: &str) -> String {
         let dropped = stderr.chars().count() - MAX_CHARS;
         format!("{}… ({} more bytes not shown)", truncated, dropped)
     }
-}
-
-static TRANSCODE_SEMAPHORE: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
-
-fn transcode_semaphore() -> &'static tokio::sync::Semaphore {
-    TRANSCODE_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(transcode_concurrency()))
 }
 
 /// Shared width/height/bitrate mapping used by arg building and bitrate lookup.
@@ -120,10 +102,12 @@ pub struct Transcoder {
     ffprobe_path: String,
     output_dir: PathBuf,
     hls_dir: PathBuf,
+    settings: TranscodeSettings,
+    semaphore: Arc<Semaphore>,
 }
 
 impl Transcoder {
-    pub fn new(media_root: &Path) -> Self {
+    pub fn new(media_root: &Path, settings: TranscodeSettings) -> Self {
         let output_dir = media_root.join("variants");
         let hls_dir = media_root.join("hls");
         if let Err(e) = std::fs::create_dir_all(&output_dir) {
@@ -142,10 +126,12 @@ impl Transcoder {
         }
 
         Transcoder {
-            ffmpeg_path: std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".to_string()),
-            ffprobe_path: std::env::var("FFPROBE_PATH").unwrap_or_else(|_| "ffprobe".to_string()),
+            ffmpeg_path: settings.ffmpeg_path.clone(),
+            ffprobe_path: settings.ffprobe_path.clone(),
             output_dir,
             hls_dir,
+            semaphore: Arc::new(Semaphore::new(settings.concurrency.max(1))),
+            settings,
         }
     }
 
@@ -188,11 +174,13 @@ impl Transcoder {
             let resolution = resolution.clone();
             let output_path_clone = output_path.clone();
             let bitrate = self.get_bitrate(&resolution);
-            let timeout = transcode_timeout();
+            let timeout = self.settings.transcode_timeout;
+            let max_duration_secs = self.settings.max_duration_secs;
+            let semaphore = self.semaphore.clone();
 
             join_set.spawn(async move {
                 // Cap the number of concurrent ffmpeg processes.
-                let _permit = match transcode_semaphore().acquire().await {
+                let _permit = match semaphore.acquire().await {
                     Ok(p) => p,
                     Err(_) => return Err(anyhow!("transcode semaphore closed")),
                 };
@@ -223,7 +211,7 @@ impl Transcoder {
                 // Disk-quota guard: delete any output that blew past the
                 // size cap so a pathological input cannot leave junk on disk
                 // or bypass the per-user storage quota by multiplier.
-                if let Some(limit) = max_variant_size_bytes(&resolution) {
+                if let Some(limit) = max_variant_size_bytes(&resolution, max_duration_secs) {
                     if metadata.len() > limit {
                         let _ = tokio::fs::remove_file(&output_path_clone).await;
                         anyhow::bail!(
@@ -298,7 +286,7 @@ impl Transcoder {
 
     pub async fn get_video_info(&self, video_path: &Path) -> Result<VideoInfo> {
         let output = tokio::time::timeout(
-            ffprobe_timeout(),
+            self.settings.ffprobe_timeout,
             Command::new(&self.ffprobe_path)
                 .args([
                     "-v",
@@ -379,7 +367,7 @@ impl Transcoder {
             ];
 
             let output = tokio::time::timeout(
-                transcode_timeout(),
+                self.settings.transcode_timeout,
                 Command::new(&self.ffmpeg_path)
                     .args(&args)
                     .kill_on_drop(true)

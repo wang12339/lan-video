@@ -52,10 +52,17 @@ pub async fn security_headers(req: Request, next: Next) -> impl IntoResponse {
         HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
     );
 
-    // Content Security Policy
+    // Content Security Policy：HTTPS 下额外启用 upgrade-insecure-requests /
+    // block-all-mixed-content；纯 HTTP 只发基础策略，避免子资源被强制
+    // 升级到不存在的 HTTPS 导致 ERR_SSL_PROTOCOL_ERROR。
+    let csp = if is_https {
+        CSP_POLICY
+    } else {
+        CSP_POLICY_HTTP
+    };
     headers.insert(
         axum::http::header::HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static(CSP_POLICY),
+        HeaderValue::from_static(csp),
     );
 
     // Cross-Origin-Opener-Policy: isolate browsing context
@@ -93,13 +100,7 @@ fn is_https_request(req: &Request) -> bool {
 
 #[inline]
 fn is_trusted_peer(req: &Request) -> bool {
-    static TRUSTED_PROXY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let trusted_proxy = *TRUSTED_PROXY.get_or_init(|| {
-        std::env::var("TRUSTED_PROXY")
-            .ok()
-            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    });
-    if trusted_proxy {
+    if crate::util::net::trusted_proxy_is_enabled() {
         return true;
     }
     req.extensions()
@@ -122,6 +123,23 @@ static CSP_POLICY: &str = "default-src 'self'; \
     connect-src 'self' https://static.cloudflareinsights.com; \
     upgrade-insecure-requests; \
     block-all-mixed-content";
+
+/// 与 `CSP_POLICY` 相同，但去掉 HTTPS 专属指令（`upgrade-insecure-requests` /
+/// `block-all-mixed-content`）。`upgrade-insecure-requests` 在纯 HTTP 页面下
+/// 会把所有子资源强制升级为 HTTPS，而服务器只提供 HTTP，导致
+/// `ERR_SSL_PROTOCOL_ERROR`（局域网 IP 直连时尤为明显）。HTTP 场景只发送基础策略。
+static CSP_POLICY_HTTP: &str = "default-src 'self'; \
+    base-uri 'self'; \
+    form-action 'self'; \
+    frame-ancestors 'none'; \
+    frame-src 'none'; \
+    object-src 'none'; \
+    img-src 'self' data:; \
+    media-src 'self' blob:; \
+    style-src 'self'; \
+    font-src 'self' data:; \
+    script-src 'self' https://static.cloudflareinsights.com; \
+    connect-src 'self' https://static.cloudflareinsights.com";
 
 /// Create CORS layer with configured origins (comma-separated).
 ///
@@ -375,9 +393,20 @@ mod tests {
             res.headers().get("permissions-policy").unwrap(),
             "geolocation=(), microphone=(), camera=()"
         );
+        // HTTP 下必须使用基础策略：upgrade-insecure-requests 会把子资源
+        // 强制升级为 HTTPS，纯 HTTP 部署会 ERR_SSL_PROTOCOL_ERROR。
         assert_eq!(
             res.headers().get("content-security-policy").unwrap(),
-            CSP_POLICY
+            CSP_POLICY_HTTP
+        );
+        assert!(
+            !res.headers()
+                .get("content-security-policy")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("upgrade-insecure-requests"),
+            "HTTP 下不得发送 upgrade-insecure-requests"
         );
         assert_eq!(
             res.headers().get("cross-origin-opener-policy").unwrap(),

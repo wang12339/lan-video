@@ -954,8 +954,9 @@ mod auth_security_tests {
         for msg in &error_messages {
             assert!(
                 !msg.contains("用户不存在")
-                    && !msg.contains("密码错误")
-                    && !msg.contains("not found"),
+                    && !msg.contains("账号不存在")
+                    && !msg.contains("not found")
+                    && !msg.contains("User not found"),
                 "认证错误消息不应区分用户不存在和密码错误: {}",
                 msg
             );

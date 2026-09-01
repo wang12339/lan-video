@@ -36,6 +36,7 @@ use atmos_video_backend::services::video_service::VideoService;
 use atmos_video_backend::state::{
     AppState, RecommendationCache, RepoLayer, ServiceLayer, VideoListCache,
 };
+use atmos_video_backend::util::hashid;
 use atmos_video_backend::util::password;
 use sqlx::PgPool;
 
@@ -76,13 +77,34 @@ pub fn test_config() -> AppConfig {
         smtp_password: String::new(),
         smtp_from: String::new(),
         redis_url: String::new(),
+        admin_ip_whitelist: Vec::new(),
+        upload_quota_bytes: 0,
+        db_max_connections: 100,
+        db_min_connections: 2,
+        migrations_dir: None,
+        sentry_dsn: String::new(),
+        sentry_environment: "production".into(),
+        app_env: "test".into(),
+        allow_first_user_admin: false,
+        trusted_proxy: false,
+        hashid_salt: String::new(),
+        transcode_timeout_secs: 3600,
+        ffprobe_timeout_secs: 30,
+        transcode_concurrency: 1,
+        transcode_max_duration_secs: 7200,
+        ffmpeg_path: "ffmpeg".into(),
+        ffprobe_path: "ffprobe".into(),
     }
 }
 
 /// Create a full AppState backed by a real database pool.
 pub async fn test_app_state() -> Arc<AppState> {
+    test_app_state_with_config(test_config()).await
+}
+
+/// Create a full AppState backed by a real database pool with a custom config.
+pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let pool = test_pool().await;
-    let config = test_config();
 
     let user_repo = UserRepository::new(pool.clone());
     let video_repo = VideoRepository::new(pool.clone());
@@ -93,8 +115,13 @@ pub async fn test_app_state() -> Arc<AppState> {
     let share_repo =
         atmos_video_backend::repositories::share_repo::ShareRepository::new(pool.clone());
     let tag_repo = TagRepository::new(pool.clone());
-    let tenant_repo =
-        atmos_video_backend::repositories::tenant_repo::TenantRepository::new(pool.clone());
+    let tenant_repo = atmos_video_backend::repositories::tenant_repo::TenantRepository::new(
+        pool.clone(),
+        config.public_url.clone(),
+    );
+    let plan_repo = atmos_video_backend::repositories::plan_repo::PlanRepository::new(pool.clone());
+    let danmaku_repo =
+        atmos_video_backend::repositories::danmaku_repo::DanmakuRepository::new(pool.clone());
     let registration_repo = RegistrationRepository::new(pool.clone());
     let video_service = VideoService::new(video_repo.clone(), config.clone());
     let media_service = MediaService::new(video_repo.clone(), config.clone());
@@ -109,6 +136,8 @@ pub async fn test_app_state() -> Arc<AppState> {
     let playlist_service = atmos_video_backend::services::playlist_service::PlaylistService::new(
         playlist_repo.clone(),
     );
+    let plan_service =
+        atmos_video_backend::services::plan_service::PlanService::new(plan_repo.clone());
 
     let video_cache = VideoListCache::builder()
         .time_to_live(Duration::from_secs(10))
@@ -125,8 +154,8 @@ pub async fn test_app_state() -> Arc<AppState> {
         .max_capacity(64)
         .build();
 
-    let transcoder = Transcoder::new(&config.media_root);
-    let task_queue = TaskQueue::new(transcoder.clone(), pool.clone());
+    let transcoder = Transcoder::new(&config.media_root, config.transcode_settings());
+    let task_queue = TaskQueue::new(transcoder.clone(), pool.clone(), config.media_root.clone());
 
     Arc::new(AppState {
         repos: RepoLayer {
@@ -136,9 +165,11 @@ pub async fn test_app_state() -> Arc<AppState> {
             playback: playback_repo,
             playlist: playlist_repo,
             comment: comment_repo,
+            danmaku: danmaku_repo,
             share: share_repo,
             tag: tag_repo,
             tenant: tenant_repo.clone(),
+            plan: plan_repo,
         },
         services: ServiceLayer {
             video: video_service,
@@ -161,6 +192,7 @@ pub async fn test_app_state() -> Arc<AppState> {
             share: share_service,
             admin: admin_service,
             tenant: TenantService::new(tenant_repo),
+            plan: plan_service,
         },
         config,
         rate_limiter: RateLimiter::new(),
@@ -318,6 +350,7 @@ pub async fn create_test_video(state: &Arc<AppState>, prefix: &str) -> i64 {
         .services
         .video
         .add_external_video(
+            1,
             &title,
             Some("test fixture video"),
             Some("fixture"),
@@ -327,6 +360,24 @@ pub async fn create_test_video(state: &Arc<AppState>, prefix: &str) -> i64 {
         )
         .await
         .expect("create test video")
+}
+
+/// Insert a test video owned by `uploader_id`. Comments and share links are
+/// restricted to the video's uploader (or an admin), so any test that wants a
+/// third party to interact with a video must run with an explicit uploader.
+pub async fn create_test_video_owned_by(
+    state: &Arc<AppState>,
+    prefix: &str,
+    uploader_id: i64,
+) -> i64 {
+    let video_id = create_test_video(state, prefix).await;
+    sqlx::query("UPDATE videos SET uploader_id = $1 WHERE id = $2")
+        .bind(uploader_id)
+        .bind(video_id)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("set test video uploader");
+    video_id
 }
 
 /// Create a comment on `video_id` as `user_id` and return the row.
@@ -341,7 +392,7 @@ pub async fn create_test_comment(
     state
         .services
         .comment
-        .create_comment(video_id, user_id, content, parent_id, false)
+        .create_comment(1, video_id, user_id, content, parent_id, false)
         .await
         .expect("create test comment")
 }
@@ -349,6 +400,14 @@ pub async fn create_test_comment(
 /// Format an `Authorization: Bearer <token>` header value for HTTP-level tests.
 pub fn auth_header_value(token: &str) -> String {
     format!("Bearer {}", token)
+}
+
+/// Parse a JSON id that the API may serialize as either a raw number or a
+/// hashid string (most resource ids are hashid-obfuscated).
+pub fn json_id(v: &serde_json::Value) -> i64 {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| hashid::decode_id(s)))
+        .expect("JSON id must be numeric or a decodable hashid")
 }
 
 // ── Self-tests for the helpers above ──
@@ -455,7 +514,7 @@ mod tests {
             .expect("login should not error");
         assert!(!bad.ok && bad.token.is_none());
 
-        let video_id = create_test_video(&state, "fixture").await;
+        let video_id = create_test_video_owned_by(&state, "fixture", user_id).await;
         assert!(video_id > 0);
 
         let comment = create_test_comment(&state, video_id, user_id, "fixture comment", None).await;
@@ -473,7 +532,7 @@ mod tests {
         let (comments, total) = state
             .services
             .comment
-            .list_comments(video_id, 0, 10)
+            .list_comments(1, video_id, 0, 10)
             .await
             .expect("list comments");
         assert!(total >= 1);

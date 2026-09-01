@@ -7,18 +7,14 @@ use atmos_video_backend::app::build_router;
 use atmos_video_backend::config::AppConfig;
 
 /// Initialize Sentry crash reporting from SENTRY_DSN env var (optional)
-fn init_sentry() {
-    let dsn = std::env::var("SENTRY_DSN").unwrap_or_default();
+fn init_sentry(config: &AppConfig) {
+    let dsn = config.sentry_dsn.clone();
     if !dsn.is_empty() {
         let _guard = sentry::init((
             dsn,
             sentry::ClientOptions {
                 release: sentry::release_name!(),
-                environment: Some(
-                    std::env::var("SENTRY_ENVIRONMENT")
-                        .unwrap_or_else(|_| "production".into())
-                        .into(),
-                ),
+                environment: Some(config.sentry_environment.clone().into()),
                 traces_sample_rate: 0.2,
                 ..Default::default()
             },
@@ -85,6 +81,7 @@ async fn main() {
     let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     let file_layer = tracing_subscriber::fmt::layer()
         .json()
+        .with_ansi(false)
         .with_writer(non_blocking);
 
     tracing_subscriber::registry()
@@ -95,7 +92,7 @@ async fn main() {
 
     // Must run after the tracing subscriber is initialized, otherwise
     // init_sentry's own log lines are silently dropped.
-    init_sentry();
+    init_sentry(&config);
 
     let (data_dir_result, media_root_result) = tokio::join!(
         tokio::fs::create_dir_all(&config.data_dir),
@@ -113,12 +110,8 @@ async fn main() {
         .unwrap_or_else(|e| panic!("failed to bind TCP listener on {}: {}", addr, e));
 
     let is_dev = matches!(
-        std::env::var("APP_ENV")
-            .ok()
-            .as_deref()
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("development") | Some("dev") | Some("local")
+        config.app_env.to_ascii_lowercase().as_str(),
+        "development" | "dev" | "local"
     );
     let app = if !is_dev {
         let cfg = config.clone();
@@ -161,8 +154,32 @@ async fn main() {
         app
     };
 
-    tracing::info!("Atmos Video server starting on http://{}", addr);
-    tracing::info!("Media root: {}", config.media_root.display());
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        app_env = %config.app_env,
+        server_port = config.server_port,
+        "Atmos Video server starting"
+    );
+    tracing::info!(public_url = %config.public_url, "public base url");
+    tracing::info!(media_root = %config.media_root.display(), "media root");
+    tracing::info!(
+        redis = if config.redis_url.is_empty() {
+            "disabled"
+        } else {
+            "enabled"
+        },
+        admin_ip_whitelist = if config.admin_ip_whitelist.is_empty() {
+            "disabled"
+        } else {
+            "enabled"
+        },
+        registration = if config.registration_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        "feature flags"
+    );
 
     axum::serve(
         listener,

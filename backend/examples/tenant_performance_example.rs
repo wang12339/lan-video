@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // 创建租户仓库
-    let tenant_repo = TenantRepository::new(pool);
+    let tenant_repo = TenantRepository::new(pool, "http://localhost:8082".to_string());
 
     // 预热缓存
     println!("预热租户缓存...");

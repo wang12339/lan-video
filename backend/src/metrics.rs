@@ -28,6 +28,7 @@ pub struct Metrics {
     pub auth_login_total: IntCounter,
     pub auth_login_failed_total: IntCounter,
     pub auth_register_total: IntCounter,
+    pub auth_password_reset_total: IntCounter,
 
     // 缓存指标
     pub cache_hits_total: IntCounter,
@@ -137,6 +138,12 @@ impl Metrics {
         let auth_register_total =
             IntCounter::new("auth_register_total", "Total number of user registrations")
                 .expect("metrics: auth_register_total name collision");
+
+        let auth_password_reset_total = IntCounter::new(
+            "auth_password_reset_total",
+            "Total number of successful password resets",
+        )
+        .expect("metrics: auth_password_reset_total name collision");
 
         // ── 缓存指标 ────────────────────────────────────────────────
 
@@ -312,6 +319,7 @@ impl Metrics {
             auth_login_total,
             auth_login_failed_total,
             auth_register_total,
+            auth_password_reset_total,
             cache_hits_total,
             cache_misses_total,
             active_connections,
@@ -408,6 +416,10 @@ impl Metrics {
 
     pub fn record_register(&self) {
         self.auth_register_total.inc();
+    }
+
+    pub fn record_password_reset(&self) {
+        self.auth_password_reset_total.inc();
     }
 
     pub fn record_cache_hit(&self) {

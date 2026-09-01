@@ -307,7 +307,7 @@ async fn search_empty_query_short_circuits_before_db() {
     // 死池 + 空查询：若短路逻辑回归、开始查库，这里会返回 Err
     for q in ["", "   ", "\t\n  ", "   \u{3000}  "] {
         let (results, total) = svc
-            .full_text_search(q, 1, 10)
+            .full_text_search(1, q, 1, 10)
             .await
             .expect("空查询必须短路返回 Ok，不触碰数据库");
         assert!(results.is_empty());
@@ -318,8 +318,8 @@ async fn search_empty_query_short_circuits_before_db() {
 #[tokio::test]
 async fn search_suggest_empty_query_short_circuits_before_db() {
     let svc = SearchService::new(VideoRepository::new(dead_pool()));
-    assert!(svc.search_suggest("   ", 5).await.unwrap().is_empty());
-    assert!(svc.search_suggest("", 5).await.unwrap().is_empty());
+    assert!(svc.search_suggest(1, "   ", 5).await.unwrap().is_empty());
+    assert!(svc.search_suggest(1, "", 5).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -327,9 +327,9 @@ async fn search_nonempty_query_reaches_db() {
     // 反证：非空查询必须真的走到数据库（死池 → Err）。
     // 证明上面的短路只发生在 normalize 后为空时，防止"假短路"掩盖查询。
     let svc = SearchService::new(VideoRepository::new(dead_pool()));
-    let err = svc.full_text_search("hello", 1, 10).await.unwrap_err();
+    let err = svc.full_text_search(1, "hello", 1, 10).await.unwrap_err();
     assert!(format!("{}", err).contains("搜索失败"), "got: {err}");
-    let err = svc.search_suggest("hello", 5).await.unwrap_err();
+    let err = svc.search_suggest(1, "hello", 5).await.unwrap_err();
     assert!(format!("{}", err).contains("搜索建议失败"), "got: {err}");
 }
 
@@ -352,8 +352,12 @@ fn make_task(id: i64, status: TaskStatus) -> TranscodeTask {
 
 fn test_queue() -> TaskQueue {
     TaskQueue::new(
-        Transcoder::new(std::path::Path::new("/tmp/atmos-test-variants")),
+        Transcoder::new(
+            std::path::Path::new("/tmp/atmos-test-variants"),
+            Default::default(),
+        ),
         dead_pool(),
+        std::path::PathBuf::from("/tmp/atmos-test-media"),
     )
 }
 
@@ -422,18 +426,18 @@ async fn task_queue_add_works_with_db_down() {
 async fn playback_write_throttled_within_window() {
     let svc = PlaybackService::new(PlaybackRepository::new(dead_pool()));
     // 首次写入：不受节流，真实触库 → 死池报错
-    let first = svc.update_playback("alice", 1, 500, 1000).await;
+    let first = svc.update_playback(1, "alice", 1, 500, 1000).await;
     assert!(first.is_err(), "首次写入必须放行并触库（期望 DB 连接错误）");
     // 10s 窗口内重复上报：被节流吞掉，返回 Ok 且不触库
-    assert!(svc.update_playback("alice", 1, 600, 1000).await.is_ok());
-    assert!(svc.update_playback("alice", 1, 700, 1000).await.is_ok());
+    assert!(svc.update_playback(1, "alice", 1, 600, 1000).await.is_ok());
+    assert!(svc.update_playback(1, "alice", 1, 700, 1000).await.is_ok());
     // 不同视频、不同用户：各自独立 key，仍会触库（Err）
     assert!(
-        svc.update_playback("alice", 2, 100, 1000).await.is_err(),
+        svc.update_playback(1, "alice", 2, 100, 1000).await.is_err(),
         "不同 video_id 必须不受前一条节流影响"
     );
     assert!(
-        svc.update_playback("bob", 1, 100, 1000).await.is_err(),
+        svc.update_playback(1, "bob", 1, 100, 1000).await.is_err(),
         "不同用户必须不受他人节流影响"
     );
 }
@@ -441,13 +445,13 @@ async fn playback_write_throttled_within_window() {
 #[tokio::test]
 async fn playback_throttle_key_is_username_and_video() {
     let svc = PlaybackService::new(PlaybackRepository::new(dead_pool()));
-    assert!(svc.update_playback("u1", 10, 1, 1000).await.is_err());
+    assert!(svc.update_playback(1, "u1", 10, 1, 1000).await.is_err());
     // 同用户同视频：命中节流
-    assert!(svc.update_playback("u1", 10, 2, 1000).await.is_ok());
+    assert!(svc.update_playback(1, "u1", 10, 2, 1000).await.is_ok());
     // 同用户不同视频：新 key，放行触库
-    assert!(svc.update_playback("u1", 11, 1, 1000).await.is_err());
+    assert!(svc.update_playback(1, "u1", 11, 1, 1000).await.is_err());
     // 不同用户同视频：新 key，放行触库
-    assert!(svc.update_playback("u2", 10, 1, 1000).await.is_err());
+    assert!(svc.update_playback(1, "u2", 10, 1, 1000).await.is_err());
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -532,7 +536,7 @@ async fn search_full_text_and_pagination_defense_with_real_db() {
 
     // 注意：handler 的分页约定是 page 从 0 开始（offset = page * size）
     let (results, total) = svc
-        .full_text_search("AlphaSearch", 0, 10)
+        .full_text_search(1, "AlphaSearch", 0, 10)
         .await
         .expect("搜索不应失败");
     assert!(total >= 1, "应至少命中刚插入的视频");
@@ -551,15 +555,15 @@ async fn search_full_text_and_pagination_defense_with_real_db() {
 
     // 分页防御：负数 / 巨大 page、size=0 / 巨大 size 均不得触发 PostgreSQL 错误
     let (_, _) = svc
-        .full_text_search("AlphaSearch", -1_000_000, -10)
+        .full_text_search(1, "AlphaSearch", -1_000_000, -10)
         .await
         .expect("负 page/size 必须被 clamp，不得报错");
     let (_, _) = svc
-        .full_text_search("AlphaSearch", 1, 10)
+        .full_text_search(1, "AlphaSearch", 1, 10)
         .await
         .expect("page=1（offset=10）必须被接受，不得报错");
     let (oversized, total_beyond) = svc
-        .full_text_search("AlphaSearch", 1_000_000, 100)
+        .full_text_search(1, "AlphaSearch", 1_000_000, 100)
         .await
         .expect("超大 page/size 必须被 clamp，不得报错");
     assert!(oversized.is_empty(), "offset 越界应返回空结果");
@@ -600,7 +604,7 @@ async fn search_suggest_real_db_and_cache_consistency() {
 
     // 前缀命中（tsvector 匹配分支）
     let s1 = svc
-        .search_suggest("suggestalpha", 10)
+        .search_suggest(1, "suggestalpha", 10)
         .await
         .expect("suggest 失败");
     assert!(
@@ -608,10 +612,10 @@ async fn search_suggest_real_db_and_cache_consistency() {
         "建议应包含前缀/向量匹配的标题: {s1:?}"
     );
     // 连续第二次调用（命中缓存）：结果必须与首次一致
-    let s2 = svc.search_suggest("suggestalpha", 10).await.unwrap();
+    let s2 = svc.search_suggest(1, "suggestalpha", 10).await.unwrap();
     assert_eq!(s1, s2, "缓存命中的结果必须与首次一致");
     // 不同 limit → 不同 cache key，行为正确即可
-    let s3 = svc.search_suggest("suggestalpha", 1).await.unwrap();
+    let s3 = svc.search_suggest(1, "suggestalpha", 1).await.unwrap();
     assert_eq!(s3.len(), 1);
 
     sqlx::query("DELETE FROM videos WHERE id = $1")
@@ -670,7 +674,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
 
     // ── user：有首选分类，正常推荐 ──
     let recs = svc
-        .get_recommendations(&user, v5, 10)
+        .get_recommendations(1, &user, v5, 10)
         .await
         .expect("get_recommendations 失败");
     let ids: Vec<i64> = recs.iter().map(|r| r.id).collect();
@@ -685,7 +689,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
     assert_eq!(score_of(v1), 2.0, "首选分类低播放: 2.0*1.0");
     assert_eq!(score_of(v2), 3.0, "首选分类高播放: 2.0*1.5");
     assert_eq!(score_of(v3), 1.2, "非首选中播放: 1.0*1.2");
-    let reason_of = |id: i64| recs.iter().find(|r| r.id == id).unwrap().reason.clone();
+    let reason_of = |id: i64| recs.iter().find(|r| r.id == id).unwrap().reason;
     assert_eq!(reason_of(v1), "基于你的观看偏好");
     assert_eq!(reason_of(v2), "基于你的观看偏好");
     assert_eq!(reason_of(v3), "热门推荐");
@@ -694,22 +698,19 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
     // 注：`rows.is_empty()` 分支要求用户把全库视频都看过才能触发，
     // 在共享的已填充数据库里不可行，这里验证等价的无历史分支。
     let fallback = svc
-        .get_recommendations(&fresh_user, v5, 10)
+        .get_recommendations(1, &fresh_user, v5, 10)
         .await
         .expect("回退 trending 失败");
     assert!(!fallback.is_empty(), "无历史用户必须回退到 trending");
     assert!(
         fallback.iter().all(|r| r.reason == "热门推荐"),
         "回退结果理由应为热门推荐: {:?}",
-        fallback
-            .iter()
-            .map(|r| r.reason.as_str())
-            .collect::<Vec<_>>()
+        fallback.iter().map(|r| &r.reason).collect::<Vec<_>>()
     );
 
     // ── get_similar_videos / get_trending_videos / get_recent_videos ──
     let similar = svc
-        .get_similar_videos(v1, 10)
+        .get_similar_videos(1, v1, 10)
         .await
         .expect("get_similar_videos 失败");
     assert!(
@@ -719,10 +720,13 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
         "相似视频必须限定同分类"
     );
     assert!(similar.iter().all(|r| r.id != v1));
-    let trending = svc.get_trending_videos(10).await.expect("trending 失败");
-    assert!(!trending.is_empty());
-    let recent = svc.get_recent_videos(10).await.expect("recent 失败");
-    assert!(!recent.is_empty());
+    let trending = svc
+        .get_trending_videos(1, 0, 10)
+        .await
+        .expect("trending 失败");
+    assert!(!trending.0.is_empty());
+    let recent = svc.get_recent_videos(1, 0, 10).await.expect("recent 失败");
+    assert!(!recent.0.is_empty());
 
     // 清理
     sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
@@ -746,8 +750,12 @@ async fn task_queue_persists_pending_jobs_idempotently_with_real_db() {
         return;
     };
     let q = TaskQueue::new(
-        Transcoder::new(std::path::Path::new("/tmp/atmos-test-variants")),
+        Transcoder::new(
+            std::path::Path::new("/tmp/atmos-test-variants"),
+            Default::default(),
+        ),
         pool.clone(),
+        std::path::PathBuf::from("/tmp/atmos-test-media"),
     );
 
     let video_id: i64 = sqlx::query(

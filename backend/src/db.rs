@@ -30,16 +30,13 @@ where
 }
 
 #[allow(clippy::panic)]
-fn get_migrations_dir() -> PathBuf {
-    std::env::var("MIGRATIONS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+fn migrations_dir_or_default(overrides: Option<PathBuf>) -> PathBuf {
+    overrides.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations"))
 }
 
 #[allow(clippy::panic)]
-fn discover_migrations() -> Vec<(String, String)> {
-    let dir = get_migrations_dir();
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+fn discover_migrations(dir: &PathBuf) -> Vec<(String, String)> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("Failed to read migrations directory {:?}: {}", dir, e))
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
@@ -61,19 +58,12 @@ fn discover_migrations() -> Vec<(String, String)> {
 }
 
 #[allow(clippy::panic)]
-pub async fn init_pool(database_url: &str) -> PgPool {
-    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n >= 1)
-        .unwrap_or(100);
-
-    let min_connections: u32 = std::env::var("DB_MIN_CONNECTIONS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n >= 1 && n <= max_connections)
-        .unwrap_or(2);
-
+pub async fn init_pool(
+    database_url: &str,
+    max_connections: u32,
+    min_connections: u32,
+    migrations_dir: Option<PathBuf>,
+) -> PgPool {
     let max_retries = 5;
     let mut attempt = 0u32;
 
@@ -111,13 +101,14 @@ pub async fn init_pool(database_url: &str) -> PgPool {
     info!("Database connection pool established");
 
     // Run migrations with version tracking
-    run_migrations(&pool).await;
+    run_migrations(&pool, migrations_dir).await;
 
     pool
 }
 
 #[allow(clippy::panic)]
-async fn run_migrations(pool: &PgPool) {
+async fn run_migrations(pool: &PgPool, migrations_dir: Option<PathBuf>) {
+    let migrations_dir = migrations_dir_or_default(migrations_dir);
     // Use a dedicated connection for the whole migration run:
     // 1. A session-level advisory lock serializes concurrent server instances
     //    so two processes can't apply migrations at the same time (the lock is
@@ -147,7 +138,7 @@ async fn run_migrations(pool: &PgPool) {
     .await
     .unwrap_or_else(|e| panic!("Failed to create _schema_migrations table: {}", e));
 
-    let migrations = discover_migrations();
+    let migrations = discover_migrations(&migrations_dir);
 
     let applied: Vec<String> = sqlx::query_scalar("SELECT version FROM _schema_migrations")
         .fetch_all(&mut *conn)
@@ -211,6 +202,16 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// Serializes tests that mutate the shared `MIGRATIONS_DIR` env var so they
+    /// cannot race when the test binary runs with `--test-threads` parallel.
+    fn lock_migrations_dir_env() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[tokio::test]
     async fn log_slow_query_passes_through_result() {
         let result: Result<i32, &str> = log_slow_query("test", || async { Ok(42) }).await;
@@ -232,9 +233,10 @@ mod tests {
 
     #[test]
     fn get_migrations_dir_defaults_to_manifest_migrations() {
+        let _env_guard = lock_migrations_dir_env();
         let old = std::env::var("MIGRATIONS_DIR");
         std::env::remove_var("MIGRATIONS_DIR");
-        let dir = get_migrations_dir();
+        let dir = migrations_dir_or_default(None);
         assert!(dir.ends_with("migrations"));
         assert!(dir.starts_with(env!("CARGO_MANIFEST_DIR")));
         if let Ok(v) = old {
@@ -243,15 +245,11 @@ mod tests {
     }
 
     #[test]
-    fn get_migrations_dir_respects_env_override() {
-        let old = std::env::var("MIGRATIONS_DIR");
-        std::env::set_var("MIGRATIONS_DIR", "/tmp/test_migrations");
-        let dir = get_migrations_dir();
-        assert_eq!(dir, PathBuf::from("/tmp/test_migrations"));
-        match old {
-            Ok(v) => std::env::set_var("MIGRATIONS_DIR", v),
-            Err(_) => std::env::remove_var("MIGRATIONS_DIR"),
-        }
+    fn get_migrations_dir_respects_override() {
+        let _env_guard = lock_migrations_dir_env();
+        let override_dir = PathBuf::from("/tmp/test_migrations");
+        let dir = migrations_dir_or_default(Some(override_dir.clone()));
+        assert_eq!(dir, override_dir);
     }
 
     #[test]

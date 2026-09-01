@@ -19,9 +19,10 @@ pub async fn request_log(req: Request, next: Next) -> Response {
     }
 
     let path_ref = req.uri().path().to_string();
-    let always_skip = path_ref.starts_with("/media/")
-        || path_ref.starts_with("/webapp/")
-        || path_ref == "/health";
+    // 仅健康检查跳过;静态资源(/webapp /media)与 API 均记录,便于访问审计。
+    let always_skip = path_ref == "/health";
+
+    let client_ip = crate::util::net::client_ip(&req);
 
     let start = Instant::now();
     let res = next.run(req).await;
@@ -63,6 +64,14 @@ pub async fn request_log(req: Request, next: Next) -> Response {
 
     let range_hint = if is_range { " range" } else { "" };
 
+    // 分级策略（降低日志噪音、保留可审计性）：
+    //   - 慢请求(>1s)/5xx/401/403 → warn/error（不受 method 限制）
+    //   - 写操作(POST/PUT/DELETE/PATCH)→ info（可审计）
+    //   - 静态资源(/webapp /media)GET → info（访问审计可见 IP）
+    //   - 其余读操作(GET/HEAD)→ debug（RUST_LOG=debug 时可见）
+    let is_read = matches!(method.as_str(), "GET" | "HEAD");
+    let is_static = path_ref.starts_with("/webapp/") || path_ref.starts_with("/media/");
+
     if duration_ms > 1000 {
         tracing::warn!(
             method = %method,
@@ -70,6 +79,7 @@ pub async fn request_log(req: Request, next: Next) -> Response {
             status = status,
             duration_ms = duration_ms,
             request_id = %request_id,
+            client_ip = %client_ip,
             "请求响应缓慢"
         );
     } else if status >= 500 {
@@ -79,6 +89,7 @@ pub async fn request_log(req: Request, next: Next) -> Response {
             status = status,
             duration_ms = duration_ms,
             request_id = %request_id,
+            client_ip = %client_ip,
             "服务器内部错误"
         );
     } else if status == 401 || status == 403 {
@@ -88,7 +99,18 @@ pub async fn request_log(req: Request, next: Next) -> Response {
             status = status,
             duration_ms = duration_ms,
             request_id = %request_id,
+            client_ip = %client_ip,
             "访问被拒绝"
+        );
+    } else if is_read && !is_static {
+        tracing::debug!(
+            method = %method,
+            path = %log_path,
+            status = status,
+            duration_ms = duration_ms,
+            request_id = %request_id,
+            client_ip = %client_ip,
+            "读请求完成"
         );
     } else {
         tracing::info!(
@@ -97,7 +119,9 @@ pub async fn request_log(req: Request, next: Next) -> Response {
             status = status,
             duration_ms = duration_ms,
             request_id = %request_id,
-            "请求成功{}",
+            client_ip = %client_ip,
+            "{}完成{}",
+            if is_read { "静态资源请求" } else { "写请求" },
             range_hint,
         );
     }

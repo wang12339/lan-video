@@ -45,14 +45,18 @@ impl PlaybackService {
     /// `Ok(None)` 表示该用户从未播放过该视频。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
     pub async fn get_playback_data(
         &self,
+        tenant_id: i64,
         username: &str,
         video_id: i64,
     ) -> Result<Option<(i64, i64)>, sqlx::Error> {
-        self.repo.get_playback_data(username, video_id).await
+        self.repo
+            .get_playback_data(tenant_id, username, video_id)
+            .await
     }
 
     /// 获取用户的播放历史记录（最近观看列表，分页）。
@@ -60,17 +64,19 @@ impl PlaybackService {
     /// 返回按最近播放时间倒序排列的视频列表，每项包含视频基本信息及播放进度。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `limit` - 每页条数。
     /// * `offset` - 偏移量。
     pub async fn get_playback_history(
         &self,
+        tenant_id: i64,
         username: &str,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
         self.repo
-            .find_playback_history_by_username(username, limit, offset)
+            .find_playback_history_by_username(tenant_id, username, limit, offset)
             .await
     }
 
@@ -80,12 +86,14 @@ impl PlaybackService {
     /// 重复上报会被静默忽略，以减少数据库写入压力。首次上报不受节流限制。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
     /// * `position_ms` - 当前播放位置（毫秒）。
     /// * `duration_ms` - 视频总时长（毫秒）。
     pub async fn update_playback(
         &self,
+        tenant_id: i64,
         username: &str,
         video_id: i64,
         position_ms: i64,
@@ -95,7 +103,7 @@ impl PlaybackService {
             return Ok(());
         }
         self.repo
-            .upsert_playback(username, video_id, position_ms, duration_ms)
+            .upsert_playback(tenant_id, username, video_id, position_ms, duration_ms)
             .await
     }
 
@@ -107,16 +115,18 @@ impl PlaybackService {
     /// 3. 最近 20 条播放历史记录
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     pub async fn get_user_profile_data(
         &self,
+        tenant_id: i64,
         username: &str,
     ) -> Result<(i64, i64, Vec<crate::models::playback::RecentWatchItem>), sqlx::Error> {
-        let total_videos_watched = self.repo.count_watched_videos(username).await?;
-        let total_watch_time = self.repo.sum_watch_time(username).await?;
+        let total_videos_watched = self.repo.count_watched_videos(tenant_id, username).await?;
+        let total_watch_time = self.repo.sum_watch_time(tenant_id, username).await?;
         let (recent_history, _) = self
             .repo
-            .find_playback_history_by_username(username, 20, 0)
+            .find_playback_history_by_username(tenant_id, username, 20, 0)
             .await?;
         Ok((total_videos_watched, total_watch_time, recent_history))
     }
@@ -127,19 +137,31 @@ impl PlaybackService {
     /// `true` 表示当前已点赞，`false` 表示当前未点赞。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
-    pub async fn toggle_like(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        self.repo.toggle_like(username, video_id).await
+    pub async fn toggle_like(
+        &self,
+        tenant_id: i64,
+        username: &str,
+        video_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        self.repo.toggle_like(tenant_id, username, video_id).await
     }
 
     /// 查询用户是否已点赞指定视频。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
-    pub async fn is_liked(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        self.repo.is_liked(username, video_id).await
+    pub async fn is_liked(
+        &self,
+        tenant_id: i64,
+        username: &str,
+        video_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        self.repo.is_liked(tenant_id, username, video_id).await
     }
 
     /// 切换用户对视频的收藏状态。
@@ -148,23 +170,33 @@ impl PlaybackService {
     /// `true` 表示当前已收藏，`false` 表示当前未收藏。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
     pub async fn toggle_favorite(
         &self,
+        tenant_id: i64,
         username: &str,
         video_id: i64,
     ) -> Result<bool, sqlx::Error> {
-        self.repo.toggle_favorite(username, video_id).await
+        self.repo
+            .toggle_favorite(tenant_id, username, video_id)
+            .await
     }
 
     /// 查询用户是否已收藏指定视频。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `video_id` - 视频 ID。
-    pub async fn is_favorited(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        self.repo.is_favorited(username, video_id).await
+    pub async fn is_favorited(
+        &self,
+        tenant_id: i64,
+        username: &str,
+        video_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        self.repo.is_favorited(tenant_id, username, video_id).await
     }
 
     /// 获取用户的收藏列表（分页）。
@@ -172,17 +204,19 @@ impl PlaybackService {
     /// 返回用户收藏的视频信息，包含视频基本信息及播放进度。
     ///
     /// # 参数
+    /// * `tenant_id` - 租户 ID（播放数据隔离）。
     /// * `username` - 用户名。
     /// * `limit` - 每页条数。
     /// * `offset` - 偏移量。
     pub async fn get_favorites(
         &self,
+        tenant_id: i64,
         username: &str,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
         self.repo
-            .find_favorites_by_username(username, limit, offset)
+            .find_favorites_by_username(tenant_id, username, limit, offset)
             .await
     }
 }

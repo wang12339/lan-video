@@ -366,7 +366,7 @@ async fn test_register_via_http_duplicate_username() {
     assert_eq!(status1, StatusCode::OK, "first registration should succeed");
     let (status2, body2) =
         send_json(&app, Method::POST, "/auth/register", None, Some(payload)).await;
-    assert_eq!(status2, StatusCode::OK);
+    assert_eq!(status2, StatusCode::UNAUTHORIZED);
     assert_eq!(
         body2["ok"],
         json!(false),
@@ -472,7 +472,7 @@ async fn test_login_wrong_password_returns_friendly_error() {
         Some(json!({ "username": username, "password": "WrongPass_1!" })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["ok"], json!(false));
     assert!(body["token"].is_null());
     assert_eq!(body["error"], json!("用户名或密码错误"));
@@ -503,7 +503,7 @@ async fn test_login_unapproved_user_fails() {
         Some(json!({ "username": username, "password": TEST_USER_PASSWORD })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
         body["ok"],
         json!(false),
@@ -524,7 +524,9 @@ async fn test_login_rate_limited_after_two_failures() {
     let (username, _user_id) = create_viewer(&state, "login_rl").await;
     let app = build_test_app().await;
     let payload = json!({ "username": username, "password": "WrongPass_1!" });
-    for i in 0..2 {
+    // 策略：同一用户名 60 秒内最多 5 次尝试，达到上限的那次即被拒绝
+    // （RATE_LIMIT_MAX_ATTEMPTS=5，count >= max 时 429），因此前 4 次为 401
+    for i in 0..4 {
         let (status, body) = send_json(
             &app,
             Method::POST,
@@ -533,17 +535,24 @@ async fn test_login_rate_limited_after_two_failures() {
             Some(payload.clone()),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "attempt {}: {} body={}",
+            i,
+            status,
+            body
+        );
         assert_eq!(body["ok"], json!(false), "attempt {} should fail", i);
         assert_eq!(body["error"], json!("用户名或密码错误"));
     }
-    // The 3rd attempt trips the per-username limiter (3 attempts/60s)
+    // 第 5 次触发用户名级限流
     let (status, body) = send_json(&app, Method::POST, "/auth/login", None, Some(payload)).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body["ok"], json!(false));
     assert_eq!(
         body["error"],
-        json!("尝试次数过多，请稍后再试"),
+        json!("请求过于频繁，请稍后再试"),
         "body: {}",
         body
     );
@@ -894,7 +903,7 @@ async fn test_videos_list_pagination_bounds() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["page"], json!(0), "body: {}", body);
+    assert_eq!(body["page"], json!(1), "body: {}", body);
     assert_eq!(body["size"], json!(1));
     assert!(body["total"].is_number());
 
@@ -908,8 +917,8 @@ async fn test_videos_list_pagination_bounds() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["page"], json!(1_000_000), "body: {}", body);
-    assert_eq!(body["size"], json!(1000));
+    assert_eq!(body["page"], json!(10_000), "body: {}", body);
+    assert_eq!(body["size"], json!(100));
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
@@ -982,7 +991,7 @@ async fn test_video_detail_and_variants() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["id"], json!(video_id));
+    assert_eq!(json_id(&body["id"]), video_id);
     assert!(body["title"].is_string());
     assert_eq!(body["sourceType"], json!("external"));
 
@@ -1172,6 +1181,7 @@ async fn test_video_search_finds_created_video() {
         .services
         .video
         .add_external_video(
+            1,
             &title,
             Some("search test"),
             Some("searchtest"),
@@ -1194,7 +1204,7 @@ async fn test_video_search_finds_created_video() {
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().expect("items should be an array");
     assert!(
-        items.iter().any(|it| it["id"] == json!(video_id)),
+        items.iter().any(|it| json_id(&it["id"]) == video_id),
         "search should return the created video: {}",
         body
     );
@@ -1338,9 +1348,9 @@ async fn test_playback_history_validation_and_readback() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let items = body.as_array().expect("history should be an array");
+    let items = body["items"].as_array().expect("history items array");
     assert!(
-        items.iter().any(|it| it["videoId"] == json!(video_id)),
+        items.iter().any(|it| json_id(&it["videoId"]) == video_id),
         "body: {}",
         body
     );
@@ -1414,7 +1424,10 @@ async fn test_playlist_create_and_update() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {}", body);
-    assert_eq!(body["error"], json!("名称长度 1-200 字符"));
+    assert_eq!(
+        body["error"],
+        json!("播放列表名称长度需在 1-100 个字符之间")
+    );
 
     // Valid name → 201
     let name = format!("Playlist {}", unique_username("pl"));
@@ -1427,7 +1440,7 @@ async fn test_playlist_create_and_update() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let playlist_id = body["id"].as_i64().expect("playlist id");
+    let playlist_id = json_id(&body["id"]);
     assert_eq!(body["name"], json!(name));
     assert_eq!(body["isPublic"], json!(false));
     assert_eq!(body["itemCount"], json!(0));
@@ -1439,7 +1452,7 @@ async fn test_playlist_create_and_update() {
         .as_array()
         .expect("playlists array")
         .iter()
-        .any(|p| p["id"] == json!(playlist_id)));
+        .any(|p| json_id(&p["id"]) == playlist_id));
 
     // Update
     let (status, body) = send_json(
@@ -1500,7 +1513,7 @@ async fn test_playlist_permission_isolation() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let playlist_id = body["id"].as_i64().unwrap();
+    let playlist_id = json_id(&body["id"]);
 
     // Another viewer cannot see it (404, existence not leaked)...
     let (status, _) = send_json(
@@ -1567,7 +1580,7 @@ async fn test_playlist_permission_isolation() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let public_id = body["id"].as_i64().unwrap();
+    let public_id = json_id(&body["id"]);
     let (status, body) = send_json(
         &app,
         Method::GET,
@@ -1602,7 +1615,7 @@ async fn test_playlist_add_remove_videos() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let playlist_id = body["id"].as_i64().unwrap();
+    let playlist_id = json_id(&body["id"]);
 
     // Adding a nonexistent video → 404 (FK violation mapped)
     let (status, body) = send_json(
@@ -1639,7 +1652,7 @@ async fn test_playlist_add_remove_videos() {
     assert_eq!(status, StatusCode::OK);
     let items = body.as_array().expect("videos array");
     assert!(
-        items.iter().any(|v| v["id"] == json!(video_id)),
+        items.iter().any(|v| json_id(&v["id"]) == video_id),
         "playlist should contain the video: {}",
         body
     );
@@ -1691,7 +1704,7 @@ async fn test_playlist_position_compaction() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let playlist_id = body["id"].as_i64().unwrap();
+    let playlist_id = json_id(&body["id"]);
 
     for video_id in [v1, v2, v3] {
         let (status, _) = send_json(
@@ -1754,7 +1767,7 @@ async fn test_playlist_position_compaction() {
         .as_array()
         .expect("videos array")
         .iter()
-        .map(|v| v["id"].as_i64().unwrap())
+        .map(|v| json_id(&v["id"]))
         .collect();
     assert_eq!(
         ids,
@@ -1798,9 +1811,8 @@ async fn test_comment_create_list_reply_flow() {
         return;
     };
     let state = test_app_state().await;
-    let (user_a, _ua, token_a) = create_viewer_with_token(&state, "cmt_a").await;
-    let (_user_b, _ub, token_b) = create_viewer_with_token(&state, "cmt_b").await;
-    let video_id = create_test_video(&state, "cmt").await;
+    let (user_a, user_a_id, token_a) = create_viewer_with_token(&state, "cmt_a").await;
+    let video_id = create_uploaded_test_video(&state, "cmt", user_a_id).await;
     let app = build_test_app().await;
 
     // Create a top-level comment
@@ -1813,7 +1825,7 @@ async fn test_comment_create_list_reply_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let comment_id = body["id"].as_i64().unwrap();
+    let comment_id = json_id(&body["id"]);
     assert_eq!(body["content"], json!("非常棒的视频！"));
 
     // List comments
@@ -1830,21 +1842,21 @@ async fn test_comment_create_list_reply_flow() {
         .as_array()
         .expect("comments array")
         .iter()
-        .any(|c| c["id"] == json!(comment_id)));
+        .any(|c| json_id(&c["id"]) == comment_id));
     assert!(body["total"].as_i64().unwrap() >= 1);
 
-    // Another user replies
+    // The video owner replies
     let (status, body) = send_json(
         &app,
         Method::POST,
         &format!("/videos/{}/comments", video_id),
-        Some(&token_b),
+        Some(&token_a),
         Some(json!({ "content": "确实！", "parent_id": comment_id })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let reply_id = body["id"].as_i64().unwrap();
-    assert_eq!(body["parentId"], json!(comment_id));
+    let reply_id = json_id(&body["id"]);
+    assert_eq!(json_id(&body["parentId"]), comment_id);
 
     // Replies are listed under the parent
     let (status, body) = send_json(
@@ -1860,7 +1872,7 @@ async fn test_comment_create_list_reply_flow() {
         .as_array()
         .expect("replies array")
         .iter()
-        .any(|c| c["id"] == json!(reply_id)));
+        .any(|c| json_id(&c["id"]) == reply_id));
 
     // Owner deletes the top-level comment
     let (status, _) = send_json(
@@ -1894,8 +1906,8 @@ async fn test_comment_create_validation() {
         return;
     };
     let state = test_app_state().await;
-    let (username, _user_id, token) = create_viewer_with_token(&state, "cmt_val").await;
-    let video_id = create_test_video(&state, "cmt_val").await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "cmt_val").await;
+    let video_id = create_uploaded_test_video(&state, "cmt_val", user_id).await;
     let app = build_test_app().await;
 
     // Empty content → 400
@@ -1944,10 +1956,10 @@ async fn test_comment_delete_permission_isolation() {
         return;
     };
     let state = test_app_state().await;
-    let (user_a, _ua, token_a) = create_viewer_with_token(&state, "cmt_del_a").await;
+    let (user_a, user_a_id, token_a) = create_viewer_with_token(&state, "cmt_del_a").await;
     let (_user_b, _ub, token_b) = create_viewer_with_token(&state, "cmt_del_b").await;
     let (_admin, admin_token) = create_admin_with_token(&state, "cmt_del_admin").await;
-    let video_id = create_test_video(&state, "cmt_del").await;
+    let video_id = create_uploaded_test_video(&state, "cmt_del", user_a_id).await;
     let app = build_test_app().await;
 
     let (status, body) = send_json(
@@ -1959,7 +1971,7 @@ async fn test_comment_delete_permission_isolation() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let comment_id = body["id"].as_i64().unwrap();
+    let comment_id = json_id(&body["id"]);
 
     // Another user cannot delete it (404, existence not leaked)
     let (status, _) = send_json(
@@ -2025,7 +2037,7 @@ async fn test_share_link_lifecycle() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let share_id = body["id"].as_i64().unwrap();
+    let share_id = json_id(&body["id"]);
     let share_token = body["token"].as_str().unwrap().to_string();
     assert_eq!(share_token.len(), 32, "share token must be 32 chars");
     assert!(share_token.bytes().all(|b| b.is_ascii_alphanumeric()));
@@ -2046,7 +2058,7 @@ async fn test_share_link_lifecycle() {
         .as_array()
         .expect("shares array")
         .iter()
-        .any(|s| s["id"] == json!(share_id)));
+        .any(|s| json_id(&s["id"]) == share_id));
 
     // Public access via the token, with the share_token cookie set
     let (status, headers, bytes) = send(
@@ -2065,7 +2077,7 @@ async fn test_share_link_lifecycle() {
         String::from_utf8_lossy(&bytes)
     );
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["id"], json!(video_id));
+    assert_eq!(json_id(&body["id"]), video_id);
     assert!(
         !body["title"].as_str().unwrap_or("").is_empty(),
         "shared video should expose its title: {}",
@@ -2212,7 +2224,7 @@ async fn test_share_create_admin_can_share_any_video() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let share_id = body["id"].as_i64().unwrap();
+    let share_id = json_id(&body["id"]);
 
     let (status, _) = send_json(
         &app,
@@ -2250,7 +2262,7 @@ async fn test_share_delete_other_users_link() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let share_id = body["id"].as_i64().unwrap();
+    let share_id = json_id(&body["id"]);
 
     // Another user cannot delete it → 404 (existence not leaked)
     let (status, _) = send_json(
@@ -2298,7 +2310,7 @@ async fn test_revoke_my_share() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let share_id = body["id"].as_i64().unwrap();
+    let share_id = json_id(&body["id"]);
 
     let (status, body) = send_json(
         &app,
@@ -2400,7 +2412,7 @@ async fn test_video_tags_admin_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {}", body);
-    let tag_id = body["id"].as_i64().unwrap();
+    let tag_id = json_id(&body["id"]);
     assert_eq!(body["name"], json!(tag_name));
 
     // Get tags for a video (auth required, empty initially)
@@ -2439,7 +2451,7 @@ async fn test_video_tags_admin_flow() {
         body.as_array()
             .expect("tags array")
             .iter()
-            .any(|t| t["id"] == json!(tag_id)),
+            .any(|t| json_id(&t["id"]) == tag_id),
         "video should have the tag: {}",
         body
     );
@@ -2603,7 +2615,7 @@ async fn test_admin_add_external_video_via_http() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
-    let video_id = body["id"].as_i64().expect("video id");
+    let video_id = json_id(&body["id"]);
 
     let (status, body) = send_json(
         &app,

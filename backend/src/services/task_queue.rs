@@ -50,15 +50,17 @@ pub struct TaskQueue {
     notify: Arc<Notify>,
     transcoder: Transcoder,
     pool: PgPool,
+    media_root: PathBuf,
 }
 
 impl TaskQueue {
-    pub fn new(transcoder: Transcoder, pool: PgPool) -> Self {
+    pub fn new(transcoder: Transcoder, pool: PgPool, media_root: PathBuf) -> Self {
         TaskQueue {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
             transcoder,
             pool,
+            media_root,
         }
     }
 
@@ -180,9 +182,10 @@ impl TaskQueue {
         let notify = self.notify.clone();
         let transcoder = self.transcoder.clone();
         let pool = self.pool.clone();
+        let media_root = self.media_root.clone();
 
         tokio::spawn(async move {
-            recover_stale_jobs(&queue, &notify, &pool).await;
+            recover_stale_jobs(&queue, &notify, &pool, &media_root).await;
 
             // Attempt bookkeeping lives here, owned by the worker. `retries`
             // counts attempts per task id; `next_attempt_at` holds when a
@@ -224,6 +227,7 @@ impl TaskQueue {
                         &pool,
                         &transcoder,
                         &queue,
+                        &media_root,
                         task,
                         &mut retries,
                         &mut next_attempt_at,
@@ -257,6 +261,7 @@ impl Clone for TaskQueue {
             notify: self.notify.clone(),
             transcoder: self.transcoder.clone(),
             pool: self.pool.clone(),
+            media_root: self.media_root.clone(),
         }
     }
 }
@@ -270,6 +275,7 @@ async fn run_task(
     pool: &PgPool,
     transcoder: &Transcoder,
     queue: &Arc<Mutex<VecDeque<TranscodeTask>>>,
+    media_root: &Path,
     task: TranscodeTask,
     retries: &mut HashMap<i64, u32>,
     next_attempt_at: &mut HashMap<i64, Instant>,
@@ -316,7 +322,7 @@ async fn run_task(
     }
 
     let input_path = std::path::Path::new(&task.input_path);
-    if !is_within_media_root(input_path) {
+    if !is_within_media_root(input_path, media_root) {
         tracing::error!(
             "Refusing to transcode input outside media root: video_id={}, path={:?}",
             task.video_id,
@@ -389,12 +395,11 @@ async fn reset_jobs_to_pending(pool: &PgPool, video_id: i64, resolutions: &[Stri
 /// root. Both enqueue paths already enforce this via [`safe_media_path`], but
 /// the worker re-checks so a future regression cannot hand ffmpeg an
 /// arbitrary filesystem path (e.g. via a tampered stream_url).
-fn is_within_media_root(path: &Path) -> bool {
+fn is_within_media_root(path: &Path, media_root: &Path) -> bool {
     let Ok(canonical) = path.canonicalize() else {
         return false;
     };
-    let root = std::env::var("MEDIA_ROOT").unwrap_or_else(|_| "./media".into());
-    let Ok(root) = PathBuf::from(root).canonicalize() else {
+    let Ok(root) = media_root.canonicalize() else {
         return false;
     };
     canonical.starts_with(&root)
@@ -553,6 +558,7 @@ async fn recover_stale_jobs(
     queue: &Arc<Mutex<VecDeque<TranscodeTask>>>,
     notify: &Notify,
     pool: &PgPool,
+    media_root: &Path,
 ) {
     if let Err(e) = sqlx::query(
         "UPDATE transcoding_jobs SET status = 'pending', started_at = NULL WHERE status = 'processing'",
@@ -599,7 +605,6 @@ async fn recover_stale_jobs(
         return;
     }
 
-    let media_root = std::env::var("MEDIA_ROOT").unwrap_or_else(|_| "./media".into());
     let mut enqueued = 0usize;
     for job in jobs {
         // Resolve the input through the canonicalized-root check used
@@ -607,7 +612,7 @@ async fn recover_stale_jobs(
         // stream_url starting with `/media/` as absolute, replace the media
         // root, and escape into the filesystem root. Non-existent inputs
         // (canonicalize fails) are skipped just like before.
-        let input_path = match safe_media_path(&job.stream_url, Path::new(&media_root)) {
+        let input_path = match safe_media_path(&job.stream_url, media_root) {
             Some(p) if p.is_file() => p,
             _ => {
                 tracing::warn!(

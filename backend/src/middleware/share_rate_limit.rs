@@ -61,12 +61,12 @@ mod tests {
     use crate::metrics::Metrics;
     use crate::middleware::rate_limit::RateLimiter;
     use crate::repositories::comment_repo::CommentRepository;
+    use crate::repositories::danmaku_repo::DanmakuRepository;
     use crate::repositories::plan_repo::PlanRepository;
     use crate::repositories::playback_repo::PlaybackRepository;
     use crate::repositories::playlist_repo::PlaylistRepository;
     use crate::repositories::registration_repo::RegistrationRepository;
     use crate::repositories::share_repo::ShareRepository;
-    use crate::repositories::danmaku_repo::DanmakuRepository;
     use crate::repositories::tag_repo::TagRepository;
     use crate::repositories::tenant_repo::TenantRepository;
     use crate::repositories::user_repo::UserRepository;
@@ -112,6 +112,23 @@ mod tests {
             smtp_password: String::new(),
             smtp_from: String::new(),
             redis_url: String::new(),
+            admin_ip_whitelist: Vec::new(),
+            upload_quota_bytes: 0,
+            db_max_connections: 100,
+            db_min_connections: 2,
+            migrations_dir: None,
+            sentry_dsn: String::new(),
+            sentry_environment: "production".into(),
+            app_env: "test".into(),
+            allow_first_user_admin: false,
+            trusted_proxy: false,
+            hashid_salt: String::new(),
+            transcode_timeout_secs: 3600,
+            ffprobe_timeout_secs: 30,
+            transcode_concurrency: 1,
+            transcode_max_duration_secs: 7200,
+            ffmpeg_path: "ffmpeg".into(),
+            ffprobe_path: "ffprobe".into(),
         };
         let pool = PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_millis(500))
@@ -127,7 +144,7 @@ mod tests {
             danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
-            tenant: TenantRepository::new(pool.clone()),
+            tenant: TenantRepository::new(pool.clone(), config.public_url.clone()),
             plan: PlanRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
@@ -155,11 +172,11 @@ mod tests {
             tenant: TenantService::new(repos.tenant.clone()),
             plan: PlanService::new(repos.plan.clone()),
         };
-        let transcoder = Transcoder::new(&std::env::temp_dir());
+        let transcoder = Transcoder::new(&std::env::temp_dir(), Default::default());
         Arc::new(AppState {
             repos,
             services,
-            config,
+            config: config.clone(),
             rate_limiter: RateLimiter::new(),
             ip_rate_limiter: RateLimiter::new(),
             video_cache: Cache::builder().max_capacity(10_000).build(),
@@ -170,7 +187,7 @@ mod tests {
             metrics: Metrics::new(),
             redis: None,
             transcoder: transcoder.clone(),
-            task_queue: TaskQueue::new(transcoder, pool),
+            task_queue: TaskQueue::new(transcoder, pool, config.media_root.clone()),
         })
     }
 

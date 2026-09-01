@@ -36,15 +36,6 @@ fn thumbnail_semaphore() -> &'static tokio::sync::Semaphore {
     THUMBNAIL_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2))
 }
 
-/// SECURITY (A04 H2): per-user upload quota (default 50 GB).
-/// Override with `UPLOAD_QUOTA_BYTES` env var. Set to 0 to disable.
-fn user_upload_quota_bytes() -> i64 {
-    std::env::var("UPLOAD_QUOTA_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50 * 1024 * 1024 * 1024)
-}
-
 #[derive(Clone)]
 pub struct MediaService {
     repo: VideoRepository,
@@ -110,10 +101,12 @@ impl MediaService {
     /// 流式上传：从临时文件读取，计算 SHA-256，移动到最终位置
     pub async fn upload_video_file(
         &self,
+        tenant_id: i64,
         file_name: &str,
         temp_path: &std::path::Path,
         category: &str,
         uploader_id: i64,
+        precomputed: Option<(i64, String)>,
     ) -> Result<i64, ServiceError> {
         // SECURITY (L-03): 上传入口（multipart 字段 / x-upload-category 头）此前
         // 无 category 校验。在读取文件前快速失败——50GB 文件不应为错误分类
@@ -123,33 +116,39 @@ impl MediaService {
             return Err(ServiceError::BadRequest(e));
         }
 
-        // Compute SHA-256 hash by streaming the file
-        use tokio::io::AsyncReadExt;
-        let mut file = tokio::fs::File::open(temp_path)
-            .await
-            .map_err(|e| ServiceError::Internal(format!("打开临时文件失败: {}", e)))?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 65536];
-        let mut file_size: i64 = 0;
-        loop {
-            let n = file
-                .read(&mut buf)
-                .await
-                .map_err(|e| ServiceError::Internal(format!("读取临时文件失败: {}", e)))?;
-            if n == 0 {
-                break;
+        // 计算 SHA-256：优先复用收流阶段边写边算的结果（避免对大文件二次
+        // 全量读取）；续传路径无法预计算，退回自身流式读取。
+        let (file_size, hash) = match precomputed {
+            Some((size, h)) => (size, h),
+            None => {
+                use tokio::io::AsyncReadExt;
+                let mut file = tokio::fs::File::open(temp_path)
+                    .await
+                    .map_err(|e| ServiceError::Internal(format!("打开临时文件失败: {}", e)))?;
+                let mut hasher = Sha256::new();
+                let mut buf = vec![0u8; 65536];
+                let mut size: i64 = 0;
+                loop {
+                    let n = file
+                        .read(&mut buf)
+                        .await
+                        .map_err(|e| ServiceError::Internal(format!("读取临时文件失败: {}", e)))?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                    size += n as i64;
+                }
+                drop(file);
+                (size, format!("{:x}", hasher.finalize()))
             }
-            hasher.update(&buf[..n]);
-            file_size += n as i64;
-        }
-        drop(file);
-        let hash = format!("{:x}", hasher.finalize());
+        };
 
         // SECURITY (A04 H2): enforce per-user storage quota *before* we move
         // the file or write to the database. This check is racy across
         // concurrent uploads from the same user, but that's an acceptable
         // over-quota boundary — quotas are advisory, not security-critical.
-        let quota = user_upload_quota_bytes();
+        let quota = self.config.upload_quota_bytes;
         if quota > 0 {
             let used = match self.repo.get_storage_used(uploader_id).await {
                 Ok(u) => u,
@@ -166,7 +165,7 @@ impl MediaService {
         }
 
         // Check for duplicates using server-computed hash
-        match self.repo.find_video_by_file_hash(&hash).await {
+        match self.repo.find_video_by_file_hash(tenant_id, &hash).await {
             Ok(Some(_)) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
                 return Err(ServiceError::Duplicate("文件已存在".into()));
@@ -272,6 +271,7 @@ impl MediaService {
         let id = match self
             .repo
             .save_local_video(
+                tenant_id,
                 &sanitized_name,
                 "",
                 source_type,
@@ -332,8 +332,9 @@ impl MediaService {
         // Generate thumbnail in background
         let svc = self.clone();
         let vid = id;
+        let vid_tenant = tenant_id;
         tokio::spawn(async move {
-            if let Err(e) = svc.generate_thumbnail(vid).await {
+            if let Err(e) = svc.generate_thumbnail(vid_tenant, vid).await {
                 info!("Thumbnail generation for video {}: {}", vid, e);
             }
         });
@@ -342,10 +343,14 @@ impl MediaService {
     }
 
     /// Generate a thumbnail from a video file using ffmpeg
-    pub async fn generate_thumbnail(&self, video_id: i64) -> Result<bool, ServiceError> {
+    pub async fn generate_thumbnail(
+        &self,
+        tenant_id: i64,
+        video_id: i64,
+    ) -> Result<bool, ServiceError> {
         let video = self
             .repo
-            .find_by_id(video_id)
+            .find_by_id(tenant_id, video_id)
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
         let video = video.ok_or_else(|| ServiceError::Internal("not found".to_string()))?;
@@ -521,7 +526,7 @@ impl MediaService {
 
             for row in &rows {
                 last_id = row.id;
-                match self.generate_thumbnail(row.id).await {
+                match self.generate_thumbnail(row.tenant_id, row.id).await {
                     Ok(true) => generated += 1,
                     Ok(false) => {}
                     Err(e) => errors.push(format!("id={}: {}", row.id, e)),

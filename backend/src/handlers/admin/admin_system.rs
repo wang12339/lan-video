@@ -31,25 +31,25 @@ pub async fn get_stats(
     let by_type = state
         .repos
         .video
-        .count_by_type()
+        .count_by_type(auth_user.tenant_id)
         .await
         .map_err(|e| internal_error_log("count_by_type", &e))?;
     let by_category = state
         .repos
         .video
-        .count_by_category()
+        .count_by_category(auth_user.tenant_id)
         .await
         .map_err(|e| internal_error_log("count_by_category", &e))?;
     let total_views = state
         .repos
         .video
-        .total_views()
+        .total_views(auth_user.tenant_id)
         .await
         .map_err(|e| internal_error_log("total_views", &e))?;
     let total_duration = state
         .repos
         .video
-        .total_duration_secs()
+        .total_duration_secs(auth_user.tenant_id)
         .await
         .map_err(|e| internal_error_log("total_duration", &e))?;
     let user_count = state

@@ -1092,6 +1092,8 @@ async fn test_update_email_unique_conflict() {
     let svc = auth_service(&state);
     let user_a = unique_username("email_a");
     let user_b = unique_username("email_b");
+    // 邮箱随本次运行唯一化，避免残留数据污染唯一性断言
+    let shared_email = format!("{}@example.com", unique_username("shared_eml"));
 
     register_user(&svc, &user_a, STRONG_PASSWORD).await;
     register_user(&svc, &user_b, STRONG_PASSWORD).await;
@@ -1101,16 +1103,12 @@ async fn test_update_email_unique_conflict() {
     state
         .repos
         .user
-        .update_email(id_a, "shared@example.com")
+        .update_email(id_a, &shared_email)
         .await
         .expect("first email bind");
 
     // Second user binding the same email must hit the unique constraint
-    let res = state
-        .repos
-        .user
-        .update_email(id_b, "shared@example.com")
-        .await;
+    let res = state.repos.user.update_email(id_b, &shared_email).await;
     match res {
         Err(sqlx::Error::Database(ref db_err)) => {
             assert_eq!(
@@ -1308,11 +1306,11 @@ async fn test_first_user_becomes_admin_with_env_flag() {
             .await
             .expect("create temp tenant");
 
-    let state = test_app_state().await;
+    let mut config = test_config();
+    config.allow_first_user_admin = true;
+    let state = test_app_state_with_config(config).await;
     let svc = auth_service(&state);
     let username = unique_username("first_admin");
-
-    std::env::set_var("ALLOW_FIRST_USER_ADMIN", "true");
 
     let reg = svc
         .register(
@@ -1325,8 +1323,6 @@ async fn test_first_user_becomes_admin_with_env_flag() {
         )
         .await
         .expect("register");
-
-    std::env::remove_var("ALLOW_FIRST_USER_ADMIN");
 
     assert!(reg.ok, "first user registration should succeed");
     assert!(

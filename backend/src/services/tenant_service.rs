@@ -289,7 +289,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let settings = default_settings();
         assert!(service.validate_settings(&settings).is_ok());
     }
@@ -300,7 +301,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let mut settings = default_settings();
         settings.max_upload_size_mb = 0;
         let err = service.validate_settings(&settings).unwrap_err();
@@ -316,7 +318,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let mut settings = default_settings();
         settings.max_upload_size_mb = 10241;
         assert!(service.validate_settings(&settings).is_err());
@@ -328,7 +331,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let mut settings = default_settings();
         settings.max_videos_per_user = 0;
         assert!(service.validate_settings(&settings).is_err());
@@ -340,7 +344,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let mut settings = default_settings();
         settings.storage_quota_gb = 0;
         assert!(service.validate_settings(&settings).is_err());
@@ -352,7 +357,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let mut settings = default_settings();
 
         // 65 字符 — 超限
@@ -370,7 +376,8 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(1))
             .connect_lazy("postgres://127.0.0.1:1/test")
             .expect("lazy pool");
-        let service = TenantService::new(TenantRepository::new(pool));
+        let service =
+            TenantService::new(TenantRepository::new(pool, "http://localhost:3000".into()));
         let settings = default_settings();
         assert!(settings.custom_theme.is_none());
         assert!(service.validate_settings(&settings).is_ok());

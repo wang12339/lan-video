@@ -96,14 +96,15 @@ The backend reads from `.env` (loaded by `dotenvy`). Key vars with non-obvious d
 | `UPLOAD_QUOTA_BYTES` | `53687091200` | Per-user storage quota (50 GB); `0` disables |
 | `SMTP_*` | (empty) | SMTP creds — required for password reset / email verification |
 | `REDIS_URL` | (empty) | Optional Redis; falls back to in-memory rate limiting/cache |
+| `ADMIN_IP_WHITELIST` | (empty) | Comma-separated IPs allowed to hit `/admin/*`; empty = unrestricted |
 | `TRUSTED_PROXY` | `0` | Trust `X-Forwarded-For`/`cf-connecting-ip` from any peer |
 | `HASHID_SALT` | baked-in | Must be stable across restarts; set a random value in production |
-| `RUST_LOG` | `info` | tracing-subscriber EnvFilter |
+| `RUST_LOG` | `info` | tracing-subscriber EnvFilter; GET/HEAD 请求日志在 `debug` 级别(需 `RUST_LOG=debug` 才可见),写操作与慢/错误请求在 `info`+ |
 
 ## Useful Files
 
 - `backend/run_backend.command` — macOS helper: start/stop/restart backend with PostgreSQL auto-start
-- `backend/src/db.rs:6-36` — migration auto-discovery (`get_migrations_dir`, `discover_migrations`)
+- `backend/src/db.rs:6-36` — migration auto-discovery (`migrations_dir_or_default`, `discover_migrations`)
 - `backend/src/app.rs` — route definitions with middleware layers (global stack at the bottom of `build_router`; route groups: public → auth → video → playback → upload → admin → internal → docs)
 - `backend/src/openapi.rs` + `backend/tests/openapi_route_tests.rs` — hand-written OpenAPI spec + route↔spec consistency test (keep in sync with `app.rs`)
 - `backend/migrations/` — 40 auto-discovered migrations; latest is `040_search_suggest_trgm_and_recommendation_views.sql` (search-suggestion trigram index + recommendation views index)

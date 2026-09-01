@@ -36,6 +36,43 @@ struct CachedAuthUser {
     tenant_id: i64,
 }
 
+const MEDIA_AUTH_CACHE_TTL_SECS: u64 = 10;
+
+/// 从共享 Redis 读取 media 鉴权缓存（未配置 Redis 或读取失败则视为 miss）。
+/// 缓存值格式：`{tenant_id}|{username}`（username 不含 `|`）。
+async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Option<CachedAuthUser> {
+    let conn = state.redis.as_ref()?;
+    let key = format!("media:auth:{}", token);
+    let mut conn = conn.clone();
+    let val: Option<String> = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut conn)
+        .await
+        .ok()
+        .flatten();
+    let val = val?;
+    let (tenant_part, username_part) = val.split_once('|')?;
+    let tenant_id = tenant_part.parse::<i64>().ok()?;
+    Some(CachedAuthUser {
+        username: username_part.into(),
+        tenant_id,
+    })
+}
+
+async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &CachedAuthUser) {
+    if let Some(conn) = state.redis.as_ref() {
+        let key = format!("media:auth:{}", token);
+        let val = format!("{}|{}", user.tenant_id, user.username);
+        let mut conn = conn.clone();
+        let _ = redis::cmd("SETEX")
+            .arg(&key)
+            .arg(MEDIA_AUTH_CACHE_TTL_SECS)
+            .arg(&val)
+            .query_async::<()>(&mut conn)
+            .await;
+    }
+}
+
 /// Media file authentication middleware.
 /// Supports Authorization header and Cookie-based auth.
 /// Browser `<video>` tags automatically send cookies with range requests.
@@ -115,7 +152,12 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                     // Path does not contain video_id (e.g. /media/{timestamp}_{filename}.mp4)
                     // Query database to find the video by stream_url and verify playback session
                     let request_path = path;
-                    match state.repos.video.find_by_stream_url(request_path).await {
+                    match state
+                        .repos
+                        .video
+                        .find_by_stream_url(tenant_id, request_path)
+                        .await
+                    {
                         Ok(Some(video)) => video.id,
                         Ok(None) => {
                             // Not a registered video and not an allowed public
@@ -214,7 +256,10 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 } else {
                     // Path does not contain video_id (e.g. /media/{timestamp}_{filename}.mp4)
                     // Query the video's stream_url to verify the file belongs to this video
-                    match state.repos.video.find_by_id(share.video_id).await {
+                    // NOTE (H-02): share-token path stays unscoped — the token is
+                    // capability-based and the video id is compared against the
+                    // share record directly, mirroring handlers::shares.
+                    match state.repos.video.find_by_id_unscoped(share.video_id).await {
                         Ok(Some(video)) => {
                             if request_path != video.stream_url
                                 && request_path != video.thumb_url.as_deref().unwrap_or("")
@@ -309,33 +354,45 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
         }
         c.username.to_string()
     } else {
-        match state.repos.user.find_user_by_token(token).await {
-            Ok(Some(u)) => {
-                // SECURITY (H-01): token is bound to the tenant it was issued
-                // in; reject cross-tenant use on /media.
-                if u.tenant_id != tenant_id {
-                    return MediaAuthResult::Denied(error_response_response(
-                        StatusCode::FORBIDDEN,
-                        "无效的登录凭证",
-                    ));
-                }
-                let username_arc: std::sync::Arc<str> = u.username.clone().into();
-                media_auth_cache().insert(
-                    token.to_string(),
-                    CachedAuthUser {
+        // 共享 Redis 缓存（多实例一致），miss 后落本地 moka 快路径
+        let from_redis = media_auth_cache_get_redis(state, token).await;
+        if let Some(c) = from_redis {
+            if c.tenant_id != tenant_id {
+                return MediaAuthResult::Denied(error_response_response(
+                    StatusCode::FORBIDDEN,
+                    "无效的登录凭证",
+                ));
+            }
+            media_auth_cache().insert(token.to_string(), c.clone());
+            c.username.to_string()
+        } else {
+            match state.repos.user.find_user_by_token(token).await {
+                Ok(Some(u)) => {
+                    // SECURITY (H-01): token is bound to the tenant it was issued
+                    // in; reject cross-tenant use on /media.
+                    if u.tenant_id != tenant_id {
+                        return MediaAuthResult::Denied(error_response_response(
+                            StatusCode::FORBIDDEN,
+                            "无效的登录凭证",
+                        ));
+                    }
+                    let username_arc: std::sync::Arc<str> = u.username.clone().into();
+                    let entry = CachedAuthUser {
                         username: username_arc.clone(),
                         tenant_id,
-                    },
-                );
-                username_arc.to_string()
-            }
-            Ok(None) => return MediaAuthResult::Pass,
-            Err(e) => {
-                tracing::error!("DB error in media_auth: {}", e);
-                return MediaAuthResult::Denied(error_response_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal error",
-                ));
+                    };
+                    media_auth_cache().insert(token.to_string(), entry.clone());
+                    media_auth_cache_put_redis(state, token, &entry).await;
+                    username_arc.to_string()
+                }
+                Ok(None) => return MediaAuthResult::Pass,
+                Err(e) => {
+                    tracing::error!("DB error in media_auth: {}", e);
+                    return MediaAuthResult::Denied(error_response_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal error",
+                    ));
+                }
             }
         }
     };

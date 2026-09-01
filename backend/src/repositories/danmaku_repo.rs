@@ -27,16 +27,18 @@ impl DanmakuRepository {
         Self { pool }
     }
 
-    /// 按出现时间顺序返回某视频的全部弹幕
+    /// 按出现时间顺序返回某视频的全部弹幕（租户隔离）
     pub async fn list_by_video(
         &self,
+        tenant_id: i64,
         video_id: i64,
     ) -> Result<Vec<DanmakuItemResponse>, sqlx::Error> {
         let rows = sqlx::query_as::<_, DanmakuRow>(
             "SELECT id, video_id, user_id, text, \"time\", color, font_size, created_at \
-             FROM danmaku WHERE video_id = $1 ORDER BY \"time\" ASC, id ASC",
+             FROM danmaku WHERE video_id = $1 AND tenant_id = $2 ORDER BY \"time\" ASC, id ASC",
         )
         .bind(video_id)
+        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -55,14 +57,16 @@ impl DanmakuRepository {
     /// 创建一条弹幕，返回新记录的自增 ID
     pub async fn create(
         &self,
+        tenant_id: i64,
         video_id: i64,
         user_id: i64,
         req: &SendDanmakuRequest,
     ) -> Result<i64, sqlx::Error> {
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO danmaku (video_id, user_id, text, \"time\", color, font_size) \
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+            "INSERT INTO danmaku (tenant_id, video_id, user_id, text, \"time\", color, font_size) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
         )
+        .bind(tenant_id)
         .bind(video_id)
         .bind(user_id)
         .bind(&req.text)

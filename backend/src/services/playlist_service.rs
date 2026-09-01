@@ -47,9 +47,13 @@ impl PlaylistService {
     // ---------------------------------------------------------------------------
 
     /// Fetch a playlist by id; return `NotFound` if it does not exist.
-    async fn get_or_err(&self, playlist_id: i64) -> Result<PlaylistRow, ServiceError> {
+    async fn get_or_err(
+        &self,
+        tenant_id: i64,
+        playlist_id: i64,
+    ) -> Result<PlaylistRow, ServiceError> {
         self.repo
-            .get_playlist(playlist_id)
+            .get_playlist(tenant_id, playlist_id)
             .await?
             .ok_or_else(|| ServiceError::not_found("播放列表不存在"))
     }
@@ -59,11 +63,12 @@ impl PlaylistService {
     /// existence is not leaked (same behavior as GET /playlists/{id}).
     pub async fn get_visible(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         is_admin: bool,
     ) -> Result<PlaylistRow, ServiceError> {
-        let p = self.get_or_err(playlist_id).await?;
+        let p = self.get_or_err(tenant_id, playlist_id).await?;
         if p.is_public || p.user_id == user_id || is_admin {
             Ok(p)
         } else {
@@ -75,10 +80,11 @@ impl PlaylistService {
     /// on success so callers don't have to fetch it again.
     async fn verify_ownership(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
     ) -> Result<PlaylistRow, ServiceError> {
-        let p = self.get_or_err(playlist_id).await?;
+        let p = self.get_or_err(tenant_id, playlist_id).await?;
         if p.user_id != user_id {
             return Err(ServiceError::forbidden("无权修改此播放列表"));
         }
@@ -92,6 +98,7 @@ impl PlaylistService {
     /// Create a new playlist for the given user.
     pub async fn create_playlist(
         &self,
+        tenant_id: i64,
         user_id: i64,
         name: &str,
         description: Option<&str>,
@@ -101,7 +108,13 @@ impl PlaylistService {
 
         let p = self
             .repo
-            .create_playlist(user_id, name, description, is_public.unwrap_or(false))
+            .create_playlist(
+                tenant_id,
+                user_id,
+                name,
+                description,
+                is_public.unwrap_or(false),
+            )
             .await?;
         Ok(p)
     }
@@ -111,15 +124,18 @@ impl PlaylistService {
     /// Returns `(PlaylistRow, item_count)`.
     pub async fn get_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         is_admin: bool,
     ) -> Result<(PlaylistRow, i64), ServiceError> {
-        let p = self.get_visible(playlist_id, user_id, is_admin).await?;
+        let p = self
+            .get_visible(tenant_id, playlist_id, user_id, is_admin)
+            .await?;
 
         let count = self
             .repo
-            .count_playlist_items(playlist_id)
+            .count_playlist_items(tenant_id, playlist_id)
             .await
             .unwrap_or_else(|e| {
                 tracing::error!(playlist_id, "count_playlist_items failed: {}", e);
@@ -132,29 +148,35 @@ impl PlaylistService {
     /// List all playlists belonging to a user, each with its item count.
     pub async fn list_user_playlists(
         &self,
+        tenant_id: i64,
         user_id: i64,
     ) -> Result<Vec<(PlaylistRow, i64)>, ServiceError> {
-        let playlists = self.repo.list_user_playlists_with_counts(user_id).await?;
+        let playlists = self
+            .repo
+            .list_user_playlists_with_counts(tenant_id, user_id)
+            .await?;
         Ok(playlists)
     }
 
     /// Update a playlist. Only the owner may call this.
     pub async fn update_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         name: Option<&str>,
         description: Option<&str>,
         is_public: Option<bool>,
     ) -> Result<(), ServiceError> {
-        self.verify_ownership(playlist_id, user_id).await?;
+        self.verify_ownership(tenant_id, playlist_id, user_id)
+            .await?;
 
         if let Some(n) = name {
             Self::validate_playlist_name(n)?;
         }
 
         self.repo
-            .update_playlist(playlist_id, name, description, is_public)
+            .update_playlist(tenant_id, playlist_id, name, description, is_public)
             .await?;
         Ok(())
     }
@@ -162,11 +184,13 @@ impl PlaylistService {
     /// Delete a playlist. Only the owner may call this.
     pub async fn delete_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
     ) -> Result<(), ServiceError> {
-        self.verify_ownership(playlist_id, user_id).await?;
-        self.repo.delete_playlist(playlist_id).await?;
+        self.verify_ownership(tenant_id, playlist_id, user_id)
+            .await?;
+        self.repo.delete_playlist(tenant_id, playlist_id).await?;
         Ok(())
     }
 
@@ -177,15 +201,20 @@ impl PlaylistService {
     /// List videos in a playlist (visible to the requesting user).
     pub async fn list_playlist_videos(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         is_admin: bool,
     ) -> Result<Vec<PlaylistVideoRow>, ServiceError> {
         // Consistent with GET /playlists/{id}: owner, admin, or the public can
         // read a playlist's videos. Only the owner may modify it.
-        self.get_visible(playlist_id, user_id, is_admin).await?;
+        self.get_visible(tenant_id, playlist_id, user_id, is_admin)
+            .await?;
 
-        let videos = self.repo.list_playlist_videos(playlist_id).await?;
+        let videos = self
+            .repo
+            .list_playlist_videos(tenant_id, playlist_id)
+            .await?;
         Ok(videos)
     }
 
@@ -195,14 +224,16 @@ impl PlaylistService {
     /// (ON CONFLICT DO NOTHING).
     pub async fn add_video_to_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         video_id: i64,
     ) -> Result<(), ServiceError> {
-        self.verify_ownership(playlist_id, user_id).await?;
+        self.verify_ownership(tenant_id, playlist_id, user_id)
+            .await?;
 
         self.repo
-            .add_video(playlist_id, video_id)
+            .add_video(tenant_id, playlist_id, video_id)
             .await
             .map_err(|e| {
                 if Self::check_fk_violation(&e, "playlist_items_video_id_fkey") {
@@ -220,12 +251,16 @@ impl PlaylistService {
     /// Remove a video from a playlist. Only the owner may call this.
     pub async fn remove_video_from_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         video_id: i64,
     ) -> Result<(), ServiceError> {
-        self.verify_ownership(playlist_id, user_id).await?;
-        self.repo.remove_video(playlist_id, video_id).await?;
+        self.verify_ownership(tenant_id, playlist_id, user_id)
+            .await?;
+        self.repo
+            .remove_video(tenant_id, playlist_id, video_id)
+            .await?;
         Ok(())
     }
 
@@ -238,14 +273,19 @@ impl PlaylistService {
     /// Positions are assigned sequentially starting from 0 in the order given.
     pub async fn reorder_playlist(
         &self,
+        tenant_id: i64,
         playlist_id: i64,
         user_id: i64,
         video_ids: &[i64],
     ) -> Result<(), ServiceError> {
-        self.verify_ownership(playlist_id, user_id).await?;
+        self.verify_ownership(tenant_id, playlist_id, user_id)
+            .await?;
 
         // Fetch current video IDs to validate the caller supplied the full set.
-        let current_videos = self.repo.list_playlist_videos(playlist_id).await?;
+        let current_videos = self
+            .repo
+            .list_playlist_videos(tenant_id, playlist_id)
+            .await?;
         let mut current_ids: Vec<i64> = current_videos.iter().map(|v| v.id).collect();
         current_ids.sort_unstable();
 
@@ -258,7 +298,9 @@ impl PlaylistService {
             ));
         }
 
-        self.repo.reorder_videos(playlist_id, video_ids).await?;
+        self.repo
+            .reorder_videos(tenant_id, playlist_id, video_ids)
+            .await?;
         Ok(())
     }
 }

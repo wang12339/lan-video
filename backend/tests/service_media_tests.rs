@@ -936,10 +936,9 @@ fn test_safe_url_protocol_only_rejected() {
 // ══════════════════════════════════════════════════════════════════════
 // 六、Transcoder —— mock 二进制驱动的参数构建与流程验证
 //
-// 原理：Transcoder::new 从环境变量 FFMPEG_PATH / FFPROBE_PATH 读取二进制
+// 原理：Transcoder::new 通过 TranscodeSettings 指定 ffmpeg / ffprobe 二进制
 // 路径。我们提供一个共享 mock 目录，其中的 ffmpeg / ffprobe 是 shell 脚本，
 // 行为由“输入文件名”决定（进程间无状态，天然无竞态）。
-// 所有 mock 测试把两个环境变量设为同一路径，线程间互不干扰。
 // ══════════════════════════════════════════════════════════════════════
 
 fn mock_bin_dir() -> PathBuf {
@@ -1000,13 +999,22 @@ fn set_executable(path: &Path) {
     std::fs::set_permissions(path, perms).unwrap();
 }
 
-/// 设置 mock 二进制路径并构造 Transcoder。所有 mock 测试共享同一目录，
-/// 故环境变量写入顺序不会造成错误。
-fn mock_transcoder(media_root: &Path) -> Transcoder {
+/// 设置 mock 二进制路径并构造 Transcoder。所有 mock 测试共享同一目录。
+fn mock_transcoder_with_settings(
+    media_root: &Path,
+    mut settings: atmos_video_backend::services::transcoder::TranscodeSettings,
+) -> Transcoder {
     let bin = mock_bin_dir();
-    std::env::set_var("FFMPEG_PATH", bin.join("ffmpeg"));
-    std::env::set_var("FFPROBE_PATH", bin.join("ffprobe"));
-    Transcoder::new(media_root)
+    settings.ffmpeg_path = bin.join("ffmpeg").to_string_lossy().into_owned();
+    settings.ffprobe_path = bin.join("ffprobe").to_string_lossy().into_owned();
+    Transcoder::new(media_root, settings)
+}
+
+fn mock_transcoder(media_root: &Path) -> Transcoder {
+    mock_transcoder_with_settings(
+        media_root,
+        atmos_video_backend::services::transcoder::TranscodeSettings::default(),
+    )
 }
 
 fn temp_media_root() -> PathBuf {
@@ -1195,8 +1203,9 @@ async fn test_transcode_ffmpeg_failure_propagates() {
 async fn test_transcode_ffmpeg_timeout_kills_child() {
     let root = temp_media_root();
     let input = unique_file(&root, "ffmpeg_slow.mp4", b"x");
-    let tx = mock_transcoder(&root);
-    std::env::set_var("TRANSCODE_TIMEOUT_SECS", "1");
+    let mut settings = atmos_video_backend::services::transcoder::TranscodeSettings::default();
+    settings.transcode_timeout = std::time::Duration::from_secs(1);
+    let tx = mock_transcoder_with_settings(&root, settings);
     let err = tx
         .transcode(1, &input, vec!["720p".to_string()])
         .await
@@ -1297,8 +1306,9 @@ async fn test_get_video_info_timeout() {
     let dir = unique_dir("probe_slow");
     std::fs::create_dir_all(&dir).unwrap();
     let input = unique_file(&dir, "slow.mp4", b"x");
-    let tx = mock_transcoder(std::path::Path::new(&dir));
-    std::env::set_var("FFPROBE_TIMEOUT_SECS", "1");
+    let mut settings = atmos_video_backend::services::transcoder::TranscodeSettings::default();
+    settings.ffprobe_timeout = std::time::Duration::from_secs(1);
+    let tx = mock_transcoder_with_settings(std::path::Path::new(&dir), settings);
     let err = tx.get_video_info(&input).await.unwrap_err().to_string();
     assert!(err.contains("ffprobe timed out"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -1374,8 +1384,11 @@ fn test_transcoder_new_creates_variants_dir() {
 /// 完整上传流程：需要 PostgreSQL（DATABASE_URL）与本地文件系统。
 /// 使用最小的 ftyp 头伪造 mp4 通过 magic 校验；结束后级联删除数据行与媒体文件。
 #[tokio::test]
-#[ignore = "需要运行中的 PostgreSQL（DATABASE_URL）"]
 async fn upload_video_flow_with_database() {
+    let Some(_) = std::env::var("DATABASE_URL").ok() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
     use atmos_video_backend::config::AppConfig;
     use atmos_video_backend::repositories::video_repo::VideoRepository;
     use atmos_video_backend::services::media_service::MediaService;
@@ -1406,20 +1419,55 @@ async fn upload_video_flow_with_database() {
         smtp_password: String::new(),
         smtp_from: String::new(),
         redis_url: String::new(),
+        admin_ip_whitelist: Vec::new(),
+        upload_quota_bytes: 0,
+        db_max_connections: 100,
+        db_min_connections: 2,
+        migrations_dir: None,
+        sentry_dsn: String::new(),
+        sentry_environment: "production".into(),
+        app_env: "test".into(),
+        allow_first_user_admin: false,
+        trusted_proxy: false,
+        hashid_salt: String::new(),
+        transcode_timeout_secs: 3600,
+        ffprobe_timeout_secs: 30,
+        transcode_concurrency: 1,
+        transcode_max_duration_secs: 7200,
+        ffmpeg_path: "ffmpeg".into(),
+        ffprobe_path: "ffprobe".into(),
     };
     let svc = MediaService::new(repo.clone(), config);
+
+    // upload_video_file 写入 videos.uploader_id（FK→users），因此先创建
+    // 一个真实用户，避免依赖库中既有用户 id。
+    let username = format!("upload_flow_{}", std::process::id());
+    let pool = repo.pool();
+    let (uploader_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO users (username, password_hash, approved, role, tenant_id) \
+         VALUES ($1, 'x', true, 1, 1) RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(pool)
+    .await
+    .expect("创建上传用户失败");
 
     let tmp = unique_dir("upload_tmp");
     let tmp_file = unique_file(&tmp, "集成测试.mp4", MP4_ISOM_BYTES);
     let id = svc
-        .upload_video_file("集成测试.mp4", &tmp_file, "test", 1)
+        .upload_video_file(1, "集成测试.mp4", &tmp_file, "test", uploader_id, None)
         .await
         .expect("上传失败");
     assert!(id > 0);
 
     // 清理：删除 DB 行 + 落盘文件
-    let deleted = repo.delete_video_cascade(id).await.expect("清理失败");
+    let deleted = repo.delete_video_cascade(1, id).await.expect("清理失败");
     assert!(deleted);
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(uploader_id)
+        .execute(pool)
+        .await
+        .expect("清理用户失败");
     for entry in std::fs::read_dir(&root).unwrap().flatten() {
         let _ = std::fs::remove_file(entry.path());
     }
@@ -1454,7 +1502,7 @@ async fn get_video_info_real_ffprobe_wav() {
     wav.extend_from_slice(&vec![0u8; data_len as usize]);
     let path = unique_file(&dir, "silence.wav", &wav);
 
-    let tx = Transcoder::new(std::path::Path::new(&dir));
+    let tx = Transcoder::new(std::path::Path::new(&dir), Default::default());
     let info = tx.get_video_info(&path).await.expect("ffprobe 解析失败");
     let duration = info
         .format

@@ -34,6 +34,7 @@ impl CommentService {
     ///
     /// # 参数
     ///
+    /// * `tenant_id` - 租户 ID（评论隔离）。
     /// * `video_id` - 目标视频的 ID。
     /// * `page` - 页码，从 0 开始；负值会被视为 0。
     /// * `size` - 每页数量，会被限制在 1 ~ 100 之间。
@@ -47,6 +48,7 @@ impl CommentService {
     /// * `ServiceError` - 数据库查询失败时返回内部错误。
     pub async fn list_comments(
         &self,
+        tenant_id: i64,
         video_id: i64,
         page: i64,
         size: i64,
@@ -54,8 +56,8 @@ impl CommentService {
         let size = size.clamp(1, 100);
         let offset = page.max(1).saturating_sub(1).saturating_mul(size);
         let (comments, total) = tokio::try_join!(
-            self.repo.get_comments(video_id, size, offset),
-            self.repo.count_comments(video_id),
+            self.repo.get_comments(tenant_id, video_id, size, offset),
+            self.repo.count_comments(tenant_id, video_id),
         )?;
         Ok((comments, total))
     }
@@ -66,6 +68,7 @@ impl CommentService {
     ///
     /// # 参数
     ///
+    /// * `tenant_id` - 租户 ID（评论隔离）。
     /// * `comment_id` - 父评论的 ID。
     ///
     /// # 返回值
@@ -75,10 +78,14 @@ impl CommentService {
     /// # 错误
     ///
     /// * `ServiceError` - 数据库查询失败时返回内部错误。
-    pub async fn list_replies(&self, comment_id: i64) -> Result<Vec<CommentRow>, ServiceError> {
+    pub async fn list_replies(
+        &self,
+        tenant_id: i64,
+        comment_id: i64,
+    ) -> Result<Vec<CommentRow>, ServiceError> {
         let replies = self
             .repo
-            .get_replies(comment_id, MAX_REPLIES_PER_REQUEST)
+            .get_replies(tenant_id, comment_id, MAX_REPLIES_PER_REQUEST)
             .await?;
         Ok(replies)
     }
@@ -112,6 +119,7 @@ impl CommentService {
     /// * `ServiceError` - 数据库插入失败（如并发场景下视频/评论被删除导致外键冲突）。
     pub async fn create_comment(
         &self,
+        tenant_id: i64,
         video_id: i64,
         user_id: i64,
         raw_content: &str,
@@ -120,13 +128,16 @@ impl CommentService {
     ) -> Result<CommentRow, ServiceError> {
         // 视频所有权检查：只有视频所有者或管理员才能评论
         if !is_admin {
-            self.check_video_ownership(video_id, user_id).await?;
+            self.check_video_ownership(tenant_id, video_id, user_id)
+                .await?;
         }
         let content = sanitize_content(raw_content)?;
-        let effective_parent = self.resolve_parent_comment(video_id, parent_id).await?;
+        let effective_parent = self
+            .resolve_parent_comment(tenant_id, video_id, parent_id)
+            .await?;
         let comment = self
             .repo
-            .create_comment(video_id, user_id, &content, effective_parent)
+            .create_comment(tenant_id, video_id, user_id, &content, effective_parent)
             .await
             .map_err(map_create_error)?;
         Ok(comment)
@@ -158,11 +169,12 @@ impl CommentService {
     /// * `ServiceError::BadRequest("评论层级过深")` - 向上追溯超过 `MAX_REPLY_DEPTH`（10）层。
     async fn resolve_parent_comment(
         &self,
+        tenant_id: i64,
         video_id: i64,
         parent_id: Option<i64>,
     ) -> Result<Option<i64>, ServiceError> {
         let Some(mut current_id) = parent_id else {
-            if !self.repo.video_exists(video_id).await? {
+            if !self.repo.video_exists(tenant_id, video_id).await? {
                 return Err(ServiceError::bad_request("视频不存在".to_string()));
             }
             return Ok(None);
@@ -170,11 +182,11 @@ impl CommentService {
 
         let mut depth = 0u32;
         loop {
-            let (parent_video_id, grandparent_id) =
-                self.repo
-                    .get_comment_meta(current_id)
-                    .await?
-                    .ok_or_else(|| ServiceError::bad_request("父评论不存在".to_string()))?;
+            let (parent_video_id, grandparent_id) = self
+                .repo
+                .get_comment_meta(tenant_id, current_id)
+                .await?
+                .ok_or_else(|| ServiceError::bad_request("父评论不存在".to_string()))?;
             if parent_video_id != video_id {
                 return Err(ServiceError::bad_request("父评论不属于该视频".to_string()));
             }
@@ -207,10 +219,15 @@ impl CommentService {
     /// * `ServiceError::BadRequest("视频不存在")` - 视频不存在。
     /// * `ServiceError::Forbidden("无权操作")` - 用户不是视频所有者。
     /// * `ServiceError::Internal("数据库错误")` - 数据库查询失败。
-    async fn check_video_ownership(&self, video_id: i64, user_id: i64) -> Result<(), ServiceError> {
+    async fn check_video_ownership(
+        &self,
+        tenant_id: i64,
+        video_id: i64,
+        user_id: i64,
+    ) -> Result<(), ServiceError> {
         let video = self
             .video_repo
-            .find_by_id(video_id)
+            .find_by_id(tenant_id, video_id)
             .await
             .map_err(|e| {
                 tracing::error!("查询视频失败: {}", e);
@@ -230,6 +247,7 @@ impl CommentService {
     ///
     /// # 参数
     ///
+    /// * `tenant_id` - 租户 ID（评论隔离）。
     /// * `comment_id` - 要删除的评论 ID。
     /// * `user_id` - 请求删除操作的用户 ID。
     /// * `is_admin` - 当前用户是否为管理员。
@@ -244,14 +262,19 @@ impl CommentService {
     /// * `ServiceError` - 数据库操作失败时返回内部错误。
     pub async fn delete_comment(
         &self,
+        tenant_id: i64,
         comment_id: i64,
         user_id: i64,
         is_admin: bool,
     ) -> Result<(), ServiceError> {
         let deleted = if is_admin {
-            self.repo.delete_comment_admin(comment_id).await?
+            self.repo
+                .delete_comment_admin(tenant_id, comment_id)
+                .await?
         } else {
-            self.repo.delete_comment(comment_id, user_id).await?
+            self.repo
+                .delete_comment(tenant_id, comment_id, user_id)
+                .await?
         };
         if !deleted {
             return Err(ServiceError::not_found("评论不存在"));

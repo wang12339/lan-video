@@ -158,10 +158,7 @@ impl AuthService {
         // it, the first user is a regular viewer that needs admin approval.
         let count = self.user_repo.count_users(tenant_id).await?;
         let is_first_user = count == 0;
-        let first_user_admin = std::env::var("ALLOW_FIRST_USER_ADMIN")
-            .ok()
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
+        let first_user_admin = self.config.allow_first_user_admin;
         let role: i16 = if is_first_user && first_user_admin {
             3
         } else {
@@ -627,7 +624,7 @@ impl AuthService {
 
         let (total_watched, total_time, recent) = self
             .playback_service
-            .get_user_profile_data(username)
+            .get_user_profile_data(tenant_id, username)
             .await
             .unwrap_or((0, 0, vec![]));
 

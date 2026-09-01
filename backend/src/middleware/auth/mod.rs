@@ -137,13 +137,41 @@ pub async fn bearer_auth(req: Request, next: Next) -> Response {
 }
 
 /// Admin authentication middleware — checks AuthUser.is_admin from bearer_auth.
+/// 判断请求 IP 是否命中管理员白名单（空列表 = 未启用，恒放行）。
+fn ip_in_admin_whitelist(ip: &str, whitelist: &[std::net::IpAddr]) -> bool {
+    if whitelist.is_empty() {
+        return true;
+    }
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(addr) => whitelist.contains(&addr),
+        Err(_) => false,
+    }
+}
+
 pub async fn admin_auth(req: Request, next: Next) -> Response {
     let auth_user = req.extensions().get::<AuthUser>().cloned();
-    match auth_user {
-        Some(user) if user.is_admin => next.run(req).await,
-        Some(_) => error_response_response(StatusCode::FORBIDDEN, "需要管理员权限"),
-        None => error_response_response(StatusCode::UNAUTHORIZED, "需要登录"),
+    let Some(user) = auth_user else {
+        return error_response_response(StatusCode::UNAUTHORIZED, "需要登录");
+    };
+    if !user.is_admin {
+        return error_response_response(StatusCode::FORBIDDEN, "需要管理员权限");
     }
+
+    // ADMIN_IP_WHITELIST (opt-in): 配置后仅白名单来源可访问管理接口
+    if let Some(state) = req.extensions().get::<Arc<AppState>>() {
+        if !ip_in_admin_whitelist(
+            &crate::util::net::client_ip(&req),
+            &state.config.admin_ip_whitelist,
+        ) {
+            tracing::warn!(
+                ip = %crate::util::net::client_ip(&req),
+                "admin_auth: IP not in admin whitelist, rejecting"
+            );
+            return error_response_response(StatusCode::FORBIDDEN, "请求来源不在管理员白名单");
+        }
+    }
+
+    next.run(req).await
 }
 
 /// Role-based authentication middleware — checks minimum role level.
@@ -206,4 +234,24 @@ pub fn clear_token_cookie(secure: bool) -> String {
         "token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{}",
         secure_flag
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ip_in_admin_whitelist;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn whitelist_disabled_passes_anything() {
+        assert!(ip_in_admin_whitelist("192.168.1.1", &[]));
+        assert!(ip_in_admin_whitelist("not-an-ip", &[]));
+    }
+
+    #[test]
+    fn whitelist_rejects_outside_and_accepts_member() {
+        let wl = [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))];
+        assert!(ip_in_admin_whitelist("10.0.0.5", &wl));
+        assert!(!ip_in_admin_whitelist("10.0.0.6", &wl));
+        assert!(!ip_in_admin_whitelist("unparseable", &wl));
+    }
 }

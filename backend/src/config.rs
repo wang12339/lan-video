@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,6 +21,23 @@ pub struct AppConfig {
     pub smtp_password: String,
     pub smtp_from: String,
     pub redis_url: String,
+    pub admin_ip_whitelist: Vec<IpAddr>,
+    pub upload_quota_bytes: i64,
+    pub db_max_connections: u32,
+    pub db_min_connections: u32,
+    pub migrations_dir: Option<PathBuf>,
+    pub sentry_dsn: String,
+    pub sentry_environment: String,
+    pub app_env: String,
+    pub allow_first_user_admin: bool,
+    pub trusted_proxy: bool,
+    pub hashid_salt: String,
+    pub transcode_timeout_secs: u64,
+    pub ffprobe_timeout_secs: u64,
+    pub transcode_concurrency: usize,
+    pub transcode_max_duration_secs: u64,
+    pub ffmpeg_path: String,
+    pub ffprobe_path: String,
 }
 
 impl fmt::Debug for AppConfig {
@@ -38,6 +56,9 @@ impl fmt::Debug for AppConfig {
             .field("cookie_secure", &self.cookie_secure)
             .field("log_dir", &self.log_dir)
             .field("redis_url", &redacted_redis)
+            .field("admin_ip_whitelist", &self.admin_ip_whitelist)
+            .field("upload_quota_bytes", &self.upload_quota_bytes)
+            .field("app_env", &self.app_env)
             .finish()
     }
 }
@@ -75,6 +96,18 @@ impl AppConfig {
 
     pub fn set_registration_enabled(&self, val: bool) {
         self.registration_enabled.store(val, Ordering::Relaxed);
+    }
+
+    /// 构造转码器配置（由 `Transcoder::new` 消费）。
+    pub fn transcode_settings(&self) -> crate::services::transcoder::TranscodeSettings {
+        crate::services::transcoder::TranscodeSettings {
+            transcode_timeout: std::time::Duration::from_secs(self.transcode_timeout_secs),
+            ffprobe_timeout: std::time::Duration::from_secs(self.ffprobe_timeout_secs),
+            concurrency: self.transcode_concurrency,
+            max_duration_secs: self.transcode_max_duration_secs,
+            ffmpeg_path: self.ffmpeg_path.clone(),
+            ffprobe_path: self.ffprobe_path.clone(),
+        }
     }
 }
 
@@ -125,6 +158,68 @@ impl AppConfig {
 
         let redis_url = std::env::var("REDIS_URL").unwrap_or_default();
 
+        // ADMIN_IP_WHITELIST: 逗号分隔的 IP 列表（opt-in）。为空则不对
+        // /admin/* 做来源限制；非空时仅白名单内的 IP 可访问管理接口。
+        let admin_ip_whitelist = std::env::var("ADMIN_IP_WHITELIST")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<IpAddr>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let upload_quota_bytes = std::env::var("UPLOAD_QUOTA_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50 * 1024 * 1024 * 1024);
+
+        let db_max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or(100);
+
+        let db_min_connections: u32 = std::env::var("DB_MIN_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n >= 1 && n <= db_max_connections)
+            .unwrap_or(2);
+
+        let migrations_dir = std::env::var("MIGRATIONS_DIR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+
+        let sentry_dsn = std::env::var("SENTRY_DSN").unwrap_or_default();
+        let sentry_environment =
+            std::env::var("SENTRY_ENVIRONMENT").unwrap_or_else(|_| "production".into());
+        let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".into());
+        let allow_first_user_admin = parse_bool_env("ALLOW_FIRST_USER_ADMIN", false);
+        let trusted_proxy = parse_bool_env("TRUSTED_PROXY", false);
+        let hashid_salt = std::env::var("HASHID_SALT").unwrap_or_default();
+        let transcode_timeout_secs = std::env::var("TRANSCODE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600);
+        let ffprobe_timeout_secs = std::env::var("FFPROBE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let transcode_concurrency = std::env::var("TRANSCODE_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1)
+            .max(1);
+        let transcode_max_duration_secs = std::env::var("TRANSCODE_MAX_DURATION_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7200);
+        let ffmpeg_path = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".into());
+        let ffprobe_path = std::env::var("FFPROBE_PATH").unwrap_or_else(|_| "ffprobe".into());
+
         AppConfig {
             database_url,
             server_port,
@@ -142,6 +237,23 @@ impl AppConfig {
             smtp_password,
             smtp_from,
             redis_url,
+            admin_ip_whitelist,
+            upload_quota_bytes,
+            db_max_connections,
+            db_min_connections,
+            migrations_dir,
+            sentry_dsn,
+            sentry_environment,
+            app_env,
+            allow_first_user_admin,
+            trusted_proxy,
+            hashid_salt,
+            transcode_timeout_secs,
+            ffprobe_timeout_secs,
+            transcode_concurrency,
+            transcode_max_duration_secs,
+            ffmpeg_path,
+            ffprobe_path,
         }
     }
 }
@@ -183,10 +295,21 @@ mod tests {
         assert_eq!(redacted, "redis://***:***@redis-host:6379");
     }
 
+    /// Serializes tests that mutate the shared `PARSE_BOOL_TEST` env var so
+    /// they cannot race when the test binary runs with `--test-threads` parallel.
+    fn lock_parse_bool_env() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn parse_bool_true_variants() {
+        let _env_guard = lock_parse_bool_env();
+        assert!(!parse_bool_env("NONEXISTENT_KEY_FOR_TEST", false));
         for val in ["true", "TRUE", "True", "1", " true ", "1 "] {
-            assert!(parse_bool_env("NONEXISTENT_KEY_FOR_TEST", false) || true);
             std::env::set_var("PARSE_BOOL_TEST", val);
             assert!(parse_bool_env("PARSE_BOOL_TEST", false), "val={val}");
         }
@@ -195,6 +318,7 @@ mod tests {
 
     #[test]
     fn parse_bool_false_variants() {
+        let _env_guard = lock_parse_bool_env();
         for val in ["false", "FALSE", "0", "no", "", " anything "] {
             std::env::set_var("PARSE_BOOL_TEST", val);
             assert!(!parse_bool_env("PARSE_BOOL_TEST", true), "val={val}");
@@ -228,6 +352,23 @@ mod tests {
             smtp_password: String::new(),
             smtp_from: String::new(),
             redis_url: "redis://:pw@host:6379".into(),
+            admin_ip_whitelist: Vec::new(),
+            upload_quota_bytes: 0,
+            db_max_connections: 100,
+            db_min_connections: 2,
+            migrations_dir: None,
+            sentry_dsn: String::new(),
+            sentry_environment: "production".into(),
+            app_env: "test".into(),
+            allow_first_user_admin: false,
+            trusted_proxy: false,
+            hashid_salt: String::new(),
+            transcode_timeout_secs: 3600,
+            ffprobe_timeout_secs: 30,
+            transcode_concurrency: 1,
+            transcode_max_duration_secs: 7200,
+            ffmpeg_path: "ffmpeg".into(),
+            ffprobe_path: "ffprobe".into(),
         };
         let debug = format!("{:?}", config);
         assert!(!debug.contains("secret123"), "密码必须被脱敏");
@@ -254,6 +395,23 @@ mod tests {
             smtp_password: String::new(),
             smtp_from: String::new(),
             redis_url: String::new(),
+            admin_ip_whitelist: Vec::new(),
+            upload_quota_bytes: 0,
+            db_max_connections: 100,
+            db_min_connections: 2,
+            migrations_dir: None,
+            sentry_dsn: String::new(),
+            sentry_environment: "production".into(),
+            app_env: "test".into(),
+            allow_first_user_admin: false,
+            trusted_proxy: false,
+            hashid_salt: String::new(),
+            transcode_timeout_secs: 3600,
+            ffprobe_timeout_secs: 30,
+            transcode_concurrency: 1,
+            transcode_max_duration_secs: 7200,
+            ffmpeg_path: "ffmpeg".into(),
+            ffprobe_path: "ffprobe".into(),
         };
         assert!(!config.registration_enabled());
         config.set_registration_enabled(true);

@@ -77,6 +77,7 @@ impl SearchService {
 
     pub async fn full_text_search(
         &self,
+        tenant_id: i64,
         query: &str,
         page: i64,
         size: i64,
@@ -115,7 +116,8 @@ impl SearchService {
                     'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20') as headline,
                 COUNT(*) OVER() AS total
             FROM videos
-            WHERE search_vector @@ plainto_tsquery('simple', $1)
+            WHERE tenant_id = $4
+              AND search_vector @@ plainto_tsquery('simple', $1)
             ORDER BY rank DESC, id DESC
             LIMIT $2 OFFSET $3
             "#,
@@ -123,6 +125,7 @@ impl SearchService {
         .bind(&query)
         .bind(size)
         .bind(offset)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))?;
@@ -148,6 +151,7 @@ impl SearchService {
 
     pub async fn search_suggest(
         &self,
+        tenant_id: i64,
         query: &str,
         limit: i64,
     ) -> Result<Vec<String>, ServiceError> {
@@ -157,7 +161,7 @@ impl SearchService {
         }
         let limit = limit.clamp(1, MAX_SIZE);
 
-        let cache_key = format!("{}|{}", query, limit);
+        let cache_key = format!("{}|{}|{}", tenant_id, query, limit);
         if let Some(cached) = suggest_cache().get(&cache_key) {
             return Ok(cached);
         }
@@ -190,11 +194,13 @@ impl SearchService {
                 SELECT title,
                        ts_rank(search_vector, plainto_tsquery('simple', $1)) AS rk
                 FROM videos
-                WHERE search_vector @@ plainto_tsquery('simple', $1)
+                WHERE tenant_id = $4
+                  AND search_vector @@ plainto_tsquery('simple', $1)
                 UNION ALL
                 SELECT title, 0::real AS rk
                 FROM videos
-                WHERE title ILIKE $2 || '%'
+                WHERE tenant_id = $4
+                  AND title ILIKE $2 || '%'
             ) AS t
             GROUP BY title
             ORDER BY max(rk) DESC, title ASC
@@ -204,6 +210,7 @@ impl SearchService {
         .bind(&query)
         .bind(&pattern)
         .bind(limit)
+        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("搜索建议失败: {}", e)))?;
@@ -216,17 +223,7 @@ impl SearchService {
 /// Strip the `<mark>...</mark>` start/stop selectors from a ts_headline result.
 /// We just remove the literal substrings; the resulting text is plain.
 fn strip_ts_headline_markers(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut remaining = s;
-    while let Some(start) = remaining.find("<mark>") {
-        out.push_str(&remaining[..start]);
-        remaining = &remaining[start + 6..];
-        if let Some(end) = remaining.find("</mark>") {
-            remaining = &remaining[end + 7..];
-        }
-    }
-    out.push_str(remaining);
-    out
+    s.replace("<mark>", "").replace("</mark>", "")
 }
 
 /// Escape LIKE wildcards (`%`, `_`, `\`) with the default backslash escape so

@@ -71,6 +71,7 @@ pub async fn add_external_video(
         .services
         .video
         .add_external_video(
+            auth_user.tenant_id,
             &req.title,
             req.description.as_deref(),
             req.category.as_deref(),
@@ -106,6 +107,8 @@ pub async fn upload_video(
     let mut file_name: Option<String> = None;
     let mut category = "local".to_string();
     let mut temp_path: Option<std::path::PathBuf> = None;
+    let mut precomputed: Option<(i64, String)> = None;
+    let mut file_field_seen = false;
 
     while let Some(field) = multipart
         .next_field()
@@ -115,23 +118,37 @@ pub async fn upload_video(
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
+                // 本接口是单文件上传（批量请用前端上传队列，逐文件走
+                // upload-resume 续传）。收到多个 file 字段时拒绝，避免
+                // 静默覆盖只保留最后一个、丢弃已写入的临时文件。
+                if file_field_seen {
+                    if let Some(p) = &temp_path {
+                        let _ = tokio::fs::remove_file(p).await;
+                    }
+                    return Err(error_response(
+                        StatusCode::BAD_REQUEST,
+                        "单次请求仅支持一个文件，请使用断点续传接口批量上传",
+                    ));
+                }
+                file_field_seen = true;
                 let raw_name = field.file_name().unwrap_or("video.mp4").to_string();
                 // Sanitize: strip path separators and control characters, keep only the filename
                 let fname = crate::services::media_service::sanitize_filename(&raw_name);
                 file_name = Some(fname);
 
-                // 流式写入临时文件（复用公共函数）
+                // 流式写入临时文件（复用公共函数，边写边算 SHA-256）
                 let tmp = state
                     .config
                     .media_root
                     .join(format!(".upload_{}", Uuid::new_v4()));
-                stream_multipart_to_file(field, &tmp, MAX_UPLOAD_SIZE)
+                let (size, sha256) = stream_multipart_to_file(field, &tmp, MAX_UPLOAD_SIZE)
                     .await
                     .map_err(|e| {
                         let (status, body) = map_upload_service_error(&e);
                         error_response(status, body)
                     })?;
                 temp_path = Some(tmp);
+                precomputed = Some((size as i64, sha256));
             }
             "category" => {
                 // category 不是文件字段，手动读取文本
@@ -148,7 +165,14 @@ pub async fn upload_video(
     let id = match state
         .services
         .media
-        .upload_video_file(&file_name, &tmp_path, &category, auth_user.id)
+        .upload_video_file(
+            auth_user.tenant_id,
+            &file_name,
+            &tmp_path,
+            &category,
+            auth_user.id,
+            precomputed,
+        )
         .await
     {
         Ok(id) => id,
@@ -293,7 +317,14 @@ pub async fn upload_resume(
         let id = state
             .services
             .media
-            .upload_video_file(&file_name, &tmp, &category, auth_user.id)
+            .upload_video_file(
+                auth_user.tenant_id,
+                &file_name,
+                &tmp,
+                &category,
+                auth_user.id,
+                None,
+            )
             .await
             .map_err(|e| {
                 let tmp_path = tmp.clone();
@@ -332,6 +363,7 @@ pub async fn upload_resume(
 /// POST /admin/videos/check-hashes
 pub async fn check_hashes(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<CheckHashesRequest>,
 ) -> Result<Json<CheckHashesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.hashes.len() > 1000 {
@@ -343,7 +375,7 @@ pub async fn check_hashes(
     let existing = state
         .services
         .video
-        .check_existing_hashes(req.hashes)
+        .check_existing_hashes(auth_user.tenant_id, req.hashes)
         .await
         .map_err(|e| internal_error_log("check_existing_hashes", &e))?;
     Ok(Json(CheckHashesResponse { existing }))
@@ -352,6 +384,7 @@ pub async fn check_hashes(
 /// POST /admin/videos/check-files
 pub async fn check_files(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     SafeJson(files): SafeJson<Vec<FileCheckItem>>,
 ) -> Result<Json<CheckFilesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if files.len() > 1000 {
@@ -363,7 +396,7 @@ pub async fn check_files(
     let existing_indices = state
         .services
         .video
-        .check_existing_files(&files)
+        .check_existing_files(auth_user.tenant_id, &files)
         .await
         .map_err(|e| internal_error_log("check_existing_files", &e))?;
     Ok(Json(CheckFilesResponse {
@@ -373,6 +406,7 @@ pub async fn check_files(
 
 pub async fn scan_media(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     multipart: Option<Multipart>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let category = if let Some(mut mp) = multipart {
@@ -391,7 +425,7 @@ pub async fn scan_media(
     let added = state
         .services
         .video
-        .scan_media_directory(&category)
+        .scan_media_directory(auth_user.tenant_id, &category)
         .await
         .map_err(|e| internal_error_log("scan_media_directory", &e))?;
 
@@ -403,6 +437,7 @@ pub async fn scan_media(
 /// PUT /admin/videos/{id}
 pub async fn update_video(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<i64>,
     SafeJson(req): SafeJson<VideoUpdateRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -427,6 +462,7 @@ pub async fn update_video(
         .services
         .video
         .update_video(
+            auth_user.tenant_id,
             id,
             req.title.as_deref(),
             req.description.as_deref(),
@@ -454,13 +490,19 @@ pub async fn update_video(
 /// DELETE /admin/videos/{id}
 pub async fn delete_video(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let Some(id) = hashid::decode_id_or_numeric(&id) else {
         return Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"));
     };
     state.invalidate_caches();
-    match state.services.video.delete_video(id).await {
+    match state
+        .services
+        .video
+        .delete_video(auth_user.tenant_id, id)
+        .await
+    {
         Ok(true) => {
             tracing::info!(video_id = id, "admin deleted video");
             Ok(Json(OkResponse {
@@ -487,6 +529,7 @@ pub async fn delete_video(
 /// DELETE /admin/videos/batch
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     SafeJson(ids): SafeJson<Vec<String>>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ids.len() > 500 {
@@ -503,7 +546,7 @@ pub async fn delete_videos(
     let deleted = state
         .services
         .video
-        .delete_videos(&numeric_ids)
+        .delete_videos(auth_user.tenant_id, &numeric_ids)
         .await
         .map_err(|e| {
             tracing::error!("delete_videos failed: {}", e);
@@ -571,6 +614,7 @@ pub struct BatchCategoryRequest {
 
 pub async fn batch_update_category(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<BatchCategoryRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.ids.len() > 1000 {
@@ -588,7 +632,7 @@ pub async fn batch_update_category(
     let updated = state
         .repos
         .video
-        .batch_update_category(&req.ids, &req.category)
+        .batch_update_category(auth_user.tenant_id, &req.ids, &req.category)
         .await
         .map_err(|e| internal_error_log("batch_update_category", &e))?;
     state.invalidate_caches();

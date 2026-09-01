@@ -64,7 +64,7 @@ function renderUpload() {
       <ToastProvider>
         <Upload />
       </ToastProvider>
-    </MemoryRouter>
+    </MemoryRouter>,
   )
 }
 
@@ -377,10 +377,13 @@ describe('Upload 组件', () => {
       fireEvent.click(startBtn)
 
       // 上传过程中应显示哈希计算或上传中状态
-      await waitFor(() => {
-        const statusText = screen.getByText(/计算哈希|上传中|上传成功/)
-        expect(statusText).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          const statusText = screen.getByText(/计算哈希|上传中|上传成功/)
+          expect(statusText).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
 
       // 进度条应存在
       const progressBar = screen.getByRole('progressbar', { name: /test.mp4.*上传进度/i })
@@ -466,9 +469,12 @@ describe('Upload 组件', () => {
       fireEvent.click(startBtn)
 
       // 上传失败后应显示失败 toast
-      await waitFor(() => {
-        expect(screen.getByText(/上传失败/)).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          expect(screen.getByText(/上传失败/)).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
     }, 20000)
 
     it('哈希计算失败时应显示错误', async () => {
@@ -494,13 +500,16 @@ describe('Upload 组件', () => {
 
       // 流式哈希实现内置，即使 crypto.subtle 不可用也会使用内置实现
       // 验证组件不会崩溃，进入某个有效状态
-      await waitFor(() => {
-        const hasError = screen.queryByText(/❌/)
-        const hasHashing = screen.queryByText('计算哈希...')
-        const hasUploading = screen.queryByText(/上传中/)
-        const hasDone = screen.queryByText(/✅/)
-        expect(hasError || hasHashing || hasUploading || hasDone).toBeTruthy()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          const hasError = screen.queryByText(/❌/)
+          const hasHashing = screen.queryByText('计算哈希...')
+          const hasUploading = screen.queryByText(/上传中/)
+          const hasDone = screen.queryByText(/✅/)
+          expect(hasError || hasHashing || hasUploading || hasDone).toBeTruthy()
+        },
+        { timeout: 15000 },
+      )
 
       // 恢复 crypto.subtle
       if (originalDescriptor) {
@@ -548,9 +557,12 @@ describe('Upload 组件', () => {
       fireEvent.click(startBtn)
 
       // 等待上传失败 toast
-      await waitFor(() => {
-        expect(screen.getByText(/上传失败/)).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          expect(screen.getByText(/上传失败/)).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
 
       // 上传结束后，待上传按钮应恢复（因为 error 状态也算 pending）
       // 点击重试按钮（如果存在）
@@ -667,7 +679,7 @@ describe('Upload 组件', () => {
       expect(screen.getByRole('button', { name: /上传 3 个文件/i })).toBeInTheDocument()
     })
 
-    it('批量上传应并发执行（最多 2 个并发）', async () => {
+    it('批量上传应并发执行（最多 4 个并发）', async () => {
       let callCount = 0
       mockedUploadResumeChunk.mockImplementation(async () => {
         const idx = ++callCount
@@ -692,10 +704,13 @@ describe('Upload 组件', () => {
         fireEvent.click(startBtn)
       })
 
-      await waitFor(() => {
-        // 所有文件都应完成 — 按钮变为 "上传 0 个文件"（没有待上传文件了）
-        expect(screen.getByRole('button', { name: /上传 0 个文件/i })).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          // 所有文件都应完成 — 按钮变为 "上传 0 个文件"（没有待上传文件了）
+          expect(screen.getByRole('button', { name: /上传 0 个文件/i })).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
     }, 20000)
 
     it('清空列表按钮应移除所有文件', async () => {
@@ -845,9 +860,12 @@ describe('Upload 组件', () => {
       fireEvent.click(startBtn)
 
       // 等待上传完成（toast 显示成功数量）
-      await waitFor(() => {
-        expect(screen.getByText(/2 个文件上传成功/)).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          expect(screen.getByText(/2 个文件上传成功/)).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
     })
   })
 
@@ -1120,9 +1138,7 @@ describe('Upload 组件', () => {
 
     it('上传中不应允许切换分类', async () => {
       // 创建永不 resolve 的 promise
-      mockedUploadResumeChunk.mockImplementation(
-        () => new Promise(() => {})
-      )
+      mockedUploadResumeChunk.mockImplementation(() => new Promise(() => {}))
 
       renderUpload()
       const input = getFileInput()

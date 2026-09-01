@@ -71,7 +71,12 @@ pub async fn create_share_link(
     let (token, share) = state
         .services
         .share
-        .create_share_link(video_id, auth_user.id, req.expires_in_days)
+        .create_share_link(
+            auth_user.tenant_id,
+            video_id,
+            auth_user.id,
+            req.expires_in_days,
+        )
         .await
         .map_err(ServiceError::into_tuple)?;
 
@@ -123,7 +128,7 @@ pub async fn get_share_video(
     let video = state
         .repos
         .video
-        .find_by_id(share.video_id)
+        .find_by_id_unscoped(share.video_id)
         .await
         .map_err(|e| internal_error_log("get_share_video find_by_id failed", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;

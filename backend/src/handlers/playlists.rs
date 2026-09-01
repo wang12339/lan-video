@@ -49,7 +49,7 @@ pub async fn list_my_playlists(
     let playlists = state
         .services
         .playlist
-        .list_user_playlists(auth_user.id)
+        .list_user_playlists(auth_user.tenant_id, auth_user.id)
         .await
         .map_err(svc_err)?;
 
@@ -84,6 +84,7 @@ pub async fn create_playlist(
         .services
         .playlist
         .create_playlist(
+            auth_user.tenant_id,
             auth_user.id,
             &req.name,
             req.description.as_deref(),
@@ -105,7 +106,12 @@ pub async fn get_playlist(
     let (p, count) = state
         .services
         .playlist
-        .get_playlist(playlist_id, auth_user.id, auth_user.is_admin)
+        .get_playlist(
+            auth_user.tenant_id,
+            playlist_id,
+            auth_user.id,
+            auth_user.is_admin,
+        )
         .await
         .map_err(svc_err)?;
 
@@ -139,6 +145,7 @@ pub async fn update_playlist(
         .services
         .playlist
         .update_playlist(
+            auth_user.tenant_id,
             playlist_id,
             auth_user.id,
             req.name.as_deref(),
@@ -161,7 +168,7 @@ pub async fn delete_playlist(
     state
         .services
         .playlist
-        .delete_playlist(playlist_id, auth_user.id)
+        .delete_playlist(auth_user.tenant_id, playlist_id, auth_user.id)
         .await
         .map_err(svc_err)?;
 
@@ -178,7 +185,12 @@ pub async fn list_playlist_videos(
     let videos = state
         .services
         .playlist
-        .list_playlist_videos(playlist_id, auth_user.id, auth_user.is_admin)
+        .list_playlist_videos(
+            auth_user.tenant_id,
+            playlist_id,
+            auth_user.id,
+            auth_user.is_admin,
+        )
         .await
         .map_err(svc_err)?;
 
@@ -198,7 +210,7 @@ pub async fn add_video_to_playlist(
     state
         .services
         .playlist
-        .add_video_to_playlist(playlist_id, auth_user.id, req.video_id)
+        .add_video_to_playlist(auth_user.tenant_id, playlist_id, auth_user.id, req.video_id)
         .await
         .map_err(svc_err)?;
 
@@ -216,7 +228,7 @@ pub async fn remove_video_from_playlist(
     state
         .services
         .playlist
-        .remove_video_from_playlist(playlist_id, auth_user.id, video_id)
+        .remove_video_from_playlist(auth_user.tenant_id, playlist_id, auth_user.id, video_id)
         .await
         .map_err(svc_err)?;
 
@@ -234,7 +246,12 @@ pub async fn reorder_playlist(
     state
         .services
         .playlist
-        .reorder_playlist(playlist_id, auth_user.id, &req.video_ids)
+        .reorder_playlist(
+            auth_user.tenant_id,
+            playlist_id,
+            auth_user.id,
+            &req.video_ids,
+        )
         .await
         .map_err(svc_err)?;
 
@@ -267,7 +284,7 @@ pub async fn batch_add_videos_to_playlist(
         match state
             .services
             .playlist
-            .add_video_to_playlist(playlist_id, auth_user.id, *video_id)
+            .add_video_to_playlist(auth_user.tenant_id, playlist_id, auth_user.id, *video_id)
             .await
         {
             Ok(()) => added += 1,

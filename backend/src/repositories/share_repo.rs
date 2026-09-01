@@ -90,6 +90,7 @@ impl ShareRepository {
 
     pub async fn create_share_link(
         &self,
+        tenant_id: i64,
         video_id: i64,
         user_id: i64,
         raw_token: &str,
@@ -97,19 +98,22 @@ impl ShareRepository {
     ) -> Result<ShareLink, sqlx::Error> {
         let token_hash = hash_share_token(raw_token);
         // The share's tenant_id mirrors the video's tenant_id at creation
-        // time (the column exists since migration 034; currently always 1,
-        // so this is a no-op until tenants are actually provisioned).
-        // INSERT ... SELECT also makes it impossible to create a share for a
-        // video that does not exist (0 rows → RowNotFound → caller's 500).
+        // time. The `v.tenant_id = $5` guard is defense-in-depth: the handler
+        // (handlers::shares::create_share_link) already enforces the H-02
+        // tenant boundary via `find_video_ownership`. INSERT ... SELECT also
+        // makes it impossible to create a share for a video that does not
+        // exist (0 rows → RowNotFound → caller's 500).
         sqlx::query_as::<_, ShareLink>(
             r#"INSERT INTO share_links (video_id, user_id, token_hash, expires_at, tenant_id)
-               SELECT $1, $2, $3, $4, v.tenant_id FROM videos v WHERE v.id = $1
+               SELECT $1, $2, $3, $4, v.tenant_id FROM videos v
+               WHERE v.id = $1 AND v.tenant_id = $5
                RETURNING id, video_id, user_id, expires_at, created_at"#,
         )
         .bind(video_id)
         .bind(user_id)
         .bind(&token_hash)
         .bind(expires_at)
+        .bind(tenant_id)
         .fetch_one(&self.pool)
         .await
     }

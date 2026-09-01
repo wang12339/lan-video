@@ -14,10 +14,12 @@ use crate::models::video::{
 };
 use crate::services::media_service::sweeper;
 use crate::state::AppState;
+use crate::util::error::ServiceError;
 use crate::util::hashid;
 use crate::util::pagination::PaginationParams;
-use crate::util::error::ServiceError;
-use crate::util::response::{error_response, internal_error_log, CachedResponse, ErrorResponse, SafeJson};
+use crate::util::response::{
+    error_response, internal_error_log, CachedResponse, ErrorResponse, SafeJson,
+};
 
 use crate::models::danmaku::{DanmakuListResponse, SendDanmakuRequest, SendDanmakuResponse};
 
@@ -41,7 +43,6 @@ pub async fn list_videos(
         .as_deref()
         .and_then(hashid::decode_id_or_numeric);
     let sort = params.sort.as_deref();
-    let _auth_user = auth_user;
 
     if query.len() > MAX_SEARCH_QUERY_LEN {
         return Err(error_response(
@@ -50,8 +51,10 @@ pub async fn list_videos(
         ));
     }
 
+    let tenant_id = auth_user.tenant_id;
     let cache_key = format!(
-        "lv:{}:{}:{}:{}:{}:{}:{}",
+        "lv:{}:{}:{}:{}:{}:{}:{}:{}",
+        tenant_id,
         page,
         size,
         query,
@@ -75,6 +78,7 @@ pub async fn list_videos(
         .services
         .video
         .list_videos_paged(
+            tenant_id,
             page,
             size,
             (!query.is_empty()).then_some(query),
@@ -110,23 +114,25 @@ pub async fn list_videos(
 /// GET /videos/{id}
 pub async fn get_video(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<VideoItem>, (StatusCode, Json<ErrorResponse>)> {
     let id = hashid::decode_id_or_numeric(&id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    let cache_key = (tenant.tenant_id, id);
     // 热路径：详情页每次刷新都会请求；60s 缓存吸收重复查询。
     // 失效由 `AppState::invalidate_caches` 统一处理（更新/删除/上传时全量失效）。
-    if let Some(cached) = state.video_detail_cache.get(&id) {
+    if let Some(cached) = state.video_detail_cache.get(&cache_key) {
         return Ok(Json(cached));
     }
     let video = state
         .services
         .video
-        .get_video(id)
+        .get_video(tenant.tenant_id, id)
         .await
         .map_err(|e| internal_error_log("get_video", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
-    state.video_detail_cache.insert(id, video.clone());
+    state.video_detail_cache.insert(cache_key, video.clone());
 
     Ok(Json(video))
 }
@@ -134,6 +140,7 @@ pub async fn get_video(
 /// GET /videos/{id}/variants — available transcoded resolutions for playback
 pub async fn get_video_variants(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<VideoVariantResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let id = hashid::decode_id_or_numeric(&id)
@@ -141,7 +148,7 @@ pub async fn get_video_variants(
     let variants = state
         .repos
         .video
-        .list_variants(id)
+        .list_variants(tenant.tenant_id, id)
         .await
         .map_err(|e| internal_error_log("get_video_variants", &e))?;
     Ok(Json(
@@ -201,7 +208,7 @@ pub async fn toggle_like(
     let liked = state
         .services
         .playback
-        .toggle_like(&auth_user.username, id)
+        .toggle_like(auth_user.tenant_id, &auth_user.username, id)
         .await
         .map_err(|e| internal_error_log("toggle_like", &e))?;
     tracing::info!(user = %auth_user.username, video_id = id, liked = liked, "toggle like");
@@ -219,7 +226,7 @@ pub async fn get_like_status(
     let liked = state
         .services
         .playback
-        .is_liked(&auth_user.username, id)
+        .is_liked(auth_user.tenant_id, &auth_user.username, id)
         .await
         .map_err(|e| internal_error_log("get_like_status", &e))?;
     Ok(Json(serde_json::json!({"liked": liked})))
@@ -236,7 +243,7 @@ pub async fn toggle_favorite(
     let favorited = state
         .services
         .playback
-        .toggle_favorite(&auth_user.username, id)
+        .toggle_favorite(auth_user.tenant_id, &auth_user.username, id)
         .await
         .map_err(|e| internal_error_log("toggle_favorite", &e))?;
     tracing::info!(user = %auth_user.username, video_id = id, favorited = favorited, "toggle favorite");
@@ -254,7 +261,7 @@ pub async fn get_favorite_status(
     let favorited = state
         .services
         .playback
-        .is_favorited(&auth_user.username, id)
+        .is_favorited(auth_user.tenant_id, &auth_user.username, id)
         .await
         .map_err(|e| internal_error_log("get_favorite_status", &e))?;
     Ok(Json(serde_json::json!({"favorited": favorited})))
@@ -274,7 +281,7 @@ pub async fn list_favorites(
     let (items, total) = state
         .services
         .playback
-        .get_favorites(&auth_user.username, size, offset)
+        .get_favorites(auth_user.tenant_id, &auth_user.username, size, offset)
         .await
         .map_err(|e| internal_error_log("list_favorites", &e))?;
     Ok(Json(PagedRecentWatchResponse {
@@ -288,6 +295,7 @@ pub async fn list_favorites(
 /// POST /videos/{id}/view
 pub async fn increment_views(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Path(id): Path<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -308,7 +316,7 @@ pub async fn increment_views(
     state
         .services
         .video
-        .increment_views(id)
+        .increment_views(tenant.tenant_id, id)
         .await
         .map_err(|e| internal_error_log("increment_views", &e))?;
     Ok(Json(serde_json::json!({"ok": true})))
@@ -316,6 +324,7 @@ pub async fn increment_views(
 
 pub async fn search_videos(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     let pagination = PaginationParams::new(params.page, params.size);
@@ -341,7 +350,7 @@ pub async fn search_videos(
     let (results, total) = state
         .services
         .search
-        .full_text_search(&params.q, page, size)
+        .full_text_search(tenant.tenant_id, &params.q, page - 1, size)
         .await
         .map_err(|e| internal_error_log("search_videos", &e))?;
 
@@ -368,6 +377,7 @@ pub async fn search_videos(
 /// GET /videos/search/suggest
 pub async fn search_suggest(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<Vec<String>>, (StatusCode, Json<ErrorResponse>)> {
     if params.q.len() > MAX_SEARCH_QUERY_LEN {
@@ -386,7 +396,7 @@ pub async fn search_suggest(
     let suggestions = state
         .services
         .search
-        .search_suggest(&params.q, 10)
+        .search_suggest(tenant.tenant_id, &params.q, 10)
         .await
         .map_err(|e| internal_error_log("search_suggest", &e))?;
 
@@ -399,6 +409,7 @@ pub async fn search_suggest(
 /// 之下，调用方需携带有效令牌。
 pub async fn list_danmaku(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
     Path(video_id): Path<String>,
 ) -> Result<Json<DanmakuListResponse>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = hashid::decode_id_or_numeric(&video_id)
@@ -407,7 +418,7 @@ pub async fn list_danmaku(
     let items = state
         .repos
         .danmaku
-        .list_by_video(video_id)
+        .list_by_video(tenant.tenant_id, video_id)
         .await
         .map_err(|e| ServiceError::into_tuple(e.into()))?;
 
@@ -441,7 +452,7 @@ pub async fn create_danmaku(
     let id = state
         .repos
         .danmaku
-        .create(video_id, auth_user.id, &req)
+        .create(auth_user.tenant_id, video_id, auth_user.id, &req)
         .await
         .map_err(|e| ServiceError::into_tuple(e.into()))?;
 

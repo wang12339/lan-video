@@ -60,6 +60,7 @@ pub struct TenantUsageStatsRow {
 #[derive(Clone)]
 pub struct TenantRepository {
     pool: PgPool,
+    public_url: String,
 }
 
 /// 查询超时时间（秒）
@@ -164,8 +165,18 @@ where
 }
 
 impl TenantRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, public_url: String) -> Self {
+        Self { pool, public_url }
+    }
+
+    /// 解析 PUBLIC_URL 得到的主机名（用于多租户子域解析）。
+    fn base_host(&self) -> Option<String> {
+        let host = parse_url_host(&self.public_url);
+        if host.is_empty() {
+            None
+        } else {
+            Some(host)
+        }
     }
 
     /// Warm up the tenant cache by pre-loading the default tenant and all active tenants.
@@ -298,7 +309,7 @@ impl TenantRepository {
             return Some(Self::to_context(&tenant));
         }
 
-        let Some(base) = base_host() else {
+        let Some(base) = self.base_host() else {
             return self.resolve_host_permissive(host).await;
         };
 
@@ -618,18 +629,6 @@ fn slug_for(host: &str) -> &str {
 
 fn host_matches_base(host: &str, base: &str) -> bool {
     host.len() > base.len() && host.ends_with(&format!(".{}", base))
-}
-
-fn base_host() -> Option<String> {
-    static BASE_HOST: OnceLock<Option<String>> = OnceLock::new();
-    BASE_HOST
-        .get_or_init(|| {
-            std::env::var("PUBLIC_URL")
-                .ok()
-                .map(|u| parse_url_host(&u))
-                .filter(|h| !h.is_empty())
-        })
-        .clone()
 }
 
 fn parse_url_host(url: &str) -> String {
