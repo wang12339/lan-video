@@ -63,7 +63,9 @@ function hexFromBuffer(buf: ArrayBuffer): string {
 
 export async function computeContentHash(file: File, isCancelled: () => boolean): Promise<string> {
   const subtle = crypto.subtle
-  if (subtle && (file.size <= SMALL_FILE_BYTES || !verifyStreamingHash())) {
+  // 小文件用 WebCrypto 一次性摘要;大文件绝不可 `file.arrayBuffer()`
+  // 整读(50GB 视频会直接 OOM),必须走流式分块。
+  if (subtle && file.size <= SMALL_FILE_BYTES) {
     return hexFromBuffer(await subtle.digest('SHA-256', await file.arrayBuffer()))
   }
   if (!verifyStreamingHash()) {

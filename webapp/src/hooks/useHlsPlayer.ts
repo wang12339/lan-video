@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type Hls from 'hls.js'
+import type { ErrorData, HlsConfig } from 'hls.js'
 import { getToken } from '../api/client'
 
 /**
@@ -33,43 +34,27 @@ interface HlsPlayerOptions {
 /**
  * 动态加载 hls.js 库。
  *
- * 从 jsDelivr CDN 注入 `<script>` 标签。如果 `window.Hls` 已存在
- * （即脚本已加载过），则直接返回缓存的引用，避免重复加载。
+ * 通过 Vite 动态 `import()` 打包为本地 chunk,由后端在 `/webapp/` 下
+ * 提供(与站点同源),满足生产 CSP `script-src 'self'` —— 此前从 jsDelivr
+ * CDN 注入 `<script>` 会被生产 CSP 拦截,导致桌面 Chromium 无法播放 HLS。
  *
- * @returns hls.js 的构造函数（`Hls` 类）。
- * @throws 如果脚本加载失败（网络错误等），Promise 会被 reject。
+ * @returns hls.js 的构造函数(`Hls` 类)。
+ * @throws 如果加载失败,Promise 会被 reject。
  */
 let hlsLoadPromise: Promise<typeof Hls> | null = null
 
 async function loadHls(): Promise<typeof Hls> {
-  const win = window as unknown as { Hls?: typeof Hls }
-  if (win.Hls) {
-    return win.Hls
-  }
   if (hlsLoadPromise) return hlsLoadPromise
 
-  hlsLoadPromise = new Promise<typeof Hls>((resolve, reject) => {
-    const script = document.createElement('script')
-    // Pinned version to avoid supply-chain drift; update intentionally via PR
-    script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js'
-    script.crossOrigin = 'anonymous'
-    const timer = window.setTimeout(() => reject(new Error('hls.js load timeout')), 8000)
-    script.onload = () => {
-      window.clearTimeout(timer)
-      resolve(win.Hls!)
-    }
-    script.onerror = () => {
-      window.clearTimeout(timer)
-      reject(new Error('hls.js CDN load failed'))
-    }
-    document.head.appendChild(script)
-  }).catch(async (err) => {
-    // CDN failed — caller will handle error; reset promise so next attempt can retry
-    hlsLoadPromise = null
-    throw err
-  })
+  hlsLoadPromise = import('hls.js')
+    .then((m) => m.default as typeof Hls)
+    .catch((err) => {
+      // Reset so the next attempt can retry.
+      hlsLoadPromise = null
+      throw err
+    })
 
-  return hlsLoadPromise!
+  return hlsLoadPromise
 }
 
 /**
@@ -84,7 +69,7 @@ async function loadHls(): Promise<typeof Hls> {
  *    直接使用 `<video>` 的原生 `application/vnd.apple.mpegurl` 解码，不加载 hls.js。
  *
  * 3. **hls.js 动态加载**：在不支持原生 HLS 的浏览器中，
- *    从 jsDelivr CDN 动态注入 hls.js，首次加载后缓存在 `window.Hls`。
+ *    以本地打包 chunk(动态 `import()`)方式加载 hls.js,与站点同源。
  *
  * 4. **认证支持**：通过 `xhrSetup` 将当前用户的 Bearer Token 注入到
  *    所有 HLS 分片请求的 `Authorization` 头中，确保受保护资源可正常加载。
@@ -209,7 +194,7 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
       if (cancelled || !Hls || !video) return
 
       if (Hls.isSupported()) {
-        const hlsConfig: Partial<Hls.Config> & { lowLatencyMode?: boolean } = {
+        const hlsConfig: Partial<HlsConfig> & { lowLatencyMode?: boolean } = {
           maxBufferLength: 15,
           maxMaxBufferLength: 60,
           startLevel: -1,
@@ -235,7 +220,7 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
           }
         })
 
-        hls.on(Hls.Events.ERROR, (_event: string, data: Hls.errorData) => {
+        hls.on(Hls.Events.ERROR, (_event: string, data: ErrorData) => {
           if (data.fatal) {
             retryCountRef.current++
 

@@ -53,9 +53,21 @@ function isPasswordStrongEnough(pw: string): boolean {
 export default function AuthDialog({ onClose, closable = true }: AuthDialogProps) {
   const { t } = useTranslation()
   const { login, register, kickedMsg, clearKickedMsg } = useAuth()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const resetTokenFromUrl = searchParams.get('reset_token')
   const verifyTokenFromUrl = searchParams.get('verify_token')
+
+  // 一次性令牌(reset_token / verify_token)从 URL 读入后立即从地址栏清除,
+  // 避免令牌残留在浏览器历史、复制的链接或 Referer 中。
+  useEffect(() => {
+    if (resetTokenFromUrl || verifyTokenFromUrl) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('reset_token')
+      next.delete('verify_token')
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [mode, setMode] = useState<Mode>(
     resetTokenFromUrl ? 'reset' : verifyTokenFromUrl ? 'verify' : 'login'
