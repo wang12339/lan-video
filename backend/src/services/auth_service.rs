@@ -108,7 +108,7 @@ impl AuthService {
             return Ok(auth_err("注册功能已关闭"));
         }
 
-        self.check_rate_limits(&req.username, client_ip, "register")
+        self.check_rate_limits(tenant_id, &req.username, client_ip, "register")
             .await?;
 
         let username = req.username.trim();
@@ -254,7 +254,7 @@ impl AuthService {
         client_ip: &str,
         tenant_id: i64,
     ) -> Result<AuthResponse, ServiceError> {
-        self.check_rate_limits(&req.username, client_ip, "login")
+        self.check_rate_limits(tenant_id, &req.username, client_ip, "login")
             .await?;
 
         // SECURITY (A07-01 / AF-001): close the username-enumeration timing
@@ -653,6 +653,7 @@ impl AuthService {
 
     async fn check_rate_limits(
         &self,
+        tenant_id: i64,
         username: &str,
         client_ip: &str,
         action: &str,
@@ -678,9 +679,11 @@ impl AuthService {
         }
 
         let trimmed = username.trim().to_lowercase();
-        let key_len = "auth:".len() + trimmed.len();
+        let key_len = "auth:".len() + tenant_id.to_string().len() + 1 + trimmed.len();
         let mut key = String::with_capacity(key_len);
         key.push_str("auth:");
+        key.push_str(&tenant_id.to_string());
+        key.push(':');
         key.push_str(&trimmed);
 
         if self.rate_limiter.check(&key).await.is_err() {

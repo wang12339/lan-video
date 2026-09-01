@@ -135,10 +135,29 @@ pub async fn start_playback_session(
     SafeJson(payload): SafeJson<SessionRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     validate_session_request(&payload)?;
+    // 会话只对“存在且属于当前租户”的视频授予。未注册/已删除/跨租户
+    // 视频一律不建会话 —— 跨租户访问的合法通道只有分享链接(cookie)。
+    match state
+        .repos
+        .video
+        .find_by_id(auth_user.tenant_id, payload.video_id)
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Err(error_response(StatusCode::NOT_FOUND, "视频不存在"));
+        }
+        Err(e) => return Err(internal_error_log("session start: find video", &e)),
+    }
     state
         .playback_sessions
-        .start(&auth_user.username, payload.video_id);
-    tracing::info!(user = %auth_user.username, video_id = payload.video_id, "开始播放视频");
+        .start(auth_user.tenant_id, &auth_user.username, payload.video_id);
+    tracing::info!(
+        user = %auth_user.username,
+        video_id = payload.video_id,
+        tenant_id = auth_user.tenant_id,
+        "开始播放视频"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -151,7 +170,7 @@ pub async fn playback_session_heartbeat(
     validate_session_request(&payload)?;
     state
         .playback_sessions
-        .heartbeat(&auth_user.username, payload.video_id);
+        .heartbeat(auth_user.tenant_id, &auth_user.username, payload.video_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -164,7 +183,7 @@ pub async fn stop_playback_session(
     validate_session_request(&payload)?;
     state
         .playback_sessions
-        .stop(&auth_user.username, payload.video_id);
+        .stop(auth_user.tenant_id, &auth_user.username, payload.video_id);
     tracing::info!(user = %auth_user.username, video_id = payload.video_id, "停止播放视频");
     Ok(StatusCode::NO_CONTENT)
 }

@@ -95,6 +95,14 @@ fn tenant_cache() -> &'static Cache<String, Option<TenantContext>> {
     })
 }
 
+/// 使租户缓存立即全部失效(租户禁用/改配置后调用,避免最多 300s
+/// 的后台窗口内解析仍命中旧状态)。调用频率低,全部失效代价可忽略。
+pub fn invalidate_tenant_cache() {
+    if let Some(cache) = TENANT_CACHE.get() {
+        cache.invalidate_all();
+    }
+}
+
 /// Record a cache hit.
 fn record_cache_hit() {
     CACHE_HITS.fetch_add(1, Ordering::Relaxed);
@@ -444,6 +452,8 @@ impl TenantRepository {
         })
         .await?;
 
+        invalidate_tenant_cache();
+
         Ok(())
     }
 
@@ -512,6 +522,9 @@ impl TenantRepository {
                 .execute(&self.pool)
         })
         .await?;
+
+        // 弃用/改配置后必须立即失效缓存,否则继续放行最多 5 分钟
+        invalidate_tenant_cache();
 
         Ok(rows.rows_affected() > 0)
     }
@@ -609,7 +622,9 @@ impl Default for TenantSettings {
     }
 }
 
-fn normalize_host(host: &str) -> String {
+/// 规范化 Host:小写、去 IPv6 方括号内尾随端口、去尾点。
+/// `pub` 供 `benches/tenant_performance.rs`(独立 crate)使用。
+pub fn normalize_host(host: &str) -> String {
     let host = host.trim().to_ascii_lowercase();
     let host = if let Some(after_bracket) = host.strip_prefix('[') {
         after_bracket.split(']').next().unwrap_or(host.as_str())

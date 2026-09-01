@@ -132,10 +132,14 @@ impl TaskQueue {
         .await?;
 
         // Insert job rows for any resolution that has none yet (no-op for
-        // pending/processing/completed rows with a live variant).
+        // pending/processing/completed rows with a live variant). tenant_id is
+        // derived from the video row so transcoded jobs never land in the
+        // default tenant (previously all jobs used DEFAULT 1).
         sqlx::query(
-            "INSERT INTO transcoding_jobs (video_id, status, resolution) \
-             SELECT $1, 'pending', unnest($2::text[]) \
+            "INSERT INTO transcoding_jobs (video_id, status, resolution, tenant_id) \
+             SELECT $1, 'pending', r.res, v.tenant_id \
+             FROM unnest($2::text[]) AS r(res) \
+             JOIN videos v ON v.id = $1 \
              ON CONFLICT (video_id, resolution) DO NOTHING",
         )
         .bind(video_id)
@@ -514,8 +518,8 @@ async fn persist_variants(
 ) -> Result<(), sqlx::Error> {
     for v in variants {
         sqlx::query(
-            "INSERT INTO video_variants (video_id, resolution, file_path, file_size, bitrate, codec) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+            "INSERT INTO video_variants (video_id, resolution, file_path, file_size, bitrate, codec, tenant_id) \
+             SELECT $1, $2, $3, $4, $5, $6, v.tenant_id FROM videos v WHERE v.id = $1 \
              ON CONFLICT (video_id, resolution) DO UPDATE SET \
                  file_path = EXCLUDED.file_path, \
                  file_size = EXCLUDED.file_size, \

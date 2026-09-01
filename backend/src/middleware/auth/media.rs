@@ -186,7 +186,10 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 // the source of truth for active playback sessions. We no longer
                 // query the DB on every range request — that caused O(N) queries
                 // per video where N = number of HTTP range chunks.
-                if !state.playback_sessions.is_active(&username, video_id) {
+                if !state
+                    .playback_sessions
+                    .is_active(tenant_id, &username, video_id)
+                {
                     // SECURITY: a valid share token bound to this video grants
                     // the same access as an active playback session. Check it
                     // before rejecting so that logged-in users following a
@@ -376,6 +379,14 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                             "无效的登录凭证",
                         ));
                     }
+                    // bearer_auth rejects unapproved users; keep media_auth
+                    // consistent so de-approval also revokes media access.
+                    if !u.approved {
+                        return MediaAuthResult::Denied(error_response_response(
+                            StatusCode::FORBIDDEN,
+                            "账号未启用",
+                        ));
+                    }
                     let username_arc: std::sync::Arc<str> = u.username.clone().into();
                     let entry = CachedAuthUser {
                         username: username_arc.clone(),
@@ -403,6 +414,17 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
 #[inline]
 fn extract_video_id_from_path(path: &str) -> Option<i64> {
     let stripped = path.strip_prefix("/media/").unwrap_or(path);
+
+    // Check for /media/hls/{id}/... transcoded HLS layout
+    // (master.m3u8, index.m3u8, segment_NNN.ts). HLS files are NOT public —
+    // they require the same playback session / share token as other media.
+    if let Some(rest) = stripped.strip_prefix("hls/") {
+        if let Some(id_str) = rest.split('/').next() {
+            if let Ok(id) = id_str.parse::<i64>() {
+                return Some(id);
+            }
+        }
+    }
 
     // Check for /media/videos/{id}/... pattern
     let mut parts = stripped.split('/');
@@ -455,7 +477,7 @@ fn extract_video_id_from_path(path: &str) -> Option<i64> {
 
 #[inline]
 fn is_public_static_media_path(path: &str) -> bool {
-    path.starts_with("/media/avatars/") || path.starts_with("/media/hls/")
+    path.starts_with("/media/avatars/")
 }
 
 #[inline]

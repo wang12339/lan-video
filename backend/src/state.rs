@@ -64,40 +64,44 @@ impl PlaybackSessionTracker {
         }
     }
 
+    /// Key contains the tenant so playback sessions can never be shared or
+    /// spoofed across tenants on the same shared media volume.
     #[inline]
-    fn make_key(username: &str, video_id: i64) -> String {
-        let mut key = String::with_capacity(username.len() + 20);
+    fn make_key(tenant_id: i64, username: &str, video_id: i64) -> String {
+        let mut key = String::with_capacity(username.len() + 28);
+        key.push_str(&tenant_id.to_string());
+        key.push(':');
         key.push_str(username);
         key.push(':');
         key.push_str(&video_id.to_string());
         key
     }
 
-    pub fn start(&self, username: &str, video_id: i64) {
-        let key = Self::make_key(username, video_id);
+    pub fn start(&self, tenant_id: i64, username: &str, video_id: i64) {
+        let key = Self::make_key(tenant_id, username, video_id);
         self.sessions.insert(key, Instant::now());
     }
 
-    pub fn heartbeat(&self, username: &str, video_id: i64) {
-        let key = Self::make_key(username, video_id);
+    pub fn heartbeat(&self, tenant_id: i64, username: &str, video_id: i64) {
+        let key = Self::make_key(tenant_id, username, video_id);
         self.sessions.insert(key, Instant::now());
     }
 
-    pub fn stop(&self, username: &str, video_id: i64) {
-        let key = Self::make_key(username, video_id);
+    pub fn stop(&self, tenant_id: i64, username: &str, video_id: i64) {
+        let key = Self::make_key(tenant_id, username, video_id);
         self.sessions.remove(&key);
     }
 
-    pub fn is_active(&self, username: &str, video_id: i64) -> bool {
-        let key = Self::make_key(username, video_id);
+    pub fn is_active(&self, tenant_id: i64, username: &str, video_id: i64) -> bool {
+        let key = Self::make_key(tenant_id, username, video_id);
         self.sessions
             .get(&key)
             .map(|entry| entry.elapsed().as_secs() < SESSION_TIMEOUT_SECS)
             .unwrap_or(false)
     }
 
-    pub fn has_any_active(&self, username: &str) -> bool {
-        let prefix = format!("{}:", username);
+    pub fn has_any_active(&self, tenant_id: i64, username: &str) -> bool {
+        let prefix = format!("{}:{username}:", tenant_id);
         self.sessions
             .iter()
             .any(|e| e.key().starts_with(&prefix) && e.elapsed().as_secs() < SESSION_TIMEOUT_SECS)

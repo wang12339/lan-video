@@ -449,6 +449,19 @@ pub async fn create_danmaku(
         ));
     }
 
+    // 弹幕归属校验:视频必须存在且属于当前租户,否则跨租户注入
+    // "幽灵弹幕"(行写入其他租户可见/不可见状态错乱)。
+    match state
+        .repos
+        .video
+        .find_by_id(auth_user.tenant_id, video_id)
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(error_response(StatusCode::NOT_FOUND, "视频不存在")),
+        Err(e) => return Err(internal_error_log("danmaku: find video", &e)),
+    }
+
     let id = state
         .repos
         .danmaku

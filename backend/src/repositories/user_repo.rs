@@ -388,6 +388,23 @@ impl UserRepository {
         Ok(users)
     }
 
+    /// True iff a user with `user_id` exists inside `tenant_id`.
+    ///
+    /// Admin user-management endpoints MUST call this before acting on a bare
+    /// user id — otherwise a tenant's admin can delete/reset/kick users of
+    /// other tenants (cross-tenant IDOR).
+    ///
+    /// **Index**: `users(id)` PK (filtered by `tenant_id`).
+    pub async fn user_in_tenant(&self, user_id: i64, tenant_id: i64) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2)")
+                .bind(user_id)
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(exists)
+    }
+
     /// Permanently delete a user and all their tokens.
     ///
     /// **SQL**: Two statements in sequence:

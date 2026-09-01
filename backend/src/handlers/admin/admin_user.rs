@@ -48,7 +48,7 @@ pub async fn delete_user(
     let outcome = state
         .services
         .admin
-        .delete_user(id, auth_user.id)
+        .delete_user(id, auth_user.id, auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -89,7 +89,7 @@ pub async fn reset_user_password(
     let outcome = state
         .services
         .admin
-        .reset_user_password(id, &req.password)
+        .reset_user_password(id, &req.password, auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -116,7 +116,7 @@ pub async fn toggle_user_admin(
     let outcome = state
         .services
         .admin
-        .toggle_user_admin(id, auth_user.id)
+        .toggle_user_admin(id, auth_user.id, auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -145,7 +145,7 @@ pub async fn approve_user(
     let outcome = state
         .services
         .admin
-        .approve_user(id, req.approved)
+        .approve_user(id, req.approved, auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -173,7 +173,7 @@ pub async fn kick_user(
     let count = state
         .services
         .admin
-        .kick_user(id)
+        .kick_user(id, auth_user.tenant_id)
         .await
         .map_err(map_admin_err)?;
     tracing::warn!(
