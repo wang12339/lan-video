@@ -190,7 +190,7 @@ mod media;
 pub use media::{media_auth, AuthUser};
 
 #[inline]
-fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
     let auth = headers.get("Authorization")?.to_str().ok()?;
     let (scheme, rest) = auth.trim().split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {

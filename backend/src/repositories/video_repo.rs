@@ -48,7 +48,9 @@ fn push_video_filters(
     builder.push(" AND v.tenant_id = ");
     builder.push_bind(tenant_id);
     if let Some(q) = query {
-        builder.push(" AND v.search_vector @@ plainto_tsquery('chinese', ");
+        // 'simple' 是标准 PostgreSQL 自带配置(zhparser 不一定安装);
+        // 与 search_service 的 tsquery 配置保持一致,避免未装插件时 500。
+        builder.push(" AND v.search_vector @@ plainto_tsquery('simple', ");
         builder.push_bind(q.to_owned());
         builder.push(")");
     }

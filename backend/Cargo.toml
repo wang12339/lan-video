@@ -34,6 +34,13 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder", "hostname", "pool"] }
 sysinfo = "0.30"
 
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "tenant_performance"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1

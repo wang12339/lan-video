@@ -166,11 +166,7 @@ pub async fn logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    let token = headers
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
+    let token = auth_mw::extract_bearer_token(&headers)
         .or_else(|| auth_mw::extract_token_from_cookie(&headers));
 
     state.services.auth.logout(None, token.as_deref()).await;
@@ -450,7 +446,12 @@ pub async fn reset_password(
         .map_err(|e| internal_error_log("find_valid_reset_token", &e))?
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "重置链接无效或已过期"))?;
 
-    let hash = crate::util::password::hash(password)
+    // Argon2 哈希是 CPU 密集(约 100ms),必须移到 blocking 池,
+    // 否则会卡住 async worker(与 auth_service 的 reset 路径一致)。
+    let password_owned = password.to_string();
+    let hash = tokio::task::spawn_blocking(move || crate::util::password::hash(&password_owned))
+        .await
+        .map_err(|e| internal_error_log("password hash join error", &e))?
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "密码处理失败"))?;
 
     let updated = state
