@@ -278,6 +278,35 @@ pub async fn build_router(config: AppConfig) -> Router {
         });
     }
 
+    // Media integrity sweep: DB rows whose local media file disappeared
+    // (manual cleanup, disk loss, failed migration) are deleted so dead
+    // videos stop showing up in the homepage / recommendations. First pass
+    // after 10 minutes to avoid racing startup scans, then hourly.
+    {
+        let video_service = state.services.video.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(600)).await;
+                match video_service.sweep_missing_video_files().await {
+                    Ok(0) => {
+                        tracing::debug!("media integrity sweep: no missing files");
+                    }
+                    Ok(n) => {
+                        tracing::warn!(
+                            removed = n,
+                            "media integrity sweep: removed video rows with missing media files"
+                        );
+                        state.invalidate_caches();
+                    }
+                    Err(e) => {
+                        tracing::error!("media integrity sweep failed: {}", e)
+                    }
+                }
+            }
+        });
+    }
+
     // Background thumbnail backfill for videos without covers
     {
         let svc = media_service.clone();

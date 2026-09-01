@@ -451,6 +451,63 @@ impl VideoService {
         Ok(deleted)
     }
 
+    /// 后台一致性清扫:DB 有 `local_video` 记录、但 `stream_url` 指向的物理
+    /// 文件已不存在(磁盘清理、人工删除、迁移事故等)的“死视频”,立即从
+    /// 数据库中删除以避免 404 视频仍然出现在主页/推荐/列表中。
+    ///
+    /// # 行为
+    /// - 仅处理 `source_type = 'local_video'`(外链视频不检查)
+    /// - 路径做词法校验(仅防御性;路径本身由 `sanitize_filename` 生成)
+    /// - 每个缺失视频删除整行记录(DB 级联,见 `batch_delete_videos`)
+    /// - 物理文件已缺失,无需清理;调用方应在发现删除后失效全部缓存
+    ///
+    /// # 返回
+    /// 删除的视频记录数
+    pub async fn sweep_missing_video_files(&self) -> Result<usize, ServiceError> {
+        let rows = self.repo.list_local_video_media().await?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let media_root = self.config.media_root.clone();
+        let missing = tokio::task::spawn_blocking(move || {
+            rows.into_iter()
+                .filter(|(_, _, url)| {
+                    let Some(relative) = url.strip_prefix("/media/") else {
+                        // 非 /media 前缀(如外部直链)不属于本地文件,跳过
+                        return false;
+                    };
+                    if relative.is_empty() || relative.split('/').any(|c| c == ".." || c == ".") {
+                        tracing::warn!(url = %url, "sweep: skipping traversal-like media path");
+                        return false;
+                    }
+                    !media_root.join(relative).exists()
+                })
+                .map(|(id, tenant_id, _)| (tenant_id, id))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+
+        if missing.is_empty() {
+            return Ok(0);
+        }
+        tracing::warn!(
+            count = missing.len(),
+            "sweep_missing_video_files: deleting video rows whose media file no longer exists"
+        );
+        let mut deleted = 0usize;
+        for (tenant_id, id) in &missing {
+            match self.repo.batch_delete_videos(*tenant_id, &[*id]).await {
+                Ok(n) if n > 0 => deleted += 1,
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!(video_id = %id, error = %e, "sweep: failed to delete video row")
+                }
+            }
+        }
+        Ok(deleted)
+    }
+
     /// 更新视频信息
     ///
     /// # 参数
