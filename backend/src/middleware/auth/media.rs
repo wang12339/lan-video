@@ -210,7 +210,7 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                                 "播放会话已过期，请重新播放",
                             );
                         }
-                        Err(resp) => return resp,
+                        Err(resp) => return *resp,
                     }
                 }
 
@@ -332,7 +332,7 @@ async fn share_token_authorizes(
     uri: &axum::http::Uri,
     headers: &HeaderMap,
     video_id: i64,
-) -> Result<bool, Response> {
+) -> Result<bool, Box<Response>> {
     let Some(share_token) = extract_share_token(uri)
         .or_else(|| extract_share_token_from_cookie(headers))
         .filter(|t| is_valid_share_token(t))
@@ -345,10 +345,10 @@ async fn share_token_authorizes(
         Ok(None) => Ok(false),
         Err(e) => {
             tracing::error!("DB error validating share token: {}", e);
-            Err(error_response_response(
+            Err(Box::new(error_response_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error",
-            ))
+            )))
         }
     }
 }

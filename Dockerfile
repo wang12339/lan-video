@@ -15,9 +15,9 @@ RUN npm ci --no-audit --no-fund
 COPY webapp/ .
 RUN npm run build
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
+    libssl3t64 \
     ffmpeg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

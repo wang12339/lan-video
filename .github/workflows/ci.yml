@@ -156,7 +156,9 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
         working-directory: ./backend
-        run: cargo audit
+        run: |
+          cp audit.toml "$CARGO_HOME/audit.toml"
+          cargo audit
 
   # ─── 前端安全审计 (npm audit) ─────────────────────────────────────
   frontend-audit:

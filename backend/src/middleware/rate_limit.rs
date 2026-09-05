@@ -58,6 +58,10 @@ struct RateLimitEntry {
     blocked_until: Option<Instant>,
 }
 
+/// Marker error returned when a request is rate-limited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimited;
+
 /// Rate limiter with optional Redis persistence.
 ///
 /// When Redis is configured, rate-limit state survives server restarts.
@@ -97,8 +101,8 @@ impl RateLimiter {
     }
 
     /// Atomically check and increment rate limit for the given key.
-    /// Returns Ok(()) if allowed, Err(()) if rate-limited.
-    pub async fn check(&self, key: &str) -> Result<(), ()> {
+    /// Returns Ok(()) if allowed, Err(RateLimited) if rate-limited.
+    pub async fn check(&self, key: &str) -> Result<(), RateLimited> {
         self.check_with(
             key,
             RATE_LIMIT_MAX_ATTEMPTS,
@@ -115,7 +119,7 @@ impl RateLimiter {
         max_attempts: u32,
         window_secs: u64,
         block_secs: u64,
-    ) -> Result<(), ()> {
+    ) -> Result<(), RateLimited> {
         if let Some(redis) = &self.redis {
             match self
                 .check_redis(redis, key, max_attempts, window_secs, block_secs)
@@ -136,7 +140,7 @@ impl RateLimiter {
     }
 
     /// Redis-backed rate limiting via Lua script (atomic).
-    /// Returns Ok(Ok(())) if allowed, Ok(Err(())) if rate-limited,
+    /// Returns Ok(Ok(())) if allowed, Ok(Err(RateLimited)) if rate-limited,
     /// Err(msg) if Redis communication failed.
     async fn check_redis(
         &self,
@@ -145,7 +149,7 @@ impl RateLimiter {
         max_attempts: u32,
         window_secs: u64,
         block_secs: u64,
-    ) -> Result<Result<(), ()>, String> {
+    ) -> Result<Result<(), RateLimited>, String> {
         let counter_key = format!("rl:c:{}", key);
         let block_key = format!("rl:b:{}", key);
 
@@ -164,7 +168,7 @@ impl RateLimiter {
         match result {
             -1 => {
                 tracing::warn!(key = %log_safe(key), "rate limited: blocked (Redis)");
-                Ok(Err(()))
+                Ok(Err(RateLimited))
             }
             -2 => {
                 tracing::warn!(
@@ -173,7 +177,7 @@ impl RateLimiter {
                     block_secs = block_secs,
                     "rate limit exceeded, blocking (Redis)"
                 );
-                Ok(Err(()))
+                Ok(Err(RateLimited))
             }
             _ => Ok(Ok(())),
         }
@@ -186,7 +190,7 @@ impl RateLimiter {
         max_attempts: u32,
         window_secs: u64,
         block_secs: u64,
-    ) -> Result<(), ()> {
+    ) -> Result<(), RateLimited> {
         let now = Instant::now();
 
         if let Some(mut slot) = self.cache.get_mut(key) {
@@ -195,7 +199,7 @@ impl RateLimiter {
             if let Some(until) = entry.blocked_until {
                 if now < until {
                     tracing::warn!(key = %log_safe(key), "rate limited: blocked (memory)");
-                    return Err(());
+                    return Err(RateLimited);
                 }
                 entry.count = 0;
                 entry.blocked_until = None;
@@ -218,7 +222,7 @@ impl RateLimiter {
                     block_secs = block_secs,
                     "rate limit exceeded, blocking"
                 );
-                return Err(());
+                return Err(RateLimited);
             }
             return Ok(());
         }
@@ -238,7 +242,7 @@ impl RateLimiter {
         if let Some(until) = entry.blocked_until {
             if now < until {
                 tracing::warn!(key = %log_safe(key), "rate limited: blocked (memory)");
-                return Err(());
+                return Err(RateLimited);
             }
             entry.count = 0;
             entry.blocked_until = None;
@@ -261,7 +265,7 @@ impl RateLimiter {
                 block_secs = block_secs,
                 "rate limit exceeded, blocking"
             );
-            Err(())
+            Err(RateLimited)
         } else {
             Ok(())
         }

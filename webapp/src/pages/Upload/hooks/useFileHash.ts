@@ -66,7 +66,11 @@ export async function computeContentHash(file: File, isCancelled: () => boolean)
   // 小文件用 WebCrypto 一次性摘要;大文件绝不可 `file.arrayBuffer()`
   // 整读(50GB 视频会直接 OOM),必须走流式分块。
   if (subtle && file.size <= SMALL_FILE_BYTES) {
-    return hexFromBuffer(await subtle.digest('SHA-256', await file.arrayBuffer()))
+    // 必须包一层 Uint8Array:jsdom 等环境下 Blob.arrayBuffer() 返回的是
+    // 另一个 realm 的 ArrayBuffer,WebCrypto 的 instanceof 检查会拒绝
+    // (Node 20 实测),TypedArray 视图走 ArrayBuffer.isView 检查,跨 realm 安全。
+    const buf = await file.arrayBuffer()
+    return hexFromBuffer(await subtle.digest('SHA-256', new Uint8Array(buf)))
   }
   if (!verifyStreamingHash()) {
     throw new Error('File hashing is not supported in this environment')

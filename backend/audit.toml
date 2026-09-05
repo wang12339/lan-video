@@ -1,0 +1,16 @@
+# cargo-audit 配置
+# 已修复项无需列出;此处仅忽略当前无法通过升级消除的漏洞。
+# 注意: 本版本 cargo-audit 只读 $CARGO_HOME/audit.toml,
+# CI 中由 ci.yml 将本文件拷贝过去。
+[advisories]
+ignore = [
+    # protobuf 2.28.0 (RUSTSEC-2024-0437, 不受控递归崩溃)
+    # 传递依赖: prometheus 0.13.4 → protobuf 2.x。prometheus 仅序列化自身
+    # 产生的指标数据,从不解析外部输入的 protobuf,不可达。
+    # prometheus 无使用 protobuf 3 的兼容版本,升级需等上游。
+    "RUSTSEC-2024-0437",
+    # rsa 0.9.x (RUSTSEC-2023-0071, Marvin 时序侧信道)
+    # 无修复版本。该依赖仅出现在非 Linux 目标平台的依赖闭包中
+    # (cargo tree -i rsa 在默认目标下为空),部署镜像为 Linux,不参与编译。
+    "RUSTSEC-2023-0071",
+]
