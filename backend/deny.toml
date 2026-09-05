@@ -1,10 +1,22 @@
+# cargo-deny 0.20+ (advisories/licenses v2 schema):
+# severity 开关键已移除 — 漏洞始终检查(unmaintained 级别固定), 
+# 许可证未列出即拒绝。
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-notice = "warn"
+version = 2
+ignore = [
+    # protobuf 2.28.0 (RUSTSEC-2024-0437, 不受控递归崩溃)
+    # 传递依赖: prometheus 0.13.4 → protobuf 2.x。prometheus 仅序列化自身
+    # 产生的指标数据,从不解析外部输入的 protobuf,不可达。
+    # prometheus 无使用 protobuf 3 的兼容版本,升级需等上游。
+    "RUSTSEC-2024-0437",
+    # rsa 0.9.x (RUSTSEC-2023-0071, Marvin 时序侧信道)
+    # 无修复版本。该依赖仅出现在非 Linux 目标平台的依赖闭包中
+    # (cargo tree -i rsa 在默认目标下为空),部署镜像为 Linux,不参与编译。
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
-unlicensed = "denon"
+version = 2
 allow = [
     "MIT",
     "Apache-2.0",
@@ -13,6 +25,7 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Zlib",
+    "0BSD",
     "Unicode-3.0",
     "MPL-2.0",
     "CC0-1.0",
