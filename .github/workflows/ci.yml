@@ -226,7 +226,7 @@ jobs:
 
       # 不推送，仅验证镜像能成功构建（gha cache 加速重复构建）
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -301,7 +301,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
