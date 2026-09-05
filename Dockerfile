@@ -5,6 +5,7 @@ COPY backend/Cargo.toml backend/Cargo.lock ./
 RUN mkdir -p src benches && echo 'fn main() {}' > src/main.rs && echo 'fn main() {}' > benches/tenant_performance.rs && cargo build --release --locked && rm -rf src benches
 COPY backend/src ./src
 COPY backend/benches ./benches
+COPY backend/templates ./templates
 RUN touch src/main.rs && cargo build --release --locked
 
 FROM node:20-slim AS frontend-builder
@@ -23,6 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=backend-builder /app/target/release/atmos-video /usr/local/bin/
 COPY --from=frontend-builder /app/dist /var/lib/atmos/webapp
+
+# db.rs 运行时从 CARGO_MANIFEST_DIR(烧录为 /app)/migrations 自动发现迁移
+WORKDIR /app
+COPY backend/migrations /app/migrations
 
 ENV WEBAPP_ROOT=/var/lib/atmos/webapp
 ENV MEDIA_ROOT=/var/lib/atmos/media
