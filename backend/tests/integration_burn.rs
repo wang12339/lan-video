@@ -1,13 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! 阅后即焚（burn after watch）集成测试。
+//! 阅后即焚（burn after watch）集成测试 —— 平台全局行为。
 //!
-//! 需要 PostgreSQL（`DATABASE_URL`）。覆盖：
-//! - 未启用阅后即焚的视频 → 400
-//! - 无播放进度 / 进度不足 → 403
-//! - 完整观看（≥90%）→ 204，且物理文件与数据库记录真正被删除
-//! - 上传者本人观看 → 403
-//! - 未认证 → 401
-//! - 焚毁后再次访问 → 404
+//! 需要 PostgreSQL（`DATABASE_URL`）。语义：
+//! - 适用于**所有**视频（含存量视频，无 per-video 开关）
+//! - 不区分用户：上传者本人观看同样触发
+//! - 必须完整观看（播放进度 ≥90%；时长未知时有播放记录即可）
+//! - 删除为物理级（主文件/变体/封面/缩略图）+ 数据库级联，不可恢复
 
 mod integration_test_helpers;
 
@@ -63,7 +61,6 @@ async fn send_json(
     (status, value)
 }
 
-/// 创建"上传者 + 已启用阅后即焚的视频 + 观看者"
 struct BurnFixture {
     state: Arc<AppState>,
     app: axum::Router,
@@ -72,20 +69,14 @@ struct BurnFixture {
     viewer: (String, String, i64),
 }
 
-async fn setup_burn_video() -> BurnFixture {
+/// 普通视频（未做任何阅后即焚设置——全局语义下存量视频同样可焚毁）
+async fn setup_video() -> BurnFixture {
     let state = test_app_state().await;
     let app = build_test_app().await;
 
     let uploader = create_test_user_with_credentials(&state, "burn_owner").await;
     let viewer = create_test_user_with_credentials(&state, "burn_view").await;
     let video_id = create_test_video_owned_by(&state, "burn", uploader.2).await;
-
-    state
-        .repos
-        .video
-        .set_burn_after_watch(1, video_id, true)
-        .await
-        .expect("set burn flag");
 
     BurnFixture {
         state,
@@ -101,40 +92,12 @@ fn hash_id(id: i64) -> String {
 }
 
 #[tokio::test]
-async fn test_burn_requires_flag() {
-    let Some(_) = database_url() else {
-        eprintln!("DATABASE_URL not set, skipping");
-        return;
-    };
-    let state = test_app_state().await;
-    let app = build_test_app().await;
-    let (username, _pw, user_id, token) =
-        create_test_user_with_credentials(&state, "burn_noflag").await;
-    let video_id = create_test_video_owned_by(&state, "burn_noflag", user_id).await;
-    let id_param = hash_id(video_id);
-
-    let (status, body) = send_json(
-        &app,
-        Method::POST,
-        &format!("/videos/{id_param}/burn"),
-        Some(&token),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
-    assert_eq!(body["error"], json!("该视频未启用阅后即焚"));
-
-    cleanup_test_user(state.repos.video.pool(), &username).await;
-    cleanup_test_video(state.repos.video.pool(), video_id).await;
-}
-
-#[tokio::test]
 async fn test_burn_requires_watch_progress() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let fx = setup_burn_video().await;
+    let fx = setup_video().await;
     let id_param = hash_id(fx.video_id);
 
     // 无任何播放记录 → 403
@@ -147,8 +110,9 @@ async fn test_burn_requires_watch_progress() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert_eq!(body["error"], json!("需完整观看后才能焚毁"));
 
-    // 进度 50% → 403
+    // 进度 50% → 403；视频仍然存在
     fx.state
         .repos
         .playback
@@ -164,7 +128,15 @@ async fn test_burn_requires_watch_progress() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
-    assert_eq!(body["error"], json!("需完整观看后才能焚毁"));
+    let (status, _) = send_json(
+        &fx.app,
+        Method::GET,
+        &format!("/videos/{id_param}"),
+        Some(&fx.viewer.1),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "进度不足时视频必须仍存在");
 
     cleanup_test_user(fx.state.repos.video.pool(), &fx.viewer.0).await;
     cleanup_test_user(fx.state.repos.video.pool(), &fx.uploader.0).await;
@@ -172,22 +144,22 @@ async fn test_burn_requires_watch_progress() {
 }
 
 #[tokio::test]
-async fn test_burn_uploader_exempt() {
+async fn test_burn_no_user_distinction_owner_also_burns() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let fx = setup_burn_video().await;
+    let fx = setup_video().await;
     let id_param = hash_id(fx.video_id);
 
-    // 上传者自己即使看完也不触发焚毁
+    // 上传者本人完整观看同样触发焚毁（不区分用户）
     fx.state
         .repos
         .playback
         .upsert_playback(1, &fx.uploader.0, fx.video_id, 100_000, 100_000)
         .await
         .expect("seed full progress for owner");
-    let (status, body) = send_json(
+    let (status, _) = send_json(
         &fx.app,
         Method::POST,
         &format!("/videos/{id_param}/burn"),
@@ -195,10 +167,8 @@ async fn test_burn_uploader_exempt() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
-    assert_eq!(body["error"], json!("上传者观看不会触发阅后即焚"));
+    assert_eq!(status, StatusCode::NO_CONTENT, "上传者完整观看后必须焚毁");
 
-    // 视频仍然存在
     let (status, _) = send_json(
         &fx.app,
         Method::GET,
@@ -207,7 +177,7 @@ async fn test_burn_uploader_exempt() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "上传者观看后视频必须仍存在");
+    assert_eq!(status, StatusCode::NOT_FOUND, "焚毁后视频必须 404");
 
     cleanup_test_user(fx.state.repos.video.pool(), &fx.viewer.0).await;
     cleanup_test_user(fx.state.repos.video.pool(), &fx.uploader.0).await;
@@ -220,7 +190,7 @@ async fn test_burn_requires_auth() {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let fx = setup_burn_video().await;
+    let fx = setup_video().await;
     let id_param = hash_id(fx.video_id);
 
     let (status, _) = send_json(
@@ -244,7 +214,7 @@ async fn test_burn_deletes_video_and_physical_files() {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let fx = setup_burn_video().await;
+    let fx = setup_video().await;
     let id_param = hash_id(fx.video_id);
 
     // 为该视频创建真实的本地物理文件（主文件 + 变体 + 封面），验证真删除

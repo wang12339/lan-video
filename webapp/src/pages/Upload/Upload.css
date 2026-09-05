@@ -262,62 +262,6 @@
   font-weight: 500;
 }
 
-/* 阅后即焚开关 */
-.upload-burn-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  cursor: pointer;
-  user-select: none;
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.upload-burn-toggle:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-.upload-burn-toggle:has(input:checked) {
-  border-color: rgba(245, 158, 11, 0.55);
-  background: rgba(245, 158, 11, 0.08);
-}
-
-.upload-burn-toggle input {
-  accent-color: #f59e0b;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-
-.upload-burn-toggle__mark {
-  font-size: 16px;
-}
-
-.upload-burn-toggle__text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.upload-burn-toggle__text strong {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text1, #eee);
-}
-
-.upload-burn-toggle__text small {
-  font-size: 12px;
-  color: var(--text2, #999);
-}
-
-.upload-burn-toggle input:disabled ~ .upload-burn-toggle__text {
-  opacity: 0.5;
-}
-
 .cat-dot {
   display: flex;
   align-items: center;

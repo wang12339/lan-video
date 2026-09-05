@@ -16,7 +16,6 @@ interface Video {
   duration?: number;
   date?: string;
   progress?: number;
-  burnAfterWatch?: boolean;
 }
 
 interface VideoCardProps {
@@ -149,11 +148,6 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
           </div>
         </div>
         {durationBadge}
-        {video.burnAfterWatch && (
-          <span className="video-badge-burn" aria-label={t('video.burnAfterWatch')} title={t('video.burnAfterWatch')}>
-            🔥 {t('video.burnAfterWatch')}
-          </span>
-        )}
         {progressBar}
       </div>
       <div className="video-info">

@@ -669,7 +669,7 @@ pub fn spec() -> serde_json::Value {
                 "post": {
                     "summary": "Burn video after watch",
                     "operationId": "burnVideo",
-                    "description": "阅后即焚：为启用 burn_after_watch 的视频执行永久删除（物理文件 + 数据库记录）。要求调用者不是上传者，且对该视频的播放进度 ≥ 90%。视频未启用时返回 400，未完整观看返回 403。",
+                    "description": "阅后即焚（平台全局行为）：永久删除该视频（物理文件 + 数据库记录）。适用于所有视频、所有用户（含上传者与存量视频）。要求调用者对该视频的播放进度 ≥ 90%，未完整观看返回 403。",
                     "parameters": [
                         {
                             "name": "id",
@@ -682,17 +682,9 @@ pub fn spec() -> serde_json::Value {
                     "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "204": { "description": "Video permanently deleted" },
-                        "400": {
-                            "description": "Video does not have burn-after-watch enabled",
-                            "content": {
-                                "application/json": {
-                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-                                }
-                            }
-                        },
                         "401": { "$ref": "#/components/responses/Unauthorized" },
                         "403": {
-                            "description": "Caller is the uploader, or has not fully watched the video",
+                            "description": "Caller has not fully watched the video",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/ErrorResponse" }

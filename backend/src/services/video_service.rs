@@ -102,26 +102,13 @@ impl VideoService {
         Ok(row.map(VideoItem::from))
     }
 
-    /// 设置（或清除）视频的阅后即焚标记（上传入口在创建记录后调用）。
-    pub async fn set_burn_after_watch(
-        &self,
-        tenant_id: i64,
-        id: i64,
-        flag: bool,
-    ) -> Result<bool, ServiceError> {
-        self.repo
-            .set_burn_after_watch(tenant_id, id, flag)
-            .await
-            .map_err(ServiceError::from)
-    }
-
-    /// 阅后即焚：非上传者用户完整观看后，永久删除该视频。
+    /// 阅后即焚（平台全局行为）：任何用户完整观看后，永久删除该视频。
     ///
-    /// # 触发条件（全部满足才执行删除）
-    /// - 视频存在且 `burn_after_watch = true`
-    /// - 请求者不是上传者（上传者可自由预览，不会误删自己的视频）
+    /// # 触发条件
+    /// - 视频存在
     /// - 请求者对该视频存在播放进度，且已观看 ≥ [`BURN_WATCH_THRESHOLD`]
     ///   （时长未知时退化为"有播放记录即可"）
+    /// - 不区分用户：上传者本人观看同样触发；存量视频同样生效
     ///
     /// # 删除行为
     /// - 数据库：`delete_video_cascade`（视频行 + 播放历史/点赞/收藏/评论/
@@ -132,7 +119,6 @@ impl VideoService {
         &self,
         tenant_id: i64,
         username: &str,
-        user_id: i64,
         video_id: i64,
     ) -> Result<(), ServiceError> {
         let video = self
@@ -140,12 +126,6 @@ impl VideoService {
             .find_by_id(tenant_id, video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
-        if !video.burn_after_watch {
-            return Err(ServiceError::BadRequest("该视频未启用阅后即焚".into()));
-        }
-        if video.uploader_id == Some(user_id) {
-            return Err(ServiceError::Forbidden("上传者观看不会触发阅后即焚".into()));
-        }
 
         let (position_ms, duration_ms) = self
             .playback

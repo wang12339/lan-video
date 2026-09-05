@@ -147,16 +147,14 @@ export async function deleteVideo(id: string): Promise<void> {
 }
 
 /**
- * 阅后即焚：完整观看后永久删除视频
+ * 阅后即焚（平台全局行为）：完整观看后永久删除视频
  *
- * 仅对启用阅后即焚的视频生效。要求：
- * - 调用者不是该视频的上传者
- * - 调用者对该视频的播放进度 ≥ 90%
- *
- * 删除为物理级（主文件/转码变体/封面/缩略图）+ 数据库级联，不可恢复。
+ * 适用于所有视频、所有用户（含上传者与存量视频）。要求调用者对该视频
+ * 的播放进度 ≥ 90%。删除为物理级（主文件/转码变体/封面/缩略图）+
+ * 数据库级联，不可恢复。
  *
  * @param id - 视频唯一标识符（Hash ID 格式）
- * @throws {APIError} 400 未启用阅后即焚；403 未完整观看或为上传者；404 视频不存在
+ * @throws {APIError} 403 未完整观看；404 视频不存在
  */
 export async function burnVideo(id: string): Promise<void> {
   await request(`/videos/${id}/burn`, { method: 'POST', auth: true });
@@ -442,7 +440,6 @@ function sanitizeHeaderValue(value: string): string {
  * @param fileName - 原始文件名，会经过安全清理
  * @param totalSize - 文件总大小（字节）
  * @param category - 视频分类
- * @param burnAfterWatch - 是否启用阅后即焚（完整观看后服务端永久删除）
  * @param chunk - 文件分片数据（Blob 对象）
  * @returns 包含已接收字节数和可选视频 ID 的对象
  * @throws {RequestError} 当权限不足、参数无效或网络请求失败时抛出（但 silent 模式不会弹 Toast）
@@ -474,8 +471,7 @@ export async function uploadResumeChunk(
   fileName: string,
   totalSize: number,
   category: string,
-  chunk: Blob,
-  burnAfterWatch = false
+  chunk: Blob
 ): Promise<{ received: number; id?: string }> {
    const headers: Record<string, string> = {
     'x-upload-hash': hash,
@@ -483,7 +479,6 @@ export async function uploadResumeChunk(
     'x-upload-size': String(totalSize),
     'x-upload-category': sanitizeHeaderValue(category),
   };
-  if (burnAfterWatch) headers['x-upload-burn'] = '1';
   // Blob 直传复用 request()：统一超时、后端中文错误本地化（保留中文原文）、
   // 401 触发全局登出。silent：分片失败由上传页按文件展示 errorMsg，不弹 Toast；
   // noInvalidate：分片请求是高频写，不能每个分片都清空 /videos 缓存。

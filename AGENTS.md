@@ -109,7 +109,7 @@ The backend reads from `.env` (loaded by `dotenvy`). Key vars with non-obvious d
 - `backend/src/db.rs:6-36` — migration auto-discovery (`migrations_dir_or_default`, `discover_migrations`)
 - `backend/src/app.rs` — route definitions with middleware layers (global stack at the bottom of `build_router`; route groups: public → auth → video → playback → upload → admin → internal → docs)
 - `backend/src/openapi.rs` + `backend/tests/openapi_route_tests.rs` — hand-written OpenAPI spec + route↔spec consistency test (keep in sync with `app.rs`)
-- `backend/migrations/` — 50 auto-discovered migrations; latest is `050_burn_after_watch.sql`
+- `backend/migrations/` — 51 auto-discovered migrations; latest is `051_drop_burn_after_watch_column.sql`
 - `backend/tests/` — DB-gated integration tests: `http_integration.rs`, `integration_auth.rs`, `integration_videos.rs`, `integration_test_helpers.rs`; offline tests: `openapi_route_tests.rs`, `service_content_tests.rs`, `service_media_tests.rs`, `service_misc_tests.rs`, `test_*.rs`
 - `webapp/vite.config.ts` — dev proxy config and build settings
 - `webapp/src/test/` — Vitest unit tests (`npm test`)

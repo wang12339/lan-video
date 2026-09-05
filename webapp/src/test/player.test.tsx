@@ -18,6 +18,7 @@ vi.mock('../api', async (importOriginal) => {
     incrementViews: vi.fn(),
     savePlayback: vi.fn(),
     deleteVideo: vi.fn(),
+    burnVideo: vi.fn().mockResolvedValue(undefined),
     startPlaybackSession: vi.fn(),
     heartbeatPlaybackSession: vi.fn(),
     stopPlaybackSession: vi.fn(),

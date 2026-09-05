@@ -269,7 +269,7 @@ pub async fn get_favorite_status(
 
 /// POST /videos/{id}/burn — 阅后即焚：完整观看后永久删除视频
 ///
-/// 仅对 `burn_after_watch = true` 的视频生效；上传者本人观看不触发；
+/// 平台全局行为：适用于所有视频、所有用户（含上传者与存量视频）；
 /// 请求者需有 ≥90% 的播放进度。删除为物理级（主文件/变体/封面/缩略图）
 /// 加数据库级联，不可恢复。
 pub async fn burn_video(
@@ -282,7 +282,7 @@ pub async fn burn_video(
     state
         .services
         .video
-        .burn_after_watch(auth_user.tenant_id, &auth_user.username, auth_user.id, id)
+        .burn_after_watch(auth_user.tenant_id, &auth_user.username, id)
         .await
         .map_err(|e| match e {
             // 用户可见的校验失败（400/403/404）原样透传；其余记日志转 500

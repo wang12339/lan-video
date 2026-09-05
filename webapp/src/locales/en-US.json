@@ -236,7 +236,7 @@
     "replay": "Replay",
     "nextVideo": "Next",
     "burnConfirmTitle": "Burn-after-watch video",
-    "burnConfirmMessage": "This video burns after watch: it will be permanently deleted once you finish watching. This cannot be undone. Continue?",
+    "burnConfirmMessage": "This video will be permanently deleted once you finish watching. This cannot be undone. Continue?",
     "burnWatch": "Start watching",
     "burnedTitle": "Video burned",
     "burnedMessage": "You finished watching and the video has been permanently deleted.",
@@ -348,9 +348,7 @@
     "view": "View",
     "retryTitle": "Re-upload (resumes from where it stopped)",
     "remove": "Remove",
-    "removeAria": "Remove {{name}}",
-    "burnAfterWatch": "Burn after watch",
-    "burnAfterWatchHint": "This video will be permanently deleted (including all renditions and cover) after another user finishes watching it. This cannot be undone."
+    "removeAria": "Remove {{name}}"
   },
   "comments": {
     "title": "Comments",
@@ -953,8 +951,5 @@
     "syncNow": "Sync now",
     "seconds": "s",
     "minutes": "m"
-  },
-  "video": {
-    "burnAfterWatch": "Burn after watch"
   }
 }

@@ -174,12 +174,10 @@ const Player = memo(function Player() {
 
   const [videoEnded, setVideoEnded] = useState(false)
 
-  // ── 阅后即焚 ──
-  // 上传者可自由预览不触发；分享链接（cookie 会话）无 bearer 令牌，无法调用
-  // 焚毁接口，因此只在登录态 + 非上传者时启用确认门与自动焚毁。
-  const isBurnVideo = !!video?.burnAfterWatch
-  const isBurnUploader = !!(user?.id && video?.uploaderId && user.id === video.uploaderId)
-  const burnGateNeeded = isBurnVideo && !isShared && !!user && !isBurnUploader
+  // ── 阅后即焚（平台全局行为）──
+  // 所有视频、所有用户（含上传者）看完即焚毁。分享链接（cookie 会话）无
+  // bearer 令牌无法调用焚毁接口，因此分享模式不启用确认门与自动焚毁。
+  const burnGateNeeded = !isShared && !!user
   const [burnConfirmOpen, setBurnConfirmOpen] = useState(false)
   const [burnArmed, setBurnArmed] = useState(false)
   const [burned, setBurned] = useState(false)

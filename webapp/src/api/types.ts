@@ -46,8 +46,6 @@ export interface Video {
   createdAt: string;
   watchPosition?: number;
   hasVariants?: boolean;
-  /** 阅后即焚：完整观看后该视频将被永久删除 */
-  burnAfterWatch?: boolean;
   uploaderId?: string;
 }
 
@@ -130,8 +128,6 @@ export interface MappedVideo {
   date: string;
   progress: number;
   hasVariants?: boolean;
-  /** 阅后即焚：完整观看后该视频将被永久删除 */
-  burnAfterWatch?: boolean;
   uploaderId?: string;
 }
 

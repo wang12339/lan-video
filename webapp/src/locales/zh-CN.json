@@ -236,7 +236,7 @@
     "replay": "重播",
     "nextVideo": "下一个",
     "burnConfirmTitle": "阅后即焚视频",
-    "burnConfirmMessage": "该视频为阅后即焚：完整观看结束后将被永久删除且无法恢复。确定要观看吗？",
+    "burnConfirmMessage": "该视频观看结束后将被永久删除且无法恢复。确定要观看吗？",
     "burnWatch": "开始观看",
     "burnedTitle": "视频已焚毁",
     "burnedMessage": "该视频已完成观看并被永久删除。",
@@ -348,9 +348,7 @@
     "view": "查看",
     "retryTitle": "重新上传（自动从已传位置续传）",
     "remove": "移除",
-    "removeAria": "移除 {{name}}",
-    "burnAfterWatch": "阅后即焚",
-    "burnAfterWatchHint": "其他用户完整观看该视频后，将被永久删除（含所有清晰度与封面），不可恢复"
+    "removeAria": "移除 {{name}}"
   },
   "comments": {
     "title": "评论",
@@ -953,8 +951,5 @@
     "syncNow": "立即同步",
     "seconds": "秒",
     "minutes": "分"
-  },
-  "video": {
-    "burnAfterWatch": "阅后即焚"
   }
 }

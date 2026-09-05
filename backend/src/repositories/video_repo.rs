@@ -32,8 +32,8 @@ pub type LocalVideoValues<'a> = (
 );
 
 /// Explicit columns for VideoRow — avoids SELECT * fetching unnecessary data
-const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id, burn_after_watch";
-const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id, v.burn_after_watch";
+const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id";
+const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id";
 
 fn push_video_filters(
     builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
@@ -124,8 +124,6 @@ pub struct VideoRow {
     pub watch_position: Option<i64>,
     #[sqlx(default)]
     pub has_variants: bool,
-    #[sqlx(default)]
-    pub burn_after_watch: bool,
 }
 
 impl From<VideoRow> for VideoItem {
@@ -143,7 +141,6 @@ impl From<VideoRow> for VideoItem {
             duration: r.duration,
             watch_position: r.watch_position,
             has_variants: r.has_variants,
-            burn_after_watch: r.burn_after_watch,
             uploader_id: r.uploader_id,
             created_at: r.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         }
@@ -1180,32 +1177,6 @@ impl VideoRepository {
     }
 
     // ── Variant / transcode helpers ──
-
-    /// 设置（或清除）视频的阅后即焚标记。
-    ///
-    /// # SQL
-    /// ```sql
-    /// UPDATE videos SET burn_after_watch = $1 WHERE id = $2 AND tenant_id = $3
-    /// ```
-    ///
-    /// # 返回
-    /// - `Ok(true)`：标记已更新
-    /// - `Ok(false)`：视频不存在（0 行受影响）
-    pub async fn set_burn_after_watch(
-        &self,
-        tenant_id: i64,
-        video_id: i64,
-        flag: bool,
-    ) -> Result<bool, sqlx::Error> {
-        let result =
-            sqlx::query("UPDATE videos SET burn_after_watch = $1 WHERE id = $2 AND tenant_id = $3")
-                .bind(flag)
-                .bind(video_id)
-                .bind(tenant_id)
-                .execute(&self.pool)
-                .await?;
-        Ok(result.rows_affected() > 0)
-    }
 
     /// 列出指定视频所有转码变体的文件路径（`/media/...`）。
     ///

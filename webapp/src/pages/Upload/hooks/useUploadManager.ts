@@ -26,7 +26,6 @@ export function useUploadManager() {
   const { toast } = useToast()
   const [files, setFiles] = useState<UploadItem[]>([])
   const [category, setCategory] = useState('all')
-  const [burnAfterWatch, setBurnAfterWatch] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const abortRef = useRef(false)
@@ -123,7 +122,7 @@ export function useUploadManager() {
     try {
       await runPool(targets, CONCURRENT_UPLOADS, async (item) => {
         if (abortRef.current) return
-        if (await uploadSingleFile(item, setFiles, abortRef, burnAfterWatch)) okCount++
+        if (await uploadSingleFile(item, setFiles, abortRef)) okCount++
       })
     } finally {
       setUploading(false)
@@ -138,7 +137,7 @@ export function useUploadManager() {
     } else {
       toast(i18n.t('upload.uploadFailedRetry'), 'error')
     }
-  }, [toast, t, burnAfterWatch])
+  }, [toast, t])
 
   const cancelUpload = useCallback(() => {
     abortRef.current = true
@@ -169,7 +168,6 @@ export function useUploadManager() {
 
   return {
     files, setFiles, category, setCategory,
-    burnAfterWatch, setBurnAfterWatch,
     dragOver, uploading, addFiles,
     startUpload, cancelUpload,
     handleDrop, handleDragEnter, handleDragLeave,
