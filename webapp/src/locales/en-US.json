@@ -112,14 +112,6 @@
     "heroTitle": "Atmos Video",
     "heroSub": "Video sharing & playback platform",
     "heroDesc": "Self-hosted · HLS adaptive bitrate · Resumable uploads · Secure sharing",
-    "featureHls": "Adaptive Bitrate",
-    "featureHlsDesc": "Multi-resolution HLS transcoding for smooth playback",
-    "featureUpload": "Resumable Uploads",
-    "featureUploadDesc": "Chunked uploads that survive network interruptions",
-    "featureShare": "Secure Sharing",
-    "featureShareDesc": "Encrypted links with expiration controls",
-    "featurePrivate": "Self-Hosted",
-    "featurePrivateDesc": "Full data ownership, no third-party dependency",
     "recent": "Recently Watched",
     "trending": "Trending",
     "empty": "No videos yet",
@@ -129,13 +121,7 @@
     "searchEmpty": "No videos found for \"{{query}}\"",
     "guestSearchTitle": "Sign in to search",
     "guestSearchDesc": "Search requires an account. Sign in to search and watch all videos.",
-    "hotSearch": "Trending",
-    "guestCta": "Sign in to browse all videos",
-    "guestPreview": "Sign in to watch",
     "errorHint": "Please check your network and try again",
-    "step1": "Sign up",
-    "step2": "Upload",
-    "step3": "Share",
     "categories": {
       "all": "All",
       "tech": "Tech",
@@ -146,12 +132,6 @@
       "sports": "Sports",
       "record": "Record",
       "external": "External"
-    },
-    "hotSearchTags": {
-      "tech": "Tech",
-      "tutorial": "Tutorial",
-      "music": "Music",
-      "design": "Design"
     },
     "gridView": "Grid view",
     "listView": "List view"

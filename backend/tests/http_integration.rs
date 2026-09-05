@@ -2500,22 +2500,54 @@ async fn test_video_tags_admin_flow() {
 // ── 推荐 ──
 
 #[tokio::test]
-async fn test_recommendations_public_endpoints() {
+async fn test_recommendations_list_endpoints_require_auth() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
     let state = test_app_state().await;
     let video_id = create_test_video(&state, "rec_pub").await;
+    let (username, _user_id, token) = create_viewer_with_token(&state, "rec_pub").await;
     let app = build_test_app().await;
 
-    let (status, body) =
-        send_json(&app, Method::GET, "/recommendations/trending", None, None).await;
+    // No token → 401 (listings must not leak videos to unauthenticated users)
+    let (status, _) = send_json(&app, Method::GET, "/recommendations/trending", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = send_json(&app, Method::GET, "/recommendations/recent", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = send_json(
+        &app,
+        Method::GET,
+        &format!("/recommendations/similar/{}", video_id),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // With token → 200
+    let (status, body) = send_json(
+        &app,
+        Method::GET,
+        "/recommendations/trending",
+        Some(&token),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "body: {}", body);
     assert!(body["items"].is_array());
     assert!(body["total"].is_number());
 
-    let (status, _) = send_json(&app, Method::GET, "/recommendations/recent", None, None).await;
+    let (status, _) = send_json(
+        &app,
+        Method::GET,
+        "/recommendations/recent",
+        Some(&token),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // Similar works for a video that exists
@@ -2523,7 +2555,7 @@ async fn test_recommendations_public_endpoints() {
         &app,
         Method::GET,
         &format!("/recommendations/similar/{}", video_id),
-        None,
+        Some(&token),
         None,
     )
     .await;
@@ -2535,7 +2567,7 @@ async fn test_recommendations_public_endpoints() {
         &app,
         Method::GET,
         "/recommendations/similar/abc!!!",
-        None,
+        Some(&token),
         None,
     )
     .await;
@@ -2543,6 +2575,7 @@ async fn test_recommendations_public_endpoints() {
     assert_eq!(body["error"], json!("无效的视频ID"));
 
     cleanup_test_video(state.repos.video.pool(), video_id).await;
+    cleanup_test_user(state.repos.video.pool(), &username).await;
 }
 
 #[tokio::test]

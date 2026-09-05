@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 import AuthDialog from '../../components/AuthDialog/AuthDialog'
 import { useHomeData } from './hooks/useHomeData'
-import HeroSection from './HeroSection'
+import GuestLanding from './GuestLanding'
 import CategoryFilter from './CategoryFilter'
 import SearchBar from './SearchBar'
 import RecentSection from './RecentSection'
@@ -177,9 +177,11 @@ export default function Home() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
       />
 
-      <SearchBar isPending={!!user && isPending} emailVerified={emailVerified} />
+      {user && (
+        <SearchBar isPending={isPending} emailVerified={emailVerified} />
+      )}
 
-      {!user && !query && <HeroSection trending={trending} />}
+      {!user && !query && <GuestLanding onLogin={() => setShowAuth(true)} />}
 
       {!user && query && (
         <div className="empty-state" role="status" aria-live="polite">

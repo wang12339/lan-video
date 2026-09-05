@@ -112,14 +112,6 @@
     "heroTitle": "Atmos Video",
     "heroSub": "视频分享与播放平台",
     "heroDesc": "私有部署 · HLS 自适应码率 · 断点续传 · 安全分享",
-    "featureHls": "自适应码率",
-    "featureHlsDesc": "HLS 多清晰度转码，流畅播放不卡顿",
-    "featureUpload": "断点续传",
-    "featureUploadDesc": "大文件分片上传，网络中断也不怕",
-    "featureShare": "安全分享",
-    "featureShareDesc": "链接加密 + 有效期控制，分享无忧",
-    "featurePrivate": "私有部署",
-    "featurePrivateDesc": "数据完全掌控，不经过第三方",
     "recent": "最近观看",
     "trending": "热门推荐",
     "empty": "暂无视频",
@@ -129,13 +121,7 @@
     "searchEmpty": "未找到与「{{query}}」相关的视频",
     "guestSearchTitle": "登录后搜索",
     "guestSearchDesc": "搜索功能需要登录。登录后即可搜索并观看全部视频。",
-    "hotSearch": "热搜",
-    "guestCta": "登录后浏览全部视频",
-    "guestPreview": "登录后可观看",
     "errorHint": "请检查网络连接后重试",
-    "step1": "注册账号",
-    "step2": "上传视频",
-    "step3": "分享播放",
     "categories": {
       "all": "全部",
       "tech": "科技",
@@ -146,12 +132,6 @@
       "sports": "运动",
       "record": "记录",
       "external": "外部"
-    },
-    "hotSearchTags": {
-      "tech": "科技",
-      "tutorial": "教程",
-      "music": "音乐",
-      "design": "设计"
     },
     "gridView": "网格视图",
     "listView": "列表视图"

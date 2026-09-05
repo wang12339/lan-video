@@ -111,12 +111,12 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
         &path_owned
     };
 
-    // Thumbnails and covers are preview images rendered in listing pages
-    // (home, gallery). <img> tags cannot send Authorization headers, so
-    // these paths must be publicly accessible without authentication.
-    if is_thumbnail_or_cover_path(path) {
-        return next.run(req).await;
-    }
+    // Thumbnails and covers are preview images rendered in listing pages.
+    // They are NOT publicly accessible: unauthenticated requests are denied
+    // (except share-token bound access, handled by the fallback below).
+    // Logged-in users may fetch them via cookie auth (browser <img> tags
+    // automatically send cookies) without an active playback session.
+    let is_preview_image = is_thumbnail_or_cover_path(path);
 
     let path_video_id = extract_video_id_from_path(path);
 
@@ -136,6 +136,13 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
             .unwrap_or(1);
         match resolve_media_user(&state, &token, tenant_id).await {
             MediaAuthResult::Authorized(username) => {
+                // Preview images (thumbnails/covers) are shown on listing
+                // pages where no playback session exists — skip the session
+                // check for authenticated users.
+                if is_preview_image {
+                    return next.run(req).await;
+                }
+
                 // SECURITY (M-03): authorization must be video-scoped. The
                 // video_id comes from the path (canonical layout, thumbnails,
                 // covers, transcoded variants) or from the videos table via

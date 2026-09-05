@@ -285,8 +285,8 @@ describe('Home 页面', () => {
     expect(screen.getByTestId('video-card')).toHaveAttribute('data-id', 'v1')
   })
 
-  // 额外：未登录时显示 Hero 区域，不调用 listVideos
-  it('未登录时显示 Hero 区域，不调用 listVideos', () => {
+  // 额外：未登录时显示极简登录页，不调用 listVideos / trending
+  it('未登录时显示极简登录页，不调用任何视频 API', () => {
     mockUseAuth.mockReturnValue({
       user: null,
       loading: false,
@@ -302,9 +302,13 @@ describe('Home 页面', () => {
     renderHome()
 
     expect(screen.getByText('Atmos Video')).toBeInTheDocument()
+    // 登录按钮（不显示任何视频卡片）
+    expect(screen.getByRole('button', { name: '登录 / 注册' })).toBeInTheDocument()
+    expect(screen.queryByTestId('video-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('auth-dialog')).not.toBeInTheDocument()
-    // 未登录不调用视频列表 API
+    // 未登录不调用视频列表 / 热门推荐 API
     expect(mockListVideos).not.toHaveBeenCalled()
+    expect(mockGetTrending).not.toHaveBeenCalled()
   })
 
   // 额外：搜索空结果提示

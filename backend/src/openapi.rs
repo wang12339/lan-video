@@ -2629,12 +2629,14 @@ pub fn spec() -> serde_json::Value {
                 "get": {
                     "summary": "Get trending videos",
                     "operationId": "getTrendingVideos",
-                    "description": "Get popular videos ranked by views and engagement",
+                    "description": "Get popular videos ranked by views and engagement (requires authentication)",
+                    "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "200": {
                             "description": "Trending videos",
                             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
                         },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
                 }
@@ -2643,12 +2645,14 @@ pub fn spec() -> serde_json::Value {
                 "get": {
                     "summary": "Get recent videos",
                     "operationId": "getRecentVideos",
-                    "description": "Get most recently uploaded videos",
+                    "description": "Get most recently uploaded videos (requires authentication)",
+                    "security": [{ "bearerAuth": [] }],
                     "responses": {
                         "200": {
                             "description": "Recent videos",
                             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
                         },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
                 }
@@ -2657,7 +2661,8 @@ pub fn spec() -> serde_json::Value {
                 "get": {
                     "summary": "Get similar videos",
                     "operationId": "getSimilarVideos",
-                    "description": "Get videos similar to a specific video based on category matching",
+                    "description": "Get videos similar to a specific video based on category matching (requires authentication)",
+                    "security": [{ "bearerAuth": [] }],
                     "parameters": [
                         { "name": "video_id", "in": "path", "required": true, "schema": { "type": "integer" } }
                     ],
@@ -2666,6 +2671,7 @@ pub fn spec() -> serde_json::Value {
                             "description": "Similar videos",
                             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationResponse" } } }
                         },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
                         "500": { "$ref": "#/components/responses/InternalError" }
                     }
                 }

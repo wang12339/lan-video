@@ -448,6 +448,20 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/videos/{id}/danmaku",
                 get(handlers::videos::list_danmaku).post(handlers::videos::create_danmaku),
             )
+            // Recommendation listings contain video thumbnails — they must not
+            // be visible to unauthenticated users.
+            .route(
+                "/recommendations/trending",
+                get(handlers::recommendations::get_trending_videos),
+            )
+            .route(
+                "/recommendations/recent",
+                get(handlers::recommendations::get_recent_videos),
+            )
+            .route(
+                "/recommendations/similar/{video_id}",
+                get(handlers::recommendations::get_similar_videos),
+            )
             .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
             .route_layer(axum_mw::from_fn(bearer_auth)),
         30,
@@ -678,19 +692,6 @@ pub async fn build_router(config: AppConfig) -> Router {
             .route("/tags", get(handlers::tags::list_tags))
             .route("/tags/popular", get(handlers::tags::get_popular_tags))
             .route("/tags/{id}", get(handlers::tags::get_tag))
-            // Public recommendation endpoints (no user-specific data)
-            .route(
-                "/recommendations/trending",
-                get(handlers::recommendations::get_trending_videos),
-            )
-            .route(
-                "/recommendations/recent",
-                get(handlers::recommendations::get_recent_videos),
-            )
-            .route(
-                "/recommendations/similar/{video_id}",
-                get(handlers::recommendations::get_similar_videos),
-            )
             // Share tokens allow unauthenticated access to shared content
             .route("/share/{token}", get(handlers::shares::get_share_video))
             // SECURITY (H-06): public share token endpoint MUST be

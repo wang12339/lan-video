@@ -70,7 +70,7 @@ export function useHomeData() {
   const { data: trendingData } = useQuery({
     queryKey: ['trending-videos', query ? 'q' : 'all'],
     queryFn: getTrendingVideos,
-    enabled: !query,
+    enabled: !!user && !query,
     staleTime: 60_000,
   })
 
