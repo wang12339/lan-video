@@ -5,12 +5,14 @@ use tracing::info;
 
 use crate::config::AppConfig;
 use crate::models::video::{FileCheckItem, VideoItem};
+use crate::repositories::playback_repo::PlaybackRepository;
 use crate::repositories::video_repo::{LocalVideoValues, VideoRepository};
 use crate::util::error::ServiceError;
 
 #[derive(Clone)]
 pub struct VideoService {
     repo: VideoRepository,
+    playback: PlaybackRepository,
     config: AppConfig,
 }
 
@@ -19,9 +21,14 @@ impl VideoService {
     ///
     /// # 参数
     /// - `repo`: 视频数据仓库
+    /// - `playback`: 播放记录仓库（阅后即焚的"完整观看"校验）
     /// - `config`: 应用配置
-    pub fn new(repo: VideoRepository, config: AppConfig) -> Self {
-        Self { repo, config }
+    pub fn new(repo: VideoRepository, playback: PlaybackRepository, config: AppConfig) -> Self {
+        Self {
+            repo,
+            playback,
+            config,
+        }
     }
 
     /// 分页查询视频列表
@@ -93,6 +100,101 @@ impl VideoService {
     ) -> Result<Option<VideoItem>, ServiceError> {
         let row = self.repo.find_by_id(tenant_id, id).await?;
         Ok(row.map(VideoItem::from))
+    }
+
+    /// 设置（或清除）视频的阅后即焚标记（上传入口在创建记录后调用）。
+    pub async fn set_burn_after_watch(
+        &self,
+        tenant_id: i64,
+        id: i64,
+        flag: bool,
+    ) -> Result<bool, ServiceError> {
+        self.repo
+            .set_burn_after_watch(tenant_id, id, flag)
+            .await
+            .map_err(ServiceError::from)
+    }
+
+    /// 阅后即焚：非上传者用户完整观看后，永久删除该视频。
+    ///
+    /// # 触发条件（全部满足才执行删除）
+    /// - 视频存在且 `burn_after_watch = true`
+    /// - 请求者不是上传者（上传者可自由预览，不会误删自己的视频）
+    /// - 请求者对该视频存在播放进度，且已观看 ≥ [`BURN_WATCH_THRESHOLD`]
+    ///   （时长未知时退化为"有播放记录即可"）
+    ///
+    /// # 删除行为
+    /// - 数据库：`delete_video_cascade`（视频行 + 播放历史/点赞/收藏/评论/
+    ///   标签关联，变体/弹幕/分享等由外键级联）
+    /// - 物理文件：主文件 + 封面 + 缩略图 + 全部转码变体（尽力而为，
+    ///   文件清理失败不影响删除结果）
+    pub async fn burn_after_watch(
+        &self,
+        tenant_id: i64,
+        username: &str,
+        user_id: i64,
+        video_id: i64,
+    ) -> Result<(), ServiceError> {
+        let video = self
+            .repo
+            .find_by_id(tenant_id, video_id)
+            .await?
+            .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
+        if !video.burn_after_watch {
+            return Err(ServiceError::BadRequest("该视频未启用阅后即焚".into()));
+        }
+        if video.uploader_id == Some(user_id) {
+            return Err(ServiceError::Forbidden("上传者观看不会触发阅后即焚".into()));
+        }
+
+        let (position_ms, duration_ms) = self
+            .playback
+            .get_playback_data(tenant_id, username, video_id)
+            .await?
+            .ok_or_else(|| ServiceError::Forbidden("需完整观看后才能焚毁".into()))?;
+        if !is_watch_complete(position_ms, duration_ms) {
+            return Err(ServiceError::Forbidden("需完整观看后才能焚毁".into()));
+        }
+
+        // 删除前取回全部需要清理的文件路径（级联删除后变体行即不存在）
+        let variant_paths = self.repo.list_variant_file_paths(video_id).await?;
+        let urls: Vec<String> = [Some(video.stream_url), video.cover_url, video.thumb_url]
+            .into_iter()
+            .flatten()
+            .chain(variant_paths)
+            .collect();
+
+        let deleted = self.repo.delete_video_cascade(tenant_id, video_id).await?;
+        if !deleted {
+            return Err(ServiceError::NotFound("视频不存在".into()));
+        }
+
+        // 尽力而为的物理文件清理（与 delete_video 相同的单任务模式）
+        let media_root = self.config.media_root.clone();
+        let cleanup = tokio::task::spawn_blocking(move || {
+            for url in &urls {
+                if let Some(path) =
+                    crate::services::media_service::safe_media_path(url, &media_root)
+                {
+                    if path.exists() {
+                        match std::fs::remove_file(&path) {
+                            Ok(_) => info!(file = %path.display(), "burned media file"),
+                            Err(e) => tracing::warn!(
+                                file = %path.display(),
+                                error = %e,
+                                "failed to burn media file"
+                            ),
+                        }
+                    }
+                }
+            }
+        });
+        if let Err(e) = cleanup.await {
+            tracing::warn!("burn media cleanup task panicked: {}", e);
+        }
+
+        info!(video_id, tenant_id, username, "video burned after watch");
+        Ok(())
     }
 
     /// 添加外部视频
@@ -549,5 +651,46 @@ impl VideoService {
             .increment_views(tenant_id, id)
             .await
             .map_err(ServiceError::from)
+    }
+}
+
+/// 阅后即焚的"完整观看"判定阈值：播放进度 ≥ 总时长的 90%。
+const BURN_WATCH_THRESHOLD: i64 = 90;
+
+/// 判定播放进度是否达到阅后即焚的"完整观看"标准。
+///
+/// - `duration_ms > 0`：要求 `position_ms ≥ duration_ms × 90%`
+///   （整数运算 `position × 100 ≥ duration × 90`，避免浮点误差）
+/// - `duration_ms ≤ 0`（时长未知，如外链视频）：有任意播放记录即视为观看
+/// - 允许小幅超出（进度条到达结尾时 position 可能略大于 duration）
+fn is_watch_complete(position_ms: i64, duration_ms: i64) -> bool {
+    if duration_ms > 0 {
+        position_ms >= 0 && position_ms * 100 >= duration_ms * BURN_WATCH_THRESHOLD
+    } else {
+        position_ms > 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watch_complete_known_duration() {
+        assert!(!is_watch_complete(0, 100_000));
+        assert!(!is_watch_complete(50_000, 100_000));
+        assert!(!is_watch_complete(89_999, 100_000));
+        assert!(is_watch_complete(90_000, 100_000));
+        assert!(is_watch_complete(100_000, 100_000));
+        assert!(is_watch_complete(105_000, 100_000));
+        assert!(!is_watch_complete(-1, 100_000));
+    }
+
+    #[test]
+    fn watch_complete_unknown_duration() {
+        assert!(!is_watch_complete(0, 0));
+        assert!(!is_watch_complete(0, -1));
+        assert!(is_watch_complete(1, 0));
+        assert!(is_watch_complete(5_000, 0));
     }
 }

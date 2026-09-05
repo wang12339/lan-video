@@ -11,6 +11,7 @@ export async function uploadSingleFile(
   item: UploadItem,
   setFiles: (fn: (prev: UploadItem[]) => UploadItem[]) => void,
   abortRef: MutableRefObject<boolean>,
+  burnAfterWatch = false
 ): Promise<boolean> {
   const updateItem = (patch: Partial<UploadItem>) => {
     setFiles((prev) => prev.map((f) => (f === item ? { ...f, ...patch } : f)))
@@ -64,7 +65,7 @@ export async function uploadSingleFile(
         return false
       }
       try {
-        const result = await uploadResumeChunk(hash, item.file.name, item.file.size, item.category, chunk)
+        const result = await uploadResumeChunk(hash, item.file.name, item.file.size, item.category, chunk, burnAfterWatch)
         if (result.id) {
           updateItem({ status: 'done', progress: 100, videoId: result.id })
           return true

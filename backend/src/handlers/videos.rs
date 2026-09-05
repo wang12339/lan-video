@@ -267,6 +267,35 @@ pub async fn get_favorite_status(
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
 
+/// POST /videos/{id}/burn — 阅后即焚：完整观看后永久删除视频
+///
+/// 仅对 `burn_after_watch = true` 的视频生效；上传者本人观看不触发；
+/// 请求者需有 ≥90% 的播放进度。删除为物理级（主文件/变体/封面/缩略图）
+/// 加数据库级联，不可恢复。
+pub async fn burn_video(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let id = hashid::decode_id_or_numeric(&id)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    state
+        .services
+        .video
+        .burn_after_watch(auth_user.tenant_id, &auth_user.username, auth_user.id, id)
+        .await
+        .map_err(|e| match e {
+            // 用户可见的校验失败（400/403/404）原样透传；其余记日志转 500
+            ServiceError::BadRequest(_)
+            | ServiceError::Forbidden(_)
+            | ServiceError::NotFound(_) => e.into_tuple(),
+            _ => internal_error_log("burn_video", &e),
+        })?;
+    state.invalidate_caches();
+    tracing::info!(user = %auth_user.username, video_id = id, "video burned after watch");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// GET /videos/favorites
 pub async fn list_favorites(
     State(state): State<Arc<AppState>>,

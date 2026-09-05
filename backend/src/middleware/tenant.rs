@@ -322,7 +322,7 @@ mod tests {
         let playback_service = PlaybackService::new(repos.playback.clone());
         let playlist_service = PlaylistService::new(repos.playlist.clone());
         let services = ServiceLayer {
-            video: VideoService::new(repos.video.clone(), config.clone()),
+            video: VideoService::new(repos.video.clone(), repos.playback.clone(), config.clone()),
             media: MediaService::new(repos.video.clone(), config.clone()),
             playback: playback_service.clone(),
             playlist: playlist_service,

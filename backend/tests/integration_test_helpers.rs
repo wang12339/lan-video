@@ -145,7 +145,8 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let danmaku_repo =
         atmos_video_backend::repositories::danmaku_repo::DanmakuRepository::new(pool.clone());
     let registration_repo = RegistrationRepository::new(pool.clone());
-    let video_service = VideoService::new(video_repo.clone(), config.clone());
+    let video_service =
+        VideoService::new(video_repo.clone(), playback_repo.clone(), config.clone());
     let media_service = MediaService::new(video_repo.clone(), config.clone());
     let playback_service = PlaybackService::new(playback_repo.clone());
     let tag_service = TagService::new(tag_repo.clone(), video_repo.clone());

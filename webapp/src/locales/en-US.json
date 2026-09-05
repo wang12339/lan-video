@@ -223,8 +223,6 @@
     "shortcutSpeedSlower": "🐢 {{val}}×",
     "shortcutSpeedFaster": "🐇 {{val}}×",
     "shortcutPercent": "{{val}}%",
-    "play": "Play",
-    "pause": "Pause",
     "seekBackwardStep": "Rewind {{seconds}} seconds",
     "seekForwardStep": "Fast forward {{seconds}} seconds",
     "videoControls": "Video controls",
@@ -236,7 +234,13 @@
     "shortcutVolumeDown": "🔊 Volume down",
     "videoEnded": "Video ended",
     "replay": "Replay",
-    "nextVideo": "Next"
+    "nextVideo": "Next",
+    "burnConfirmTitle": "Burn-after-watch video",
+    "burnConfirmMessage": "This video burns after watch: it will be permanently deleted once you finish watching. This cannot be undone. Continue?",
+    "burnWatch": "Start watching",
+    "burnedTitle": "Video burned",
+    "burnedMessage": "You finished watching and the video has been permanently deleted.",
+    "burnFailed": "Burn failed: you must finish watching first"
   },
   "profile": {
     "title": "Profile",
@@ -344,7 +348,9 @@
     "view": "View",
     "retryTitle": "Re-upload (resumes from where it stopped)",
     "remove": "Remove",
-    "removeAria": "Remove {{name}}"
+    "removeAria": "Remove {{name}}",
+    "burnAfterWatch": "Burn after watch",
+    "burnAfterWatchHint": "This video will be permanently deleted (including all renditions and cover) after another user finishes watching it. This cannot be undone."
   },
   "comments": {
     "title": "Comments",
@@ -583,7 +589,20 @@
       "defaultDomain": "Default domain",
       "maxUsers": "Max users: {{count}}",
       "storageQuota": "Storage quota: {{size}}",
-      "edit": "Edit",
+      "edit": {
+        "updateFailed": "Update failed",
+        "title": "Edit Tenant Settings",
+        "name": "Tenant Name",
+        "nameImmutable": "Tenant name cannot be changed",
+        "maxUploadSize": "Max Upload Size (MB)",
+        "maxVideosPerUser": "Max Videos Per User",
+        "storageQuota": "Storage Quota (GB)",
+        "registrationEnabled": "Allow User Registration",
+        "customTheme": "Custom Theme Color",
+        "cancel": "Cancel",
+        "save": "Save",
+        "saving": "Saving..."
+      },
       "disable": "Disable",
       "enable": "Enable",
       "statusActive": "Active",
@@ -618,20 +637,6 @@
         "no": "No",
         "storageQuota": "Storage Quota",
         "customTheme": "Custom Theme"
-      },
-      "edit": {
-        "updateFailed": "Update failed",
-        "title": "Edit Tenant Settings",
-        "name": "Tenant Name",
-        "nameImmutable": "Tenant name cannot be changed",
-        "maxUploadSize": "Max Upload Size (MB)",
-        "maxVideosPerUser": "Max Videos Per User",
-        "storageQuota": "Storage Quota (GB)",
-        "registrationEnabled": "Allow User Registration",
-        "customTheme": "Custom Theme Color",
-        "cancel": "Cancel",
-        "save": "Save",
-        "saving": "Saving..."
       },
       "createTenant": "Create Tenant",
       "create": {
@@ -948,5 +953,8 @@
     "syncNow": "Sync now",
     "seconds": "s",
     "minutes": "m"
+  },
+  "video": {
+    "burnAfterWatch": "Burn after watch"
   }
 }

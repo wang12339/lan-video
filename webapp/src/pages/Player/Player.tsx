@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, memo, useCallback, useMemo, lazy, Suspense, useDeferredValue, useId, Component, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import { burnVideo } from '../../api'
 import { useToast } from '../../components/Toast/Toast'
 import VideoCard from '../../components/VideoCard/VideoCard'
 import { usePlayerShortcuts } from './usePlayerShortcuts'
@@ -139,6 +141,7 @@ const Player = memo(function Player() {
   const { t } = useTranslation()
   const { user } = useAuth()
   const { toast } = useToast()
+  const navigate = useNavigate()
   const shareTooltipId = useId()
   const playlistDialogId = useId()
 
@@ -171,6 +174,31 @@ const Player = memo(function Player() {
 
   const [videoEnded, setVideoEnded] = useState(false)
 
+  // ── 阅后即焚 ──
+  // 上传者可自由预览不触发；分享链接（cookie 会话）无 bearer 令牌，无法调用
+  // 焚毁接口，因此只在登录态 + 非上传者时启用确认门与自动焚毁。
+  const isBurnVideo = !!video?.burnAfterWatch
+  const isBurnUploader = !!(user?.id && video?.uploaderId && user.id === video.uploaderId)
+  const burnGateNeeded = isBurnVideo && !isShared && !!user && !isBurnUploader
+  const [burnConfirmOpen, setBurnConfirmOpen] = useState(false)
+  const [burnArmed, setBurnArmed] = useState(false)
+  const [burned, setBurned] = useState(false)
+
+  useEffect(() => {
+    setBurnConfirmOpen(false)
+    setBurnArmed(false)
+    setBurned(false)
+  }, [videoId])
+
+  // 视频就绪后弹出确认门；确认前不允许起播（源加载完成会自动 play，这里压住）
+  useEffect(() => {
+    if (burnGateNeeded && !burnArmed && !burned && video) setBurnConfirmOpen(true)
+  }, [burnGateNeeded, burnArmed, burned, video])
+
+  useEffect(() => {
+    if (burnGateNeeded && !burnArmed && !burned) videoRef.current?.pause()
+  }, [burnGateNeeded, burnArmed, burned, videoId])
+
   const { handleShare, showShareTooltip, shareTooltipMsg, shareErrorType } = useShareHandler(user, video)
   const { handleDelete, handleDeleteConfirm, showDeleteDialog, setShowDeleteDialog, deleteAlertMsg, setDeleteAlertMsg } = useDeleteHandler(videoId)
   const { favorited, handleFavorite } = useFavoriteHandler(user, video, videoId, isShared)
@@ -201,7 +229,31 @@ const Player = memo(function Player() {
   const handleVideoEnded = useCallback(() => {
     setVideoEnded(true)
     onEnded()
-  }, [onEnded])
+    if (burnGateNeeded && videoId) {
+      burnVideo(videoId)
+        .then(() => setBurned(true))
+        .catch((e: Error) => {
+          toast(e.message || t('player.burnFailed'), 'error')
+        })
+    }
+  }, [onEnded, burnGateNeeded, videoId, toast, t])
+
+  const handleBurnConfirm = useCallback(() => {
+    setBurnConfirmOpen(false)
+    setBurnArmed(true)
+    const v = videoRef.current
+    if (v) v.play().catch(() => {})
+  }, [])
+
+  const handleBurnCancel = useCallback(() => {
+    setBurnConfirmOpen(false)
+    navigate(-1)
+  }, [navigate])
+
+  const handleBurnedAlertClose = useCallback(() => {
+    setBurned(false)
+    navigate('/')
+  }, [navigate])
 
   const handleReplay = useCallback(() => {
     const v = videoRef.current
@@ -417,6 +469,23 @@ const Player = memo(function Player() {
         danger
         onConfirm={handleDeleteConfirm}
         onCancel={handleCloseDeleteDialog}
+      />
+      <MemoConfirmDialog
+        open={burnConfirmOpen}
+        title={t('player.burnConfirmTitle')}
+        message={t('player.burnConfirmMessage')}
+        danger
+        confirmVariant="danger"
+        confirmText={t('player.burnWatch')}
+        closeOnOverlay={false}
+        onConfirm={handleBurnConfirm}
+        onCancel={handleBurnCancel}
+      />
+      <MemoAlertDialog
+        open={burned}
+        title={t('player.burnedTitle')}
+        message={t('player.burnedMessage')}
+        onClose={handleBurnedAlertClose}
       />
       {loadingSkeleton}
     </div>

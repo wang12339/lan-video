@@ -94,6 +94,7 @@ export function mapVideo(v: Video | null): MappedVideo | null {
     date: v.createdAt || '',
     progress: v.watchPosition || 0,
     hasVariants: v.hasVariants,
+    burnAfterWatch: v.burnAfterWatch,
     uploaderId: v.uploaderId,
   };
 }

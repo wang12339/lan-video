@@ -223,8 +223,6 @@
     "shortcutSpeedSlower": "🐢 {{val}}×",
     "shortcutSpeedFaster": "🐇 {{val}}×",
     "shortcutPercent": "{{val}}%",
-    "play": "播放",
-    "pause": "暂停",
     "seekBackwardStep": "快退 {{seconds}} 秒",
     "seekForwardStep": "快进 {{seconds}} 秒",
     "videoControls": "视频控制",
@@ -236,7 +234,13 @@
     "shortcutVolumeDown": "🔊 音量减小",
     "videoEnded": "播放结束",
     "replay": "重播",
-    "nextVideo": "下一个"
+    "nextVideo": "下一个",
+    "burnConfirmTitle": "阅后即焚视频",
+    "burnConfirmMessage": "该视频为阅后即焚：完整观看结束后将被永久删除且无法恢复。确定要观看吗？",
+    "burnWatch": "开始观看",
+    "burnedTitle": "视频已焚毁",
+    "burnedMessage": "该视频已完成观看并被永久删除。",
+    "burnFailed": "焚毁失败：需完整观看后才能焚毁"
   },
   "profile": {
     "title": "我的",
@@ -344,7 +348,9 @@
     "view": "查看",
     "retryTitle": "重新上传（自动从已传位置续传）",
     "remove": "移除",
-    "removeAria": "移除 {{name}}"
+    "removeAria": "移除 {{name}}",
+    "burnAfterWatch": "阅后即焚",
+    "burnAfterWatchHint": "其他用户完整观看该视频后，将被永久删除（含所有清晰度与封面），不可恢复"
   },
   "comments": {
     "title": "评论",
@@ -583,7 +589,20 @@
       "defaultDomain": "默认域名",
       "maxUsers": "最大用户: {{count}}",
       "storageQuota": "存储配额: {{size}}",
-      "edit": "编辑",
+      "edit": {
+        "updateFailed": "更新失败",
+        "title": "编辑租户配置",
+        "name": "租户名称",
+        "nameImmutable": "租户名称不可修改",
+        "maxUploadSize": "最大上传大小 (MB)",
+        "maxVideosPerUser": "每用户最大视频数",
+        "storageQuota": "存储配额 (GB)",
+        "registrationEnabled": "允许用户注册",
+        "customTheme": "自定义主题色",
+        "cancel": "取消",
+        "save": "保存",
+        "saving": "保存中..."
+      },
       "disable": "禁用",
       "enable": "启用",
       "statusActive": "运行中",
@@ -618,20 +637,6 @@
         "no": "否",
         "storageQuota": "存储配额",
         "customTheme": "自定义主题"
-      },
-      "edit": {
-        "updateFailed": "更新失败",
-        "title": "编辑租户配置",
-        "name": "租户名称",
-        "nameImmutable": "租户名称不可修改",
-        "maxUploadSize": "最大上传大小 (MB)",
-        "maxVideosPerUser": "每用户最大视频数",
-        "storageQuota": "存储配额 (GB)",
-        "registrationEnabled": "允许用户注册",
-        "customTheme": "自定义主题色",
-        "cancel": "取消",
-        "save": "保存",
-        "saving": "保存中..."
       },
       "createTenant": "创建租户",
       "create": {
@@ -948,5 +953,8 @@
     "syncNow": "立即同步",
     "seconds": "秒",
     "minutes": "分"
+  },
+  "video": {
+    "burnAfterWatch": "阅后即焚"
   }
 }

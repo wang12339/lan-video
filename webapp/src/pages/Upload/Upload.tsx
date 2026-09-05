@@ -14,6 +14,7 @@ export default function Upload() {
   const { toast } = useToast()
   const {
     files, setFiles, category, setCategory,
+    burnAfterWatch, setBurnAfterWatch,
     dragOver, uploading, addFiles,
     startUpload, cancelUpload,
     handleDrop, handleDragEnter, handleDragLeave,
@@ -69,6 +70,20 @@ export default function Upload() {
             disabled={uploading}
             categories={CATEGORIES}
           />
+
+          <label className="upload-burn-toggle">
+            <input
+              type="checkbox"
+              checked={burnAfterWatch}
+              onChange={(e) => setBurnAfterWatch(e.target.checked)}
+              disabled={uploading}
+            />
+            <span className="upload-burn-toggle__mark">🔥</span>
+            <span className="upload-burn-toggle__text">
+              <strong>{t('upload.burnAfterWatch')}</strong>
+              <small>{t('upload.burnAfterWatchHint')}</small>
+            </span>
+          </label>
 
           <UploadQueue
             files={files}

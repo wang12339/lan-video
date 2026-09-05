@@ -59,6 +59,9 @@ pub struct VideoItem {
     pub watch_position: Option<i64>,
     #[serde(default)]
     pub has_variants: bool,
+    /// 阅后即焚：观看完成后该视频将被永久删除（物理文件 + 记录）
+    #[serde(default)]
+    pub burn_after_watch: bool,
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_option_id")]
     pub uploader_id: Option<i64>,
     /// ISO-ish timestamp `%Y-%m-%d %H:%M:%S`（UTC）。旧版响应不含该字段，
@@ -94,6 +97,8 @@ pub struct ExternalVideoRequest {
     pub category: Option<String>,
     pub stream_url: String,
     pub cover_url: Option<String>,
+    /// 阅后即焚：完整观看后永久删除该视频
+    pub burn_after_watch: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

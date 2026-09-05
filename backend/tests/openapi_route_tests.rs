@@ -133,6 +133,7 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/videos/{id}/like"),
         ("POST", "/videos/{id}/favorite"),
         ("GET", "/videos/{id}/favorite"),
+        ("POST", "/videos/{id}/burn"),
         ("GET", "/videos/{id}/tags"),
         ("POST", "/videos/{id}/tags"),
         ("DELETE", "/videos/{id}/tags"),

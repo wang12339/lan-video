@@ -665,6 +665,52 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/videos/{id}/burn": {
+                "post": {
+                    "summary": "Burn video after watch",
+                    "operationId": "burnVideo",
+                    "description": "阅后即焚：为启用 burn_after_watch 的视频执行永久删除（物理文件 + 数据库记录）。要求调用者不是上传者，且对该视频的播放进度 ≥ 90%。视频未启用时返回 400，未完整观看返回 403。",
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": true,
+                            "description": "Video ID",
+                            "schema": { "type": "integer" }
+                        }
+                    ],
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "204": { "description": "Video permanently deleted" },
+                        "400": {
+                            "description": "Video does not have burn-after-watch enabled",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": {
+                            "description": "Caller is the uploader, or has not fully watched the video",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        },
+                        "404": {
+                            "description": "Video not found",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        },
+                        "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
             "/videos/favorites": {
                 "get": {
                     "summary": "List current user's favorites (paginated)",

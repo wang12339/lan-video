@@ -108,7 +108,8 @@ pub async fn build_router(config: AppConfig) -> Router {
     let registration_repo = RegistrationRepository::new(pool.clone());
     let danmaku_repo = DanmakuRepository::new(pool.clone());
 
-    let video_service = VideoService::new(video_repo.clone(), config.clone());
+    let video_service =
+        VideoService::new(video_repo.clone(), playback_repo.clone(), config.clone());
     let media_service = MediaService::new(video_repo.clone(), config.clone());
     let playback_service = PlaybackService::new(playback_repo.clone());
     let playlist_service = PlaylistService::new(playlist_repo.clone());
@@ -432,6 +433,7 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/videos/{id}/favorite",
                 post(handlers::videos::toggle_favorite).get(handlers::videos::get_favorite_status),
             )
+            .route("/videos/{id}/burn", post(handlers::videos::burn_video))
             .route("/videos/{id}/tags", get(handlers::tags::get_video_tags))
             .route("/videos/{id}/tags", post(handlers::tags::add_tags_to_video))
             .route(

@@ -85,6 +85,17 @@ pub async fn add_external_video(
             error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
         })?;
 
+    if req.burn_after_watch.unwrap_or(false) {
+        if let Err(e) = state
+            .services
+            .video
+            .set_burn_after_watch(auth_user.tenant_id, id, true)
+            .await
+        {
+            tracing::error!(video_id = id, error = %e, "set burn_after_watch failed");
+        }
+    }
+
     state.invalidate_caches();
     tracing::info!(
         actor = %auth_user.username,
@@ -106,6 +117,7 @@ pub async fn upload_video(
 
     let mut file_name: Option<String> = None;
     let mut category = "local".to_string();
+    let mut burn_after_watch = false;
     let mut temp_path: Option<std::path::PathBuf> = None;
     let mut precomputed: Option<(i64, String)> = None;
     let mut file_field_seen = false;
@@ -155,6 +167,10 @@ pub async fn upload_video(
                 let text = field.text().await.unwrap_or_default();
                 category = text;
             }
+            "burn_after_watch" => {
+                let text = field.text().await.unwrap_or_default();
+                burn_after_watch = matches!(text.trim(), "true" | "1");
+            }
             _ => {}
         }
     }
@@ -193,6 +209,18 @@ pub async fn upload_video(
             ));
         }
     };
+
+    // 阅后即焚标记在视频记录创建后设置（upload_video_file 不感知该字段）
+    if burn_after_watch {
+        if let Err(e) = state
+            .services
+            .video
+            .set_burn_after_watch(auth_user.tenant_id, id, true)
+            .await
+        {
+            tracing::error!(video_id = id, error = %e, "set burn_after_watch failed");
+        }
+    }
 
     state.invalidate_caches();
     tracing::info!(
@@ -263,6 +291,11 @@ pub async fn upload_resume(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("local")
         .to_string();
+    let burn_after_watch = headers
+        .get("x-upload-burn")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| matches!(v.trim(), "true" | "1"))
+        .unwrap_or(false);
 
     if total_size <= 0 || total_size > MAX_UPLOAD_SIZE {
         return Err(error_response(
@@ -342,6 +375,16 @@ pub async fn upload_resume(
                 }
             })?;
         state.upload_locks.remove(&hash);
+        if burn_after_watch {
+            if let Err(e) = state
+                .services
+                .video
+                .set_burn_after_watch(auth_user.tenant_id, id, true)
+                .await
+            {
+                tracing::error!(video_id = id, error = %e, "set burn_after_watch failed");
+            }
+        }
         state.invalidate_caches();
         tracing::info!(
             actor = %auth_user.username,
