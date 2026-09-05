@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=backend-builder /app/target/release/atmos-video /usr/local/bin/
+COPY --from=backend-builder /app/target/release/atmos-video-backend /usr/local/bin/
 COPY --from=frontend-builder /app/dist /var/lib/atmos/webapp
 
 # db.rs 运行时从 CARGO_MANIFEST_DIR(烧录为 /app)/migrations 自动发现迁移
@@ -33,4 +33,4 @@ ENV WEBAPP_ROOT=/var/lib/atmos/webapp
 ENV MEDIA_ROOT=/var/lib/atmos/media
 
 EXPOSE 8082
-CMD ["atmos-video"]
+CMD ["atmos-video-backend"]
