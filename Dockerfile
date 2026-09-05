@@ -1,4 +1,4 @@
-FROM rust:1.75-slim AS backend-builder
+FROM rust:1.95-slim AS backend-builder
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/Cargo.toml backend/Cargo.lock ./
