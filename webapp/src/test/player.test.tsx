@@ -295,7 +295,9 @@ describe('Player 页面', () => {
     expect(playPauseBtn).toBeInTheDocument()
 
     // 初始状态：暂停，显示中心播放按钮
-    expect(document.querySelector('.center-play')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('.center-play')).toBeInTheDocument()
+    })
 
     // 点击播放/暂停按钮
     fireEvent.click(playPauseBtn)

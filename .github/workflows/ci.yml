@@ -96,7 +96,7 @@ jobs:
         working-directory: ./backend
         env:
           DATABASE_URL: postgres://atmos_video:atmos_video@localhost:5432/atmos_video
-        run: cargo llvm-cov --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov --locked --lcov --output-path lcov.info -- --test-threads=1
 
       - name: Upload coverage to Codecov
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -188,6 +188,13 @@ jobs:
     needs: [docker]
     steps:
       - uses: actions/checkout@v4
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/atmos-video-ci.tar.gz
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -211,7 +218,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: embarkstudios/cargo-deny-action@v2
         with:
-          working-directory: ./backend
+          manifest-path: ./backend/Cargo.toml
 
   # ─── Docker 镜像构建验证（多阶段 Dockerfile + .dockerignore）────────
   docker:
