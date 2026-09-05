@@ -23,7 +23,7 @@ import './Player.css'
 const LazyComments = lazy(() => import('../../components/Comments/Comments'))
 const MemoComments = memo(LazyComments)
 
-interface ErrorBoundaryProps { children: ReactNode; fallback?: ReactNode }
+interface ErrorBoundaryProps { children: ReactNode; fallback?: ReactNode; t?: (k: string) => string }
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; errorType: 'network' | 'auth' | 'format' | 'unknown'; retryCount: number }
 
 function classifyBoundaryError(error: Error | null): ErrorBoundaryState['errorType'] {
@@ -35,11 +35,11 @@ function classifyBoundaryError(error: Error | null): ErrorBoundaryState['errorTy
   return 'unknown'
 }
 
-const ERROR_TYPE_MESSAGES: Record<ErrorBoundaryState['errorType'], string> = {
-  network: '网络连接失败，请检查网络后重试',
-  auth: '登录已过期，请重新登录',
-  format: '视频格式不支持，无法播放',
-  unknown: '播放器出现错误',
+const ERROR_TYPE_KEYS: Record<ErrorBoundaryState['errorType'], string> = {
+  network: 'errors.videoNetwork',
+  auth: 'errors.unauthorized',
+  format: 'errors.videoFormatUnsupported',
+  unknown: 'errors.unknownError',
 }
 
 const MAX_BOUNDARY_RETRIES = 3
@@ -50,18 +50,19 @@ class PlayerErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
     return { hasError: true, error, errorType: classifyBoundaryError(error) }
   }
   render() {
+    const t = this.props.t ?? ((k: string) => k)
     if (this.state.hasError) {
       return this.props.fallback || (
         <div className="player-error-boundary">
           <span className="player-error-boundary-icon">⚠️</span>
-          <p className="player-error-boundary-msg">{ERROR_TYPE_MESSAGES[this.state.errorType]}</p>
+          <p className="player-error-boundary-msg">{t(ERROR_TYPE_KEYS[this.state.errorType])}</p>
           {this.state.errorType === 'unknown' && this.state.error?.message && (
             <p className="player-error-boundary-detail">{this.state.error.message}</p>
           )}
           {this.state.retryCount < MAX_BOUNDARY_RETRIES ? (
-            <button onClick={() => this.setState(prev => ({ hasError: false, error: null, retryCount: prev.retryCount + 1 }))}>重试</button>
+            <button onClick={() => this.setState(prev => ({ hasError: false, error: null, retryCount: prev.retryCount + 1 }))}>{t('common.retry')}</button>
           ) : (
-            <p className="player-error-boundary-hint">重试次数已用完，请刷新页面</p>
+            <p className="player-error-boundary-hint">{t('errors.reloadPage')}</p>
           )}
         </div>
       )
@@ -284,7 +285,7 @@ const Player = memo(function Player() {
   }
 
   return (
-    <PlayerErrorBoundary>
+    <PlayerErrorBoundary t={t}>
     <div className="player-page" role="main">
       <div
         className={playerWrapClassName}

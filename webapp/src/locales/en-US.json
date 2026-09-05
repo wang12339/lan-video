@@ -13,6 +13,8 @@
     "logoutConfirm": "Sign out?",
     "logoutSuccess": "Signed out",
     "myProfile": "My profile",
+    "switchToDark": "Switch to dark mode",
+    "switchToLight": "Switch to light mode",
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "toggleLanguage": "Toggle language"
@@ -125,9 +127,11 @@
     "emailVerified": "✓ Email verified",
     "emailVerifyFailed": "✗ Email verification failed — the link is invalid or has expired",
     "searchEmpty": "No videos found for \"{{query}}\"",
+    "guestSearchTitle": "Sign in to search",
+    "guestSearchDesc": "Search requires an account. Sign in to search and watch all videos.",
     "hotSearch": "Trending",
     "guestCta": "Sign in to browse all videos",
-    "guestPreview": "Preview",
+    "guestPreview": "Sign in to watch",
     "errorHint": "Please check your network and try again",
     "step1": "Sign up",
     "step2": "Upload",
@@ -825,7 +829,18 @@
     "loadFailed": "Failed to load",
     "loadFailedNetwork": "Failed to load. Please check your network and retry",
     "videoLoadFailed": "Failed to load the video. Please check your network and retry",
+    "videoNetwork": "Network connection lost. Please check your network and retry",
+    "videoSessionExpired": "Playback session expired. Please replay the video",
+    "videoFormatUnsupported": "Video format not supported and cannot be played",
     "missingVideoId": "Missing video ID"
+  },
+  "time": {
+    "justNow": "just now",
+    "minutesAgo": "{{n}} min ago",
+    "hoursAgo": "{{n}} hr ago",
+    "daysAgo": "{{n}} days ago",
+    "monthsAgo": "{{n}} months ago",
+    "yearsAgo": "{{n}} years ago"
   },
   "notFound": {
     "message": "Page not found",

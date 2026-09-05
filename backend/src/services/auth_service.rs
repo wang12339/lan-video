@@ -238,7 +238,6 @@ impl AuthService {
     /// # 错误
     /// - 用户名或密码错误时返回通用错误提示（不区分用户不存在和密码错误）
     /// - 用户未通过管理员审批时返回错误提示
-    /// - 用户已在其他设备登录时返回错误提示（管理员豁免）
     /// - 超出速率限制时返回 `ServiceError::RateLimited`
     ///
     /// # 安全
@@ -247,7 +246,9 @@ impl AuthService {
     /// - 用户不存在时执行 dummy argon2 验证，防止用户名枚举时序攻击（~50-100ms 差异）
     /// - 错误提示统一为"用户名或密码错误"，不泄露用户是否存在
     /// - 登录成功后重置该用户名的速率限制计数器
-    /// - 普通用户同一时间只能在一个设备登录（管理员可多设备）
+    /// - 单会话策略为“后登录优先”：同一账号在新设备登录会使旧会话全部
+    ///   失效（撤销），先登录的设备最长在 `TOKEN_CACHE_TTL_SECS` 内收到 401
+    ///   被迫下线；管理员豁免，可多设备同时在线
     pub async fn login(
         &self,
         req: &AuthRequest,
@@ -288,10 +289,19 @@ impl AuthService {
             return Ok(auth_err("用户名或密码错误"));
         }
 
-        // Reject login if user already has an active session (admins exempt)
-        if user.role < 3 && self.user_repo.has_active_tokens(user.id).await? {
-            tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "failed login: already logged in elsewhere");
-            return Ok(auth_err("该用户已在其他设备登录，请先退出后再试"));
+        // 单会话“后登录优先”：新登录成功即撤销该用户的所有旧会话，
+        // 先登录的设备被迫下线。管理员豁免（可多设备同时在线）。
+        // 撤销先于创建：若两步之间进程崩溃，用户只是被登出（安全侧失效），
+        // 而不是留下两个并存的有效会话。
+        if user.role < 3 {
+            let revoked = self.user_repo.revoke_tokens_by_user_id(user.id).await?;
+            if revoked > 0 {
+                tracing::info!(
+                    username = %sanitize_for_log(&req.username),
+                    sessions_revoked = revoked,
+                    "previous session(s) superseded by new login"
+                );
+            }
         }
 
         let token = self.user_repo.create_token(user.id).await?;

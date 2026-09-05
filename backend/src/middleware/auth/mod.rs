@@ -84,9 +84,12 @@ pub async fn bearer_auth(req: Request, next: Next) -> Response {
         Ok(Some(u)) => u,
         Ok(None) => match state.repos.user.find_token_detail(&token).await {
             Ok(Some((_, true, _))) => {
+                // revoked=true 现在有两种来源：管理员强制下线，或该账号
+                // 在其他设备重新登录（单会话“后登录优先”策略）。token 层
+                // 无法区分，使用合并文案。
                 return error_response_response(
                     StatusCode::UNAUTHORIZED,
-                    "你的账号已被管理员强制下线",
+                    "你的账号已在其他设备登录或被管理员强制下线",
                 );
             }
             Ok(Some((_, false, false))) => {

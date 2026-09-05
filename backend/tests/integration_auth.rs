@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Integration tests for the authentication flow.
 //!
 //! Requires a running PostgreSQL database. Set `DATABASE_URL` to enable.
@@ -675,8 +676,10 @@ async fn test_login_single_session_enforced() {
         .await
         .expect("login");
     assert!(first.ok);
+    let first_token = first.token.expect("first token");
 
-    // Second login for a non-admin with an active session must be rejected
+    // Last-login-wins: a second login must also succeed and supersede the
+    // first session (previously rejected with "已在其他设备登录").
     let second = svc
         .login(
             &AuthRequest {
@@ -689,16 +692,32 @@ async fn test_login_single_session_enforced() {
         .await
         .expect("login");
     assert!(
-        !second.ok,
-        "non-admin with active session must not log in again"
-    );
-    assert!(
-        second
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("已在其他设备登录")),
-        "error should mention the active session: {:?}",
+        second.ok,
+        "second login must succeed and kick the first session: {:?}",
         second.error
+    );
+    let second_token = second.token.expect("second token");
+    assert_ne!(first_token, second_token);
+
+    // The superseded (first) token must no longer authenticate…
+    let old_user = state
+        .repos
+        .user
+        .find_user_by_token(&first_token)
+        .await
+        .expect("token lookup");
+    assert!(old_user.is_none(), "superseded token must be revoked");
+
+    // …while the newest token remains valid.
+    let new_user = state
+        .repos
+        .user
+        .find_user_by_token(&second_token)
+        .await
+        .expect("token lookup");
+    assert!(
+        new_user.is_some(),
+        "newest token must remain valid after supersession"
     );
 
     cleanup_test_user(state.repos.video.pool(), &username).await;

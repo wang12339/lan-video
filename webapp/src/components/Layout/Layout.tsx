@@ -88,6 +88,11 @@ function NavBar() {
     }
     setSearchLoading(true)
     setSearchTried(false)
+    // 搜索建议接口需要登录（未登录必 401），游客直接跳过请求
+    if (!user) {
+      setSearchLoading(false)
+      return
+    }
     const seq = ++suggestSeq.current
     suggestTimer.current = setTimeout(async () => {
       try {
@@ -101,7 +106,7 @@ function NavBar() {
         if (seq === suggestSeq.current) setSearchLoading(false)
       }
     }, 300)
-  }, [])
+  }, [user])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!showSuggestions) return

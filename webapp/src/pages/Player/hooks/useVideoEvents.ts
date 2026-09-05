@@ -27,11 +27,24 @@ function classifyVideoError(videoEl: HTMLVideoElement | null): VideoErrorType {
   }
 }
 
-const VIDEO_ERROR_MESSAGES: Record<VideoErrorType, string> = {
-  network: '网络连接中断，请检查网络后重试',
-  auth: '视频访问权限已过期',
-  format: '视频格式不支持，无法播放',
-  unknown: '视频加载失败',
+// MediaError.message does not reliably carry the HTTP status (and browsers
+// often report a 403/401 on the media source as SRC_NOT_SUPPORTED), so a
+// plain "format" classification here misdiagnosed auth/session failures as
+// "视频格式不支持". Probe the source directly to get the real status.
+async function probeSourceStatus(src: string): Promise<number | null> {
+  try {
+    const res = await fetch(src, { headers: { Range: 'bytes=0-1' } })
+    return res.status
+  } catch {
+    return null
+  }
+}
+
+const VIDEO_ERROR_KEYS: Record<VideoErrorType, string> = {
+  network: 'errors.videoNetwork',
+  auth: 'errors.videoSessionExpired',
+  format: 'errors.videoFormatUnsupported',
+  unknown: 'errors.videoLoadFailed',
 }
 
 export interface UseVideoEventsReturn {
@@ -131,24 +144,46 @@ export function useVideoEvents(
   const onPlaying = useCallback(() => { callbacksRef.current.setShowLoading(false); callbacksRef.current.setVideoError(''); retryCountRef.current = 0; metrics.recordFirstFrame(); metrics.recordStallEnd() }, [])
   const onError = useCallback(() => {
     callbacksRef.current.setShowLoading(false)
-    const errorType = classifyVideoError(videoRef.current)
-    metrics.recordError(errorType)
-    if (errorType === 'auth') {
-      callbacksRef.current.setVideoError(VIDEO_ERROR_MESSAGES.auth)
-      return
+    const v = videoRef.current
+    const quickType = classifyVideoError(v)
+
+    const proceed = (errorType: VideoErrorType) => {
+      metrics.recordError(errorType)
+      const { t, setVideoError } = callbacksRef.current
+      if (errorType === 'auth') {
+        setVideoError(t('errors.videoSessionExpired'))
+        return
+      }
+      if (retryCountRef.current < MAX_AUTO_RETRIES) {
+        retryCountRef.current++
+        retryTimerRef.current = setTimeout(() => {
+          const v = videoRef.current
+          if (v && v.src) {
+            callbacksRef.current.setShowLoading(true)
+            v.load()
+          }
+        }, AUTO_RETRY_DELAY_MS)
+      } else {
+        setVideoError(
+          VIDEO_ERROR_KEYS[errorType]
+            ? t(VIDEO_ERROR_KEYS[errorType])
+            : t('errors.videoLoadFailed'),
+        )
+      }
     }
-    if (retryCountRef.current < MAX_AUTO_RETRIES) {
-      retryCountRef.current++
-      retryTimerRef.current = setTimeout(() => {
-        const v = videoRef.current
-        if (v && v.src) {
-          callbacksRef.current.setShowLoading(true)
-          v.load()
-        }
-      }, AUTO_RETRY_DELAY_MS)
-    } else {
-      callbacksRef.current.setVideoError(VIDEO_ERROR_MESSAGES[errorType] || callbacksRef.current.t('errors.videoLoadFailed'))
+
+    // For decode/source errors, confirm against the source's real HTTP
+    // status before blaming the format — 401/403 are auth/session failures.
+    if ((quickType === 'format' || quickType === 'unknown') && v) {
+      const src = v.currentSrc || v.src
+      if (src) {
+        probeSourceStatus(src).then((status) => {
+          proceed(status === 401 || status === 403 ? 'auth' : quickType)
+        })
+        return
+      }
     }
+    proceed(quickType)
   }, [videoRef, metrics])
 
   const onRateChange = useCallback(() => {

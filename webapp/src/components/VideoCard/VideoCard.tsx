@@ -33,20 +33,20 @@ function getCategoryKey(cat: string): string {
   return map[cat] || cat
 }
 
-function relativeTime(dateStr: string): string {
+function relativeTime(dateStr: string, t: (k: string, opts?: Record<string, unknown>) => string): string {
   const now = Date.now()
   const then = new Date(dateStr).getTime()
   const diff = now - then
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 1) return t('time.justNow')
+  if (mins < 60) return t('time.minutesAgo', { n: mins })
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}小时前`
+  if (hours < 24) return t('time.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}天前`
+  if (days < 30) return t('time.daysAgo', { n: days })
   const months = Math.floor(days / 30)
-  if (months < 12) return `${months}个月前`
-  return `${Math.floor(months / 12)}年前`
+  if (months < 12) return t('time.monthsAgo', { n: months })
+  return t('time.yearsAgo', { n: Math.floor(months / 12) })
 }
 
 const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = false, eager = false }) => {
@@ -161,10 +161,10 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
                 </svg>
                 {viewsText}
               </span>
-            : <span className="video-badge-new" aria-label={t('gallery.newBadge')}>新</span>
+            : <span className="video-badge-new" aria-label={t('gallery.newBadge')}>{t('gallery.newBadge')}</span>
           }
           {video.views > 0 && video.date && <span className="meta-sep" aria-hidden="true">·</span>}
-          {video.date && <span className="video-date">{relativeTime(video.date)}</span>}
+          {video.date && <span className="video-date">{relativeTime(video.date, t)}</span>}
         </div>
       </div>
     </div>

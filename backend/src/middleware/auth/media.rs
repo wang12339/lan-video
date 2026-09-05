@@ -458,16 +458,21 @@ fn extract_video_id_from_path(path: &str) -> Option<i64> {
 
     // Flat transcoded-variant layout returned by GET /videos/{id}/variants:
     //   /media/{video_id}_{resolution}.mp4   (resolution like 720p/1080p/...)
-    // `video_id` is numeric; the resolution suffix is a whitelisted value
-    // (digits followed by 'p'). This keeps arbitrary "{timestamp}_{filename}.mp4"
-    // orphan files from being treated as a video (M-03).
+    // `video_id` is numeric; the resolution suffix MUST be the whitelisted
+    // "{digits}p" form (720p/1080p/...). A bare digit run is NOT a resolution:
+    // user uploads named like "{n}_{timestamp}.mp4" (a common camera export
+    // scheme) were misparsed as "{video_id=1}_{resolution=...}.mp4", binding
+    // playback sessions to a wrong/nonexistent video id and rejecting every
+    // range request with 403 "播放会话已过期". Such paths must fall through to
+    // the stream_url DB lookup below instead (M-03).
     let basename = stripped.rsplit('/').next().unwrap_or(stripped);
     if let Some((id_str, res)) = basename.rsplit_once('_') {
         let res_stem = res.rsplit_once('.').map(|(s, _)| s).unwrap_or(res);
-        let res_core = res_stem.strip_suffix('p').unwrap_or(res_stem);
-        if !res_core.is_empty() && res_core.chars().all(|c| c.is_ascii_digit()) {
-            if let Ok(id) = id_str.parse::<i64>() {
-                return Some(id);
+        if let Some(res_core) = res_stem.strip_suffix('p') {
+            if !res_core.is_empty() && res_core.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(id) = id_str.parse::<i64>() {
+                    return Some(id);
+                }
             }
         }
     }
@@ -744,6 +749,29 @@ mod tests {
         assert_eq!(
             extract_video_id_from_path("/media/1699999999_hello.mp4"),
             None
+        );
+        // Regression: camera/timestamp uploads like "{n}_{digits}.mp4" have a
+        // bare digit suffix which is NOT a "{digits}p" resolution. They must
+        // stay unresolved here so the stream_url DB lookup resolves them;
+        // previously "1_4924860112935323688.mp4" extracted video_id=1 and
+        // broke playback-session binding for ~80% of the library.
+        assert_eq!(
+            extract_video_id_from_path("/media/1_4924860112935323688.mp4"),
+            None
+        );
+        assert_eq!(
+            extract_video_id_from_path("/media/12_3456789012345678901.mp4"),
+            None
+        );
+        // Same for image uploads registered as videos.
+        assert_eq!(
+            extract_video_id_from_path("/media/-4924860112935323688_1109.jpg"),
+            None
+        );
+        // A digit run ending in 'p' is still a resolution.
+        assert_eq!(
+            extract_video_id_from_path("/media/12345_720p.mp4"),
+            Some(12345)
         );
     }
 

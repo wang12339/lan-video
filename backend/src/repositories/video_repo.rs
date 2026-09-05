@@ -643,9 +643,6 @@ impl VideoRepository {
         .await
     }
 
-    /// 批量检查 (文件名, 文件大小) 组合是否已存在（用于上传去重）。
-    ///
-
     /// 全量列出本地视频的 `(id, tenant_id, stream_url)`,供后台
     /// “视频记录 ↔ 物理文件”一致性清扫使用(文件丢失的记录会被删除)。
     pub async fn list_local_video_media(&self) -> Result<Vec<(i64, i64, String)>, sqlx::Error> {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
+import AuthDialog from '../../components/AuthDialog/AuthDialog'
 import { useHomeData } from './hooks/useHomeData'
 import HeroSection from './HeroSection'
 import CategoryFilter from './CategoryFilter'
@@ -32,6 +33,7 @@ const ScrollTopButton = memo(function ScrollTopButton({ ariaLabel }: { ariaLabel
 export default function Home() {
   const { t } = useTranslation()
   const { user } = useAuth()
+  const [showAuth, setShowAuth] = useState(false)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(() =>
     (localStorage.getItem('home-view-mode') as 'grid' | 'list') || 'grid'
   )
@@ -175,9 +177,20 @@ export default function Home() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
       />
 
-      <SearchBar isPending={isPending} emailVerified={emailVerified} />
+      <SearchBar isPending={!!user && isPending} emailVerified={emailVerified} />
 
-      {!user && <HeroSection trending={trending} />}
+      {!user && !query && <HeroSection trending={trending} />}
+
+      {!user && query && (
+        <div className="empty-state" role="status" aria-live="polite">
+          <div className="empty-icon" aria-hidden="true">🔍</div>
+          <div className="empty-text">{t('home.guestSearchTitle')}</div>
+          <p className="empty-hint">{t('home.guestSearchDesc')}</p>
+          <button className="empty-cta" onClick={() => setShowAuth(true)}>
+            {t('nav.loginRegister')}
+          </button>
+        </div>
+      )}
 
       {user && (
         <>
@@ -211,6 +224,8 @@ export default function Home() {
       <div ref={sentinelRef} className="load-sentinel" aria-hidden="true" />
 
       {showScrollTop && <ScrollTopButton ariaLabel={t('common.scrollToTop')} />}
+
+      {showAuth && !user && <AuthDialog onClose={() => setShowAuth(false)} />}
     </div>
   )
 }

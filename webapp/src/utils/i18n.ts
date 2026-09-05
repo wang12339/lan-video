@@ -1,4 +1,5 @@
 // 国际化增强工具
+import i18n from '../i18n'
 
 // 日期格式化
 export function formatDate(
@@ -49,12 +50,12 @@ export function formatRelativeTime(
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
-  
-  if (seconds < 60) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟前`
-  if (hours < 24) return `${hours}小时前`
-  if (days < 7) return `${days}天前`
-  
+
+  if (seconds < 60) return i18n.t('time.justNow')
+  if (minutes < 60) return i18n.t('time.minutesAgo', { n: minutes })
+  if (hours < 24) return i18n.t('time.hoursAgo', { n: hours })
+  if (days < 7) return i18n.t('time.daysAgo', { n: days })
+
   return formatDate(d, locale)
 }
 
