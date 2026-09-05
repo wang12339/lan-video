@@ -304,3 +304,89 @@ async fn test_burn_deletes_video_and_physical_files() {
     cleanup_test_user(fx.state.repos.video.pool(), &fx.uploader.0).await;
     cleanup_test_video(fx.state.repos.video.pool(), fx.video_id).await;
 }
+
+/// 服务端强制触发：仅保存播放进度到达片尾（不调用 /burn 接口）即焚毁。
+/// 防"不点开始观看/屏蔽焚毁调用"的绕过——观看完成由服务端判定。
+#[tokio::test]
+async fn test_burn_triggers_server_side_on_history_save_at_end() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let fx = setup_video().await;
+    let id_param = hash_id(fx.video_id);
+
+    // 设置服务端片长 100s（create_test_video 为外链视频，duration=0 无法判定片尾）
+    sqlx::query("UPDATE videos SET duration = 100 WHERE id = $1")
+        .bind(fx.video_id)
+        .execute(fx.state.repos.video.pool())
+        .await
+        .expect("set server duration");
+
+    // 仅上报进度到片尾（不调用 /burn）→ 服务端自动焚毁
+    let (status, _) = send_json(
+        &fx.app,
+        Method::POST,
+        "/playback/history",
+        Some(&fx.viewer.1),
+        Some(json!({ "video_id": fx.video_id, "position_ms": 100_000, "duration_ms": 100_000 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // 视频已被服务端焚毁：详情 404、再次焚毁 404
+    let (status, _) = send_json(
+        &fx.app,
+        Method::GET,
+        &format!("/videos/{id_param}"),
+        Some(&fx.viewer.1),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "片尾进度落库后必须被服务端焚毁"
+    );
+    let (status, _) = send_json(
+        &fx.app,
+        Method::POST,
+        &format!("/videos/{id_param}/burn"),
+        Some(&fx.viewer.1),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // 未到片尾的上报不触发：另起一个视频，进度 50% 落库后仍存在
+    let video2 = create_test_video_owned_by(&fx.state, "burn2", fx.uploader.2).await;
+    sqlx::query("UPDATE videos SET duration = 100 WHERE id = $1")
+        .bind(video2)
+        .execute(fx.state.repos.video.pool())
+        .await
+        .expect("set server duration 2");
+    let id2 = hash_id(video2);
+    let (status, _) = send_json(
+        &fx.app,
+        Method::POST,
+        "/playback/history",
+        Some(&fx.viewer.1),
+        Some(json!({ "video_id": video2, "position_ms": 50_000, "duration_ms": 100_000 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send_json(
+        &fx.app,
+        Method::GET,
+        &format!("/videos/{id2}"),
+        Some(&fx.viewer.1),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "未到片尾的视频不能被焚毁");
+    cleanup_test_video(fx.state.repos.video.pool(), video2).await;
+
+    cleanup_test_user(fx.state.repos.video.pool(), &fx.viewer.0).await;
+    cleanup_test_user(fx.state.repos.video.pool(), &fx.uploader.0).await;
+    cleanup_test_video(fx.state.repos.video.pool(), fx.video_id).await;
+}

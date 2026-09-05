@@ -193,8 +193,16 @@ const Player = memo(function Player() {
     if (burnGateNeeded && !burnArmed && !burned && video) setBurnConfirmOpen(true)
   }, [burnGateNeeded, burnArmed, burned, video])
 
+  // 未确认前压制播放：除了初始 pause，任何 play 事件（自动起播/快捷键/点击）
+  // 都立即压回，确保不点"开始观看"视频无法真正播放
   useEffect(() => {
-    if (burnGateNeeded && !burnArmed && !burned) videoRef.current?.pause()
+    if (!burnGateNeeded || burnArmed || burned) return
+    const v = videoRef.current
+    if (!v) return
+    v.pause()
+    const suppress = () => { v.pause() }
+    v.addEventListener('play', suppress)
+    return () => v.removeEventListener('play', suppress)
   }, [burnGateNeeded, burnArmed, burned, videoId])
 
   const { handleShare, showShareTooltip, shareTooltipMsg, shareErrorType } = useShareHandler(user, video)
@@ -230,8 +238,15 @@ const Player = memo(function Player() {
     if (burnGateNeeded && videoId) {
       burnVideo(videoId)
         .then(() => setBurned(true))
-        .catch((e: Error) => {
-          toast(e.message || t('player.burnFailed'), 'error')
+        .catch((e: unknown) => {
+          // 404：服务端已在进度落库时自动焚毁（先于前端调用），同样视为成功
+          const status = (e as { status?: number } | null)?.status
+          if (status === 404) {
+            setBurned(true)
+            return
+          }
+          const msg = (e as { message?: string } | null)?.message
+          toast(msg || t('player.burnFailed'), 'error')
         })
     }
   }, [onEnded, burnGateNeeded, videoId, toast, t])

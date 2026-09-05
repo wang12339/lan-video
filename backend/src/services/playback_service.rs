@@ -99,7 +99,31 @@ impl PlaybackService {
         position_ms: i64,
         duration_ms: i64,
     ) -> Result<(), sqlx::Error> {
-        if !self.should_write(username, video_id) {
+        self.update_playback_opts(
+            tenant_id,
+            username,
+            video_id,
+            position_ms,
+            duration_ms,
+            false,
+        )
+        .await
+    }
+
+    /// 同 [`Self::update_playback`]，`force = true` 时绕过写库节流。
+    ///
+    /// 阅后即焚的片尾保存必须落库（片尾写每用户每视频仅一次，节流反而会
+    /// 吞掉触发焚毁的最后一次进度上报）。
+    pub async fn update_playback_opts(
+        &self,
+        tenant_id: i64,
+        username: &str,
+        video_id: i64,
+        position_ms: i64,
+        duration_ms: i64,
+        force: bool,
+    ) -> Result<(), sqlx::Error> {
+        if !force && !self.should_write(username, video_id) {
             return Ok(());
         }
         self.repo

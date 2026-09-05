@@ -101,18 +101,61 @@ pub async fn update_playback_history(
             "播放位置不能超过视频时长",
         ));
     }
+    // 片尾判定以服务端片长为准（防客户端谎报时长度绕过焚毁判定）。
+    // 到达片尾时强制落库（绕过节流，片尾写每用户每视频仅一次），
+    // 并由服务端直接焚毁——不依赖前端是否调用焚毁接口。
+    let at_end = match state
+        .services
+        .video
+        .get_video(auth_user.tenant_id, payload.video_id)
+        .await
+    {
+        Ok(Some(v)) => {
+            crate::services::video_service::VideoService::is_at_end(payload.position_ms, v.duration)
+        }
+        _ => false,
+    };
     state
         .services
         .playback
-        .update_playback(
+        .update_playback_opts(
             auth_user.tenant_id,
             &auth_user.username,
             payload.video_id,
             payload.position_ms,
             payload.duration_ms,
+            at_end,
         )
         .await
         .map_err(|e| internal_error_log("update_playback", &e))?;
+    if at_end {
+        match state
+            .services
+            .video
+            .burn_video_record(auth_user.tenant_id, payload.video_id)
+            .await
+        {
+            Ok(_) => {
+                state.invalidate_caches();
+                state.playback_sessions.stop(
+                    auth_user.tenant_id,
+                    &auth_user.username,
+                    payload.video_id,
+                );
+                tracing::info!(
+                    user = %auth_user.username,
+                    video_id = payload.video_id,
+                    "video burned on watch completion (history trigger)"
+                );
+            }
+            Err(crate::util::error::ServiceError::NotFound(_)) => {}
+            Err(e) => tracing::warn!(
+                video_id = payload.video_id,
+                error = %e,
+                "auto burn on watch completion failed"
+            ),
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

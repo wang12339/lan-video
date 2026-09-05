@@ -121,8 +121,9 @@ impl VideoService {
         username: &str,
         video_id: i64,
     ) -> Result<(), ServiceError> {
-        let video = self
-            .repo
+        // 先判存在性：已焚毁/不存在的视频必须 404（而不是被观看校验的
+        // 403 掩盖——首次焚毁会级联删除播放历史，重复请求会走不到进度）
+        self.repo
             .find_by_id(tenant_id, video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
@@ -135,6 +136,25 @@ impl VideoService {
         if !is_watch_complete(position_ms, duration_ms) {
             return Err(ServiceError::Forbidden("需完整观看后才能焚毁".into()));
         }
+        self.burn_video_record(tenant_id, video_id).await
+    }
+
+    /// 执行焚毁（无观看校验——调用方自行完成前置判定）。
+    ///
+    /// - 数据库：`delete_video_cascade`（视频行 + 播放历史/点赞/收藏/评论/
+    ///   标签关联，变体/弹幕/分享等由外键级联）
+    /// - 物理文件：主文件 + 封面 + 缩略图 + 全部转码变体（尽力而为，
+    ///   文件清理失败不影响删除结果）
+    pub async fn burn_video_record(
+        &self,
+        tenant_id: i64,
+        video_id: i64,
+    ) -> Result<(), ServiceError> {
+        let video = self
+            .repo
+            .find_by_id(tenant_id, video_id)
+            .await?
+            .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
         // 删除前取回全部需要清理的文件路径（级联删除后变体行即不存在）
         let variant_paths = self.repo.list_variant_file_paths(video_id).await?;
@@ -173,8 +193,16 @@ impl VideoService {
             tracing::warn!("burn media cleanup task panicked: {}", e);
         }
 
-        info!(video_id, tenant_id, username, "video burned after watch");
+        info!(video_id, tenant_id, "video burned after watch");
         Ok(())
+    }
+
+    /// 片尾判定（服务端片长为准）：播放进度到达片长最后 1 秒内视为看完。
+    ///
+    /// 服务端片长未知（0/负值）时返回 false——此时无法判定"看完"，
+    /// 只能依赖前端显式调用焚毁接口。
+    pub fn is_at_end(position_ms: i64, duration_secs: i64) -> bool {
+        duration_secs > 0 && position_ms + 1000 >= duration_secs.saturating_mul(1000)
     }
 
     /// 添加外部视频
@@ -672,5 +700,18 @@ mod tests {
         assert!(!is_watch_complete(0, -1));
         assert!(is_watch_complete(1, 0));
         assert!(is_watch_complete(5_000, 0));
+    }
+
+    #[test]
+    fn is_at_end_uses_server_duration() {
+        // 100s 片长：99s 处（含 1s 容差）即视为片尾
+        assert!(VideoService::is_at_end(100_000, 100));
+        assert!(VideoService::is_at_end(99_000, 100));
+        assert!(!VideoService::is_at_end(98_999, 100));
+        // 服务端片长未知 → 不判定
+        assert!(!VideoService::is_at_end(999_999, 0));
+        assert!(!VideoService::is_at_end(999_999, -1));
+        // 负进度
+        assert!(!VideoService::is_at_end(-1, 100));
     }
 }
