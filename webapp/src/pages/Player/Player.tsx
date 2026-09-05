@@ -181,11 +181,15 @@ const Player = memo(function Player() {
   const [burnConfirmOpen, setBurnConfirmOpen] = useState(false)
   const [burnArmed, setBurnArmed] = useState(false)
   const [burned, setBurned] = useState(false)
+  // ConfirmDialog 在确认完成后也会回调 onCancel（作为"已关闭"信号），
+  // 用该 ref 区分"用户真的取消"与"确认后的关闭"，后者不能导航离开
+  const burnArmedRef = useRef(false)
 
   useEffect(() => {
     setBurnConfirmOpen(false)
     setBurnArmed(false)
     setBurned(false)
+    burnArmedRef.current = false
   }, [videoId])
 
   // 视频就绪后弹出确认门；确认前不允许起播（源加载完成会自动 play，这里压住）
@@ -252,6 +256,7 @@ const Player = memo(function Player() {
   }, [onEnded, burnGateNeeded, videoId, toast, t])
 
   const handleBurnConfirm = useCallback(() => {
+    burnArmedRef.current = true
     setBurnConfirmOpen(false)
     setBurnArmed(true)
     const v = videoRef.current
@@ -259,6 +264,9 @@ const Player = memo(function Player() {
   }, [])
 
   const handleBurnCancel = useCallback(() => {
+    // ConfirmDialog 确认完成后会调用 onCancel 作为关闭回调——此时用户
+    // 已选择观看，绝不能导航离开（否则视频刚开始播放就被切走）
+    if (burnArmedRef.current) return
     setBurnConfirmOpen(false)
     navigate(-1)
   }, [navigate])

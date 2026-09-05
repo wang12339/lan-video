@@ -110,9 +110,11 @@ pub async fn update_playback_history(
         .get_video(auth_user.tenant_id, payload.video_id)
         .await
     {
-        Ok(Some(v)) => {
-            crate::services::video_service::VideoService::is_at_end(payload.position_ms, v.duration)
-        }
+        Ok(Some(v)) => crate::services::video_service::VideoService::is_at_end(
+            payload.position_ms,
+            v.duration,
+            payload.duration_ms,
+        ),
         _ => false,
     };
     state

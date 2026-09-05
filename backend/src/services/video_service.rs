@@ -197,12 +197,30 @@ impl VideoService {
         Ok(())
     }
 
-    /// 片尾判定（服务端片长为准）：播放进度到达片长最后 1 秒内视为看完。
+    /// 片尾判定（服务端自动焚毁用）。
     ///
-    /// 服务端片长未知（0/负值）时返回 false——此时无法判定"看完"，
-    /// 只能依赖前端显式调用焚毁接口。
-    pub fn is_at_end(position_ms: i64, duration_secs: i64) -> bool {
-        duration_secs > 0 && position_ms + 1000 >= duration_secs.saturating_mul(1000)
+    /// 服务端片长按秒存储（截断，最多低估 999ms），用 `+999` 补偿；客户端
+    /// 上报的 `duration_ms` 更接近真实片长，取两者较小值，防谎报更大时长
+    /// 推迟触发。判定容差 500ms——到达片尾前最后半秒内即视为看完。
+    /// 服务端与客户端片长均未知时返回 false，只能依赖显式调用焚毁接口。
+    pub fn is_at_end(position_ms: i64, server_duration_secs: i64, client_duration_ms: i64) -> bool {
+        if position_ms < 0 {
+            return false;
+        }
+        let server_ms = if server_duration_secs > 0 {
+            server_duration_secs
+                .saturating_mul(1000)
+                .saturating_add(999)
+        } else {
+            i64::MAX
+        };
+        let client_ms = if client_duration_ms > 0 {
+            client_duration_ms
+        } else {
+            i64::MAX
+        };
+        let threshold = server_ms.min(client_ms);
+        threshold < i64::MAX && position_ms + 500 >= threshold
     }
 
     /// 添加外部视频
@@ -704,14 +722,22 @@ mod tests {
 
     #[test]
     fn is_at_end_uses_server_duration() {
-        // 100s 片长：99s 处（含 1s 容差）即视为片尾
-        assert!(VideoService::is_at_end(100_000, 100));
-        assert!(VideoService::is_at_end(99_000, 100));
-        assert!(!VideoService::is_at_end(98_999, 100));
-        // 服务端片长未知 → 不判定
-        assert!(!VideoService::is_at_end(999_999, 0));
-        assert!(!VideoService::is_at_end(999_999, -1));
+        // 100s 片长：客户端片长 100_000ms，阈值取 min(100_999, 100_000)
+        assert!(VideoService::is_at_end(100_000, 100, 100_000));
+        assert!(VideoService::is_at_end(99_600, 100, 100_000));
+        assert!(!VideoService::is_at_end(99_400, 100, 100_000));
+        // 服务端片长截断（真实 7.764s，存为 7s）时用 +999 补偿并与客户端对齐
+        assert!(VideoService::is_at_end(7_300, 7, 7_764));
+        assert!(!VideoService::is_at_end(7_200, 7, 7_764));
+        // 客户端谎报更大时长等同不发进度（可躲过该触发，与屏蔽上报相同，
+        // 属既定接受范围——前端仍会显式调用焚毁接口）
+        assert!(!VideoService::is_at_end(99_600, 100, 999_999));
+        // 客户端谎报更小时长只会让自己更快触发（提前焚毁无害）
+        assert!(VideoService::is_at_end(49_600, 100, 50_000));
+        // 双方片长均未知 → 不判定
+        assert!(!VideoService::is_at_end(999_999, 0, 0));
+        assert!(!VideoService::is_at_end(999_999, -1, -1));
         // 负进度
-        assert!(!VideoService::is_at_end(-1, 100));
+        assert!(!VideoService::is_at_end(-1, 100, 100_000));
     }
 }
