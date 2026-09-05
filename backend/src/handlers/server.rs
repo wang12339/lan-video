@@ -152,12 +152,18 @@ fn check_disk_space(path: &std::path::Path) -> Result<DiskUsage, String> {
     use sysinfo::Disks;
 
     let disks = Disks::new_with_refreshed_list();
-    let path_str = path.to_str().unwrap_or("/");
+    // sysinfo 只列出绝对挂载点; media_root 等配置常为相对路径("./media"),
+    // 必须先 canonicalize 成绝对路径再匹配, 否则永远找不到磁盘, /health 503。
+    let path_str = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
 
-    // Find the disk that contains the path
+    // 嵌套挂载时取最长前缀的挂载点, 统计最贴近该目录的文件系统
     let disk = disks
         .iter()
-        .find(|d| path_str.starts_with(d.mount_point().to_str().unwrap_or("")))
+        .filter(|d| path_str.starts_with(d.mount_point().to_str().unwrap_or("")))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
         .ok_or_else(|| "Could not find disk for path".to_string())?;
 
     let total = disk.total_space();
