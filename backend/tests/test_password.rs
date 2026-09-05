@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // Standalone test to verify password hashing/verification works
 // Run with: cargo test --test test_password -- --nocapture
 

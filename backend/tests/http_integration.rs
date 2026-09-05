@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! HTTP-level integration tests using `axum::test`.
 //!
 //! These exercise the full middleware stack including auth, rate limiting,
@@ -1367,6 +1368,7 @@ async fn test_playback_session_endpoints() {
     };
     let state = test_app_state().await;
     let (username, _user_id, token) = create_viewer_with_token(&state, "session").await;
+    let video_id = create_test_video(&state, "session").await;
     let app = build_test_app().await;
 
     // video_id <= 0 → 400
@@ -1381,8 +1383,19 @@ async fn test_playback_session_endpoints() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {}", body);
     assert_eq!(body["error"], json!("无效的视频ID"));
 
+    // Unknown video → 404
+    let (status, _) = send_json(
+        &app,
+        Method::POST,
+        "/playback/session/start",
+        Some(&token),
+        Some(json!({ "video_id": i64::MAX })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "未知视频应返回 404");
+
     // Start → heartbeat → stop all succeed
-    let payload = json!({ "video_id": 42 });
+    let payload = json!({ "video_id": video_id });
     for (path, _) in [
         ("/playback/session/start", "start"),
         ("/playback/session/heartbeat", "heartbeat"),
@@ -1400,6 +1413,7 @@ async fn test_playback_session_endpoints() {
     }
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
+    cleanup_test_video(state.repos.video.pool(), video_id).await;
 }
 
 // ── 播放列表 ──

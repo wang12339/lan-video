@@ -121,7 +121,7 @@ backend/                    # Rust/Axum 后端
 │   ├── middleware/          # 认证、限流、热链接防护等
 │   ├── models/             # 数据模型
 │   └── util/               # 工具函数
-├── migrations/             # SQL 迁移文件（40 个，自动发现）
+├── migrations/             # SQL 迁移文件（49 个，自动发现）
 └── tests/                  # 单元测试 + 集成测试 + OpenAPI 一致性测试
 
 webapp/                     # React/Vite 前端

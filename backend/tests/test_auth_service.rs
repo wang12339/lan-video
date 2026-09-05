@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use atmos_video_backend::middleware::auth::{
     clear_token_cookie, extract_token_from_cookie, set_token_cookie,
 };

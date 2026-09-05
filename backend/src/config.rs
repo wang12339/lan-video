@@ -135,13 +135,25 @@ impl AppConfig {
 
         let registration_enabled = std::sync::Arc::new(AtomicBool::new(registration_enabled));
 
-        let public_url = std::env::var("PUBLIC_URL").unwrap_or_else(|_| {
-            panic!("PUBLIC_URL must be set in production. This is the external-accessible base URL for share links, hotlink protection, and HTTPS redirects.");
-        });
+        let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".into());
+        let is_production = app_env.eq_ignore_ascii_case("production");
+
+        let public_url = match std::env::var("PUBLIC_URL") {
+            Ok(v) if !v.trim().is_empty() => v,
+            _ if is_production => panic!(
+                "PUBLIC_URL must be set in production. This is the external-accessible base URL for share links, hotlink protection, and HTTPS redirects."
+            ),
+            _ => {
+                tracing::warn!(
+                    "PUBLIC_URL not set; defaulting to http://localhost:{server_port} (APP_ENV={app_env})"
+                );
+                format!("http://localhost:{server_port}")
+            }
+        };
 
         let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
 
-        let cookie_secure = parse_bool_env("COOKIE_SECURE", true);
+        let cookie_secure = parse_bool_env("COOKIE_SECURE", is_production);
 
         let log_dir = std::env::var("LOG_DIR").unwrap_or_else(|_| "./logs".into());
 
@@ -196,7 +208,6 @@ impl AppConfig {
         let sentry_dsn = std::env::var("SENTRY_DSN").unwrap_or_default();
         let sentry_environment =
             std::env::var("SENTRY_ENVIRONMENT").unwrap_or_else(|_| "production".into());
-        let app_env = std::env::var("APP_ENV").unwrap_or_else(|_| "production".into());
         let allow_first_user_admin = parse_bool_env("ALLOW_FIRST_USER_ADMIN", false);
         let trusted_proxy = parse_bool_env("TRUSTED_PROXY", false);
         let hashid_salt = std::env::var("HASHID_SALT").unwrap_or_default();
@@ -331,6 +342,74 @@ mod tests {
         std::env::remove_var("PARSE_BOOL_MISSING_KEY");
         assert!(parse_bool_env("PARSE_BOOL_MISSING_KEY", true));
         assert!(!parse_bool_env("PARSE_BOOL_MISSING_KEY", false));
+    }
+
+    /// Serializes tests that mutate env vars consumed by `AppConfig::from_env`.
+    fn lock_from_env_env() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn restore_env(key: &str, saved: Option<String>) {
+        match saved {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn from_env_development_falls_back_to_localhost_public_url() {
+        let _env_guard = lock_from_env_env();
+        let saved_app_env = std::env::var("APP_ENV").ok();
+        let saved_public_url = std::env::var("PUBLIC_URL").ok();
+        let saved_cookie_secure = std::env::var("COOKIE_SECURE").ok();
+        let saved_server_port = std::env::var("SERVER_PORT").ok();
+
+        std::env::set_var("APP_ENV", "development");
+        std::env::remove_var("PUBLIC_URL");
+        std::env::remove_var("COOKIE_SECURE");
+        std::env::remove_var("SERVER_PORT");
+
+        let config = AppConfig::from_env();
+        assert_eq!(config.public_url, "http://localhost:8082");
+        assert!(!config.cookie_secure);
+
+        restore_env("APP_ENV", saved_app_env);
+        restore_env("PUBLIC_URL", saved_public_url);
+        restore_env("COOKIE_SECURE", saved_cookie_secure);
+        restore_env("SERVER_PORT", saved_server_port);
+    }
+
+    #[test]
+    #[should_panic(expected = "PUBLIC_URL must be set in production")]
+    fn from_env_production_requires_public_url() {
+        let _env_guard = lock_from_env_env();
+        std::env::set_var("APP_ENV", "production");
+        std::env::remove_var("PUBLIC_URL");
+        let _ = AppConfig::from_env();
+    }
+
+    #[test]
+    fn from_env_explicit_values_win_over_env_defaults() {
+        let _env_guard = lock_from_env_env();
+        let saved_app_env = std::env::var("APP_ENV").ok();
+        let saved_public_url = std::env::var("PUBLIC_URL").ok();
+        let saved_cookie_secure = std::env::var("COOKIE_SECURE").ok();
+
+        std::env::set_var("APP_ENV", "development");
+        std::env::set_var("PUBLIC_URL", "https://video.example.com");
+        std::env::set_var("COOKIE_SECURE", "false");
+
+        let config = AppConfig::from_env();
+        assert_eq!(config.public_url, "https://video.example.com");
+        assert!(!config.cookie_secure);
+
+        restore_env("APP_ENV", saved_app_env);
+        restore_env("PUBLIC_URL", saved_public_url);
+        restore_env("COOKIE_SECURE", saved_cookie_secure);
     }
 
     #[test]

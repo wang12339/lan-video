@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! 安全测试：验证后端的安全防护机制。
 //!
 //! 测试覆盖：
@@ -79,7 +80,7 @@ mod sql_injection_tests {
         // 从而被正确转义，不会被解释为 SQL 代码
         for input in &malicious_inputs {
             // 验证输入被正确处理（不会改变长度，表示没有被"智能"解析）
-            assert!(input.len() > 0, "恶意输入应保持原样，由参数化查询处理");
+            assert!(!input.is_empty(), "恶意输入应保持原样，由参数化查询处理");
         }
     }
 
@@ -220,7 +221,7 @@ mod csrf_tests {
 
     #[test]
     fn origin_header_validation() {
-        let allowed_origins = vec!["https://example.com", "https://app.example.com"];
+        let allowed_origins = ["https://example.com", "https://app.example.com"];
 
         let test_cases = vec![
             ("https://example.com", true),
@@ -260,8 +261,8 @@ mod csrf_tests {
 
     #[test]
     fn http_method_not_allowed_in_cors() {
-        let dangerous_methods = vec!["TRACE", "CONNECT"];
-        let safe_methods = vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+        let dangerous_methods = ["TRACE", "CONNECT"];
+        let safe_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
         for m in &dangerous_methods {
             assert!(
                 !safe_methods.contains(m),
@@ -273,7 +274,7 @@ mod csrf_tests {
 
     #[test]
     fn origin_validation_prevents_http_for_https_config() {
-        let allowed_origins = vec!["https://example.com"];
+        let allowed_origins = ["https://example.com"];
         assert!(
             !allowed_origins.contains(&"http://example.com"),
             "HTTP origin must not match HTTPS-only config"

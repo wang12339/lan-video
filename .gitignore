@@ -38,4 +38,5 @@ webapp/node_modules/.vite/
 
 # Backend build artifacts
 backend/screenshot-*.png
+backend/.build_profile
 /media

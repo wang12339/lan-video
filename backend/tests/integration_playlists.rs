@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Integration tests for the playlist feature.
 //!
 //! Requires a running PostgreSQL database. Set `DATABASE_URL` to enable.

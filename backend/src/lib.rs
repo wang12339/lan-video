@@ -1,4 +1,5 @@
 #![recursion_limit = "512"]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod app;
 pub mod config;

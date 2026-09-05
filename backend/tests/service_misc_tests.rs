@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! 搜索 / 推荐 / 播放 / 工具类的纯逻辑单元测试。
 //!
 //! 背景：50 智能体迭代改进 · 测试补齐环节。只补测试，不改源码。

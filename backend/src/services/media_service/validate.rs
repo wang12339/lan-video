@@ -721,7 +721,7 @@ mod tests {
         ];
         let dir = std::env::temp_dir();
         let path = dir.join("sample.m4v");
-        std::fs::write(&path, &m4v_bytes).unwrap();
+        std::fs::write(&path, m4v_bytes).unwrap();
         assert!(
             validate_file_type(&path, "m4v").is_ok(),
             "M4V brand 必须通过 .m4v 校验"

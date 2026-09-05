@@ -54,6 +54,20 @@ fn discover_migrations(dir: &PathBuf) -> Vec<(String, String)> {
             .unwrap_or_else(|e| panic!("Failed to read migration file {:?}: {}", path, e));
         migrations.push((name.to_owned(), sql));
     }
+
+    let mut seen_prefix: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (name, _) in &migrations {
+        let prefix = name.split('_').next().unwrap_or(name);
+        if let Some(existing) = seen_prefix.insert(prefix, name.as_str()) {
+            panic!(
+                "Duplicate migration number prefix '{}' detected: '{}' and '{}'. \
+                 Rename the files so every migration has a unique numeric prefix, \
+                 then update the `version` column in `_schema_migrations` on any \
+                 database that already applied the old names.",
+                prefix, existing, name
+            );
+        }
+    }
     migrations
 }
 
@@ -255,5 +269,35 @@ mod tests {
     #[test]
     fn slow_query_threshold_is_100ms() {
         assert_eq!(SLOW_QUERY_THRESHOLD, Duration::from_millis(100));
+    }
+
+    fn temp_mig_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("atmos_mig_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn discover_migrations_accepts_unique_prefixes() {
+        let dir = temp_mig_dir("ok");
+        std::fs::write(dir.join("001_a.sql"), "SELECT 1;").unwrap();
+        std::fs::write(dir.join("002_b.sql"), "SELECT 2;").unwrap();
+        std::fs::write(dir.join("readme.txt"), "ignored").unwrap();
+        let migrations = discover_migrations(&dir);
+        assert_eq!(migrations.len(), 2);
+        assert_eq!(migrations[0].0, "001_a");
+        assert_eq!(migrations[1].0, "002_b");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[should_panic(expected = "Duplicate migration number prefix")]
+    fn discover_migrations_rejects_duplicate_prefix() {
+        let dir = temp_mig_dir("dup");
+        std::fs::write(dir.join("041_a.sql"), "SELECT 1;").unwrap();
+        std::fs::write(dir.join("041_b.sql"), "SELECT 2;").unwrap();
+        let _ = discover_migrations(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

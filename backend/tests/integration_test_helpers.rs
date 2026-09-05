@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // Shared helpers may appear unused in some test binaries
 #![allow(dead_code)]
 //! Shared helpers for integration tests that run against a real PostgreSQL database.
@@ -42,20 +43,41 @@ use sqlx::PgPool;
 
 /// Returns the database URL from the environment, or skips the test if not set.
 pub fn database_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => Some(url),
+        _ => {
+            WARNED.call_once(|| {
+                eprintln!(
+                    "NOTE: DATABASE_URL is not set — DB integration tests are SKIPPED. `cargo test` green does NOT mean the integration suite passed."
+                );
+            });
+            None
+        }
+    }
 }
 
 /// Create a PgPool connected to the test database.
 /// Panics if connection fails (tests should not run without a working DB).
 pub async fn test_pool() -> PgPool {
+    static SCHEMA_READY: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
     let url = database_url().expect("DATABASE_URL not set — skipping integration test");
-    sqlx::postgres::PgPoolOptions::new()
+    let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
         .min_connections(1)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&url)
         .await
-        .expect("Failed to connect to test database")
+        .expect("Failed to connect to test database");
+    // Fixture helpers run raw SQL against the pool, so the schema must exist
+    // even when a binary's first tests never build a router. `build_router`
+    // applies migrations (idempotent); do it once per test process.
+    SCHEMA_READY
+        .get_or_init(|| async {
+            let _ = atmos_video_backend::app::build_router(test_config()).await;
+        })
+        .await;
+    pool
 }
 
 /// Build a minimal AppConfig suitable for integration tests.
@@ -406,7 +428,7 @@ pub fn auth_header_value(token: &str) -> String {
 /// hashid string (most resource ids are hashid-obfuscated).
 pub fn json_id(v: &serde_json::Value) -> i64 {
     v.as_i64()
-        .or_else(|| v.as_str().and_then(|s| hashid::decode_id(s)))
+        .or_else(|| v.as_str().and_then(hashid::decode_id))
         .expect("JSON id must be numeric or a decodable hashid")
 }
 

@@ -10,7 +10,7 @@
 
 ```bash
 cargo fmt --check          # format check
-cargo clippy -- -D warnings # lint (warnings are errors)
+cargo clippy --all-targets -- -D warnings # lint (warnings are errors; includes tests/benches)
 cargo build --release      # build
 cargo test                 # unit tests only (no DB needed)
 DATABASE_URL="postgres://kuaile@localhost:5432/atmos_video" cargo test  # full tests (needs PostgreSQL)
@@ -32,6 +32,8 @@ npm test       # Vitest unit tests (src/test/)
 ### Migrations are auto-discovered
 
 Migrations in `backend/migrations/` are auto-discovered at runtime. Files are sorted by filename and applied in order. Just drop a new `.sql` file into `migrations/` — no need to register it. The `_schema_migrations` table tracks which have been applied. Override the directory via `MIGRATIONS_DIR` env var (defaults to `$CARGO_MANIFEST_DIR/migrations/`).
+
+**Numeric prefixes must be unique** (`041_`, `042_`, …). `discover_migrations` fails fast at startup on duplicates (a duplicate prefix previously caused three `041_*` files; renumbered to 042–049 on 2026-09-05 — databases that applied the old names need `UPDATE _schema_migrations SET version=...` to the new names).
 
 ### CI order matters
 
@@ -107,7 +109,7 @@ The backend reads from `.env` (loaded by `dotenvy`). Key vars with non-obvious d
 - `backend/src/db.rs:6-36` — migration auto-discovery (`migrations_dir_or_default`, `discover_migrations`)
 - `backend/src/app.rs` — route definitions with middleware layers (global stack at the bottom of `build_router`; route groups: public → auth → video → playback → upload → admin → internal → docs)
 - `backend/src/openapi.rs` + `backend/tests/openapi_route_tests.rs` — hand-written OpenAPI spec + route↔spec consistency test (keep in sync with `app.rs`)
-- `backend/migrations/` — 40 auto-discovered migrations; latest is `040_search_suggest_trgm_and_recommendation_views.sql` (search-suggestion trigram index + recommendation views index)
+- `backend/migrations/` — 49 auto-discovered migrations; latest is `049_email_unique_restore.sql`
 - `backend/tests/` — DB-gated integration tests: `http_integration.rs`, `integration_auth.rs`, `integration_videos.rs`, `integration_test_helpers.rs`; offline tests: `openapi_route_tests.rs`, `service_content_tests.rs`, `service_media_tests.rs`, `service_misc_tests.rs`, `test_*.rs`
 - `webapp/vite.config.ts` — dev proxy config and build settings
 - `webapp/src/test/` — Vitest unit tests (`npm test`)

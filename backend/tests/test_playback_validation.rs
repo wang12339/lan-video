@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // Tests for playback history request validation and deserialization
 // Run with: cargo test --test test_playback_validation -- --nocapture
 

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use atmos_video_backend::util::pagination::{
     PaginationParams, DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE,
 };
@@ -70,7 +71,7 @@ fn test_pagination_zero_page_clamps_to_one() {
 fn test_pagination_exactly_max_page() {
     let p = PaginationParams::new(Some(MAX_PAGE), Some(1));
     assert_eq!(p.page, MAX_PAGE);
-    assert_eq!(p.offset(), (MAX_PAGE - 1) * 1);
+    assert_eq!(p.offset(), MAX_PAGE - 1);
 }
 
 #[test]

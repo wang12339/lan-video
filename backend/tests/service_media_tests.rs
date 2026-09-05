@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! 媒体服务 / 转码器 纯逻辑单元测试（集成测试形式）
 //!
 //! 覆盖 backend/src/services/media_service.rs 与 transcoder.rs 中
@@ -1203,8 +1204,10 @@ async fn test_transcode_ffmpeg_failure_propagates() {
 async fn test_transcode_ffmpeg_timeout_kills_child() {
     let root = temp_media_root();
     let input = unique_file(&root, "ffmpeg_slow.mp4", b"x");
-    let mut settings = atmos_video_backend::services::transcoder::TranscodeSettings::default();
-    settings.transcode_timeout = std::time::Duration::from_secs(1);
+    let settings = atmos_video_backend::services::transcoder::TranscodeSettings {
+        transcode_timeout: std::time::Duration::from_secs(1),
+        ..Default::default()
+    };
     let tx = mock_transcoder_with_settings(&root, settings);
     let err = tx
         .transcode(1, &input, vec!["720p".to_string()])
@@ -1306,8 +1309,10 @@ async fn test_get_video_info_timeout() {
     let dir = unique_dir("probe_slow");
     std::fs::create_dir_all(&dir).unwrap();
     let input = unique_file(&dir, "slow.mp4", b"x");
-    let mut settings = atmos_video_backend::services::transcoder::TranscodeSettings::default();
-    settings.ffprobe_timeout = std::time::Duration::from_secs(1);
+    let settings = atmos_video_backend::services::transcoder::TranscodeSettings {
+        ffprobe_timeout: std::time::Duration::from_secs(1),
+        ..Default::default()
+    };
     let tx = mock_transcoder_with_settings(std::path::Path::new(&dir), settings);
     let err = tx.get_video_info(&input).await.unwrap_err().to_string();
     assert!(err.contains("ffprobe timed out"), "{err}");

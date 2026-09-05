@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! 路由注册与 OpenAPI 文档一致性测试
 //!
 //! 背景

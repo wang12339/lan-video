@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use atmos_video_backend::util::error::ServiceError;
 use axum::http::StatusCode;
 

@@ -110,45 +110,12 @@ CREATE INDEX IF NOT EXISTS idx_user_favorites_user_video
 ON user_favorites (username, video_id);
 
 -- ============================================
--- 3. 清理死元组
+-- 3/4. VACUUM / ANALYZE 已移除
 -- ============================================
-
--- 清理 videos 表
-VACUUM ANALYZE videos;
-
--- 清理 playback_history 表
-VACUUM ANALYZE playback_history;
-
--- 清理 auth_tokens 表
-VACUUM ANALYZE auth_tokens;
-
--- 清理 users 表
-VACUUM ANALYZE users;
-
--- 清理其他表
-VACUUM ANALYZE comments;
-VACUUM ANALYZE share_links;
-VACUUM ANALYZE user_likes;
-VACUUM ANALYZE user_favorites;
-VACUUM ANALYZE video_tags;
-VACUUM ANALYZE video_variants;
-VACUUM ANALYZE transcoding_jobs;
-VACUUM ANALYZE playlists;
-VACUUM ANALYZE playlist_items;
-VACUUM ANALYZE tags;
-VACUUM ANALYZE tenants;
-VACUUM ANALYZE server_config;
-
--- ============================================
--- 4. 更新表统计信息
--- ============================================
-
-ANALYZE videos;
-ANALYZE users;
-ANALYZE playback_history;
-ANALYZE auth_tokens;
-ANALYZE comments;
-ANALYZE share_links;
+-- 原因：本项目的迁移在单个事务内执行（见 db.rs run_migrations），
+-- PostgreSQL 不允许在事务块内运行 VACUUM，导致全新数据库迁移失败。
+-- VACUUM/ANALYZE 属于维护操作，对 schema 无影响；空表上也无意义，
+-- 统计信息由 autovacuum 自动维护。如需手动执行，请在迁移外单独运行。
 
 -- ============================================
 -- 5. 添加软删除支持（可选）

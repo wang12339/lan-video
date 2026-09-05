@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! 单元测试：评论 / 分享 / 标签 / 播放列表 服务的纯逻辑部分。
 //!
 //! 说明：本文件是 integration test（`tests/` 目录下独立编译的 crate），
