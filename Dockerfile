@@ -4,6 +4,7 @@ WORKDIR /app
 COPY backend/Cargo.toml backend/Cargo.lock ./
 RUN mkdir -p src benches && echo 'fn main() {}' > src/main.rs && echo 'fn main() {}' > benches/tenant_performance.rs && cargo build --release --locked && rm -rf src benches
 COPY backend/src ./src
+COPY backend/benches ./benches
 RUN touch src/main.rs && cargo build --release --locked
 
 FROM node:20-slim AS frontend-builder
