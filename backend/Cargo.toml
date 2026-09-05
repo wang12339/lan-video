@@ -30,7 +30,7 @@ anyhow = "1.0"
 thiserror = "1"
 ammonia = "4.0"
 harsh = "0.2"
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.6", features = ["tokio-comp", "connection-manager"] }
 lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder", "hostname", "pool"] }
 sysinfo = "0.30"
 
