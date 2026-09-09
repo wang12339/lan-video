@@ -453,3 +453,56 @@
     left: 10px;
   }
 }
+
+/* ============================================================
+   移动端体验补丁（≤640px 统一断点）
+   1) 顶栏两行化：搜索框独占第二行（390px 下 6 控件挤一行，
+      搜索框曾被压到 84px、placeholder 截断成"搜索视…"）
+   2) 抽屉菜单激活项：桌面 tab 的通栏下划线在竖排抽屉里
+      改为左侧圆角短条
+   ============================================================ */
+@media (max-width: 640px) {
+  .nav {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: calc(var(--nav-h) + env(safe-area-inset-top));
+    padding: calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    row-gap: 8px;
+    column-gap: 8px;
+  }
+
+  .nav-search {
+    order: 10;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .nav-search input {
+    height: 38px;
+  }
+
+  /* 搜索框换行后导航更高（实测 107px）：页内容/抽屉/吸顶工具条
+     都按「第二行搜索框实际高度」让位，抽屉顶紧贴导航底无缝隙 */
+  .page-content {
+    padding-top: calc(var(--nav-h) + env(safe-area-inset-top) + 51px);
+  }
+
+  .nav-links {
+    top: calc(var(--nav-h) + env(safe-area-inset-top) + 51px);
+  }
+
+  .gallery-toolbar {
+    top: calc(var(--nav-h) + env(safe-area-inset-top) + 59px);
+  }
+
+  /* 竖排抽屉里的激活态：左侧短条替代通栏下划线 */
+  .nav-links .nav-link.active:after {
+    width: 3px;
+    right: auto;
+    left: 2px;
+    top: 10px;
+    bottom: 10px;
+    height: auto;
+    border-radius: 2px;
+  }
+}

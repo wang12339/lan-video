@@ -659,6 +659,25 @@
     --content-padding: 12px;
   }
 
+  /* 游客 hero 不再占满首屏（100svh-220px 在手机上把下面内容全顶出屏幕） */
+  .hero.guest-landing {
+    min-height: auto;
+    padding: 48px 20px;
+  }
+
+  /* 等宽 2 列：超长文件名（如 1_4947244571949008718.mp4）不可断行，
+     会把 1fr 列撑爆成 218/135 不对称列、卡片溢出屏幕；
+     minmax(0,1fr) 锁死列宽 */
+  .video-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 长文件名兜底断行（正常标题不受影响，仅在溢出时断） */
+  .video-info .title,
+  .video-info h3 {
+    overflow-wrap: anywhere;
+  }
+
   .hero {
     padding: 32px 16px;
     border-radius: 12px;
@@ -670,10 +689,6 @@
 
   .hero-sub {
     font-size: 14px;
-  }
-
-  .video-grid {
-    grid-template-columns: repeat(2, 1fr);
   }
 
   /* Reduce stagger delay on mobile for faster perception */
@@ -704,7 +719,7 @@
 /* Small phones */
 @media (max-width: 380px) {
   .video-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cat-tag {

@@ -581,28 +581,34 @@ html.overflow-hidden {
     padding: 20px 8px 16px;
   }
   .gallery-toolbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
     gap: 8px;
     padding: 8px 10px;
   }
+
+  /* 搜索框与切换按钮同排一行（原先 order 重排导致按钮孤零零
+     挤右上、搜索框甩到第二行大片留白） */
   .gallery-search {
-    max-width: 100%;
-    order: 2;
-    flex-basis: 100%;
+    order: 0;
+    flex: 1 1 auto;
+    flex-basis: auto;
+    max-width: none;
   }
   .gallery-view-switch {
-    order: 1;
-    margin-left: auto;
+    order: 0;
+    margin-left: 0;
+    flex-shrink: 0;
   }
   .gallery-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
   .gallery-grid.wide {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .gallery-skeleton-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
   .gallery-card {
@@ -660,11 +666,11 @@ html.overflow-hidden {
 
 @media (max-width: 400px) {
   .gallery-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
   .gallery-skeleton-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
   .gallery-card {
