@@ -400,59 +400,102 @@
 
 @media (max-width: 480px) {
   .auth-dialog {
-    padding: 20px 20px 16px;
-    max-width: 100%;
-    border-radius: var(--radius) var(--radius) 0 0;
-    /* vh 兜底（老内核不认识 dvh 会整条丢弃），dvh 修正 iOS 100vh 含工具栏的问题 */
-    max-height: calc(100vh - 80px);
-    max-height: calc(100dvh - 80px);
-    margin-top: auto;
+    padding: 18px 20px 16px;
+    /* 紧凑浮卡片：不再贴底占满，四周留白避开悬浮工具栏；
+       高度不依赖 dvh —— 安卓工具栏收缩时弹窗也不会跳动 */
+    max-width: 360px;
+    max-height: 100%;
+    border-radius: 16px;
   }
 
   .auth-overlay {
-    align-items: flex-end;
-    height: 100vh;
-    height: 100dvh;
-    /* 安卓夸克/UC 等浏览器的悬浮工具栏直接盖在页面底边上，dvh 探测不到它。
-       把弹窗整体抬离底边 64px(+安全区)，保证最底部的网关按钮不被压住 */
-    padding: 0 0 calc(64px + env(safe-area-inset-bottom, 0px));
+    height: 100%;
+    /* 底部留白比顶部大：给安卓悬浮工具栏让位，视觉重心略偏上 */
+    padding: 24px 16px calc(88px + env(safe-area-inset-bottom, 0px));
   }
 
-  .auth-tab {
-    padding: 12px 8px;
-    font-size: 15px;
-  }
-
-  .auth-title {
-    font-size: 22px;
-    margin-bottom: 16px;
-  }
-
-  .auth-tabs {
-    margin-bottom: 16px;
-  }
-
-  .auth-input {
-    height: 48px;
-    font-size: 16px; /* prevent iOS zoom */
-    padding: 0 14px;
-  }
-
-  .auth-btn {
-    height: 48px;
-    font-size: 16px;
-  }
-
-  .auth-links {
-    margin-top: 12px;
-  }
-
-  .auth-divider {
-    margin: 10px 0;
+  @media (prefers-reduced-motion: reduce) {
+    .auth-dialog {
+      animation: none;
+    }
   }
 
   .auth-close {
-    width: 44px;
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+  }
+
+  /* 标题与 tabs 二选一展示：带 tabs 时标题左置小号（避免"登录"写两遍），否则居中 */
+  .auth-title {
+    text-align: center;
+    margin-top: 2px;
+  }
+
+  .auth-title--with-tabs {
+    font-size: 19px;
+    text-align: left;
+    margin: 2px 40px 10px 0;
+  }
+
+  .auth-tabs {
+    margin-bottom: 14px;
+    padding: 3px;
+  }
+
+  .auth-tab {
+    padding: 9px 8px;
+    font-size: 14px;
+  }
+
+  .auth-form {
+    gap: 10px;
+  }
+
+  .auth-input {
     height: 44px;
+    font-size: 16px; /* prevent iOS zoom */
+    padding: 0 12px;
+    /* 盖掉 Chrome 自动填充的淡蓝紫色，跟主题色一致 */
+    background: var(--bg3);
+    -webkit-box-shadow: 0 0 0 1000px var(--bg3) inset;
+    transition: border-color 0.2s;
+  }
+
+  .auth-input:focus {
+    background: var(--bg3);
+    -webkit-box-shadow: 0 0 0 1000px var(--bg3) inset;
+    border-color: var(--accent);
+  }
+
+  .auth-input:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 1000px var(--bg3) inset;
+    -webkit-text-fill-color: var(--text);
+    caret-color: var(--text);
+  }
+
+  .auth-btn {
+    height: 44px;
+    font-size: 15px;
+    border-radius: 10px;
+  }
+
+  .auth-links {
+    margin-top: 8px;
+  }
+
+  .auth-link {
+    padding: 6px 12px;
+  }
+
+  .auth-divider {
+    margin: 6px 0 8px;
+  }
+
+  .auth-gateway-btn {
+    padding: 11px 16px;
+    font-size: 14px;
+    border-radius: 10px;
   }
 }

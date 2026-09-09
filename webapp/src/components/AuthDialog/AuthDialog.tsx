@@ -4,6 +4,8 @@ import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { forgotPassword, resetPassword } from '../../api'
 import { verifyEmail } from '../../api/auth'
+import { request, APIError } from '../../api/client'
+import type { AuthResponse } from '../../api/types'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import './AuthDialog.css'
 
@@ -52,10 +54,12 @@ function isPasswordStrongEnough(pw: string): boolean {
 
 export default function AuthDialog({ onClose, closable = true }: AuthDialogProps) {
   const { t } = useTranslation()
-  const { login, register, kickedMsg, clearKickedMsg } = useAuth()
+  const { login, loginWithToken, register, kickedMsg, clearKickedMsg } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const resetTokenFromUrl = searchParams.get('reset_token')
   const verifyTokenFromUrl = searchParams.get('verify_token')
+  const gwCodeFromUrl = searchParams.get('gw_code')
+  const gwErrorFromUrl = searchParams.get('gw_error')
 
   // 一次性令牌(reset_token / verify_token)从 URL 读入后立即从地址栏清除,
   // 避免令牌残留在浏览器历史、复制的链接或 Referer 中。
@@ -67,6 +71,61 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
       setSearchParams(next, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Auth Gateway SSO 回调落地：gw_code 换 token 自动登录；gw_error 提示
+  const [gatewayEnabled, setGatewayEnabled] = useState(false)
+  const gwHandledRef = useRef(false)
+  useEffect(() => {
+    // 只处理一次，防止 StrictMode 双执行导致 exchange code 被烧掉
+    if (gwHandledRef.current) return
+    if (gwCodeFromUrl) {
+      gwHandledRef.current = true
+      const next = new URLSearchParams(searchParams)
+      next.delete('gw_code')
+      next.delete('gw_error')
+      setSearchParams(next, { replace: true })
+      request<AuthResponse>('/auth/gateway/exchange', {
+        method: 'POST',
+        body: { code: gwCodeFromUrl },
+        auth: false,
+      })
+        .then((res) => {
+          if (res.ok && res.token) {
+            setSuccess('')
+            setError('')
+            return loginWithToken(res.token).then(() => onClose?.())
+          }
+          setError(res.error || '网关登录失败')
+        })
+        .catch((e: unknown) => {
+          setError(e instanceof APIError ? e.message : '网关登录失败，请重试')
+        })
+    } else if (gwErrorFromUrl) {
+      gwHandledRef.current = true
+      const next = new URLSearchParams(searchParams)
+      next.delete('gw_error')
+      setSearchParams(next, { replace: true })
+      const GW_ERR_CN: Record<string, string> = {
+        gateway_denied: '你取消了网关授权',
+        state_invalid_or_expired: '授权会话已过期，请重新登录',
+        token_exchange_failed: '网关令牌交换失败，请重试',
+        gateway_unreachable: '认证网关暂时不可用',
+        userinfo_failed: '获取网关用户信息失败',
+        sign_in_failed: '网关账号关联失败，请联系管理员',
+      }
+      setError(GW_ERR_CN[gwErrorFromUrl] || '网关登录失败')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 查询网关 SSO 是否启用（决定是否显示按钮）
+  useEffect(() => {
+    let cancelled = false
+    request<{ enabled: boolean }>('/auth/gateway/status', { auth: false, silent: true })
+      .then((d) => { if (!cancelled) setGatewayEnabled(!!d.enabled) })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   const [mode, setMode] = useState<Mode>(
@@ -193,12 +252,27 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   }
 
   useEffect(() => {
-    // 锁定背景滚动，关闭时恢复原值
+    // 锁定背景滚动，关闭时恢复原值。
+    // 仅锁 body 不够：安卓 WebView/夸克等浏览器 touchmove 会穿透到
+    // documentElement/整页，表现为"弹窗跟着页面一起滚动"，这里一并锁住。
     const prevOverflow = document.body.style.overflow
+    const prevHtmlOverflow = document.documentElement.style.overflow
     document.body.style.overflow = 'hidden'
+    document.documentElement.style.overflow = 'hidden'
+
+    // overlay 自身之外 touch 一律拦截（iOS Safari 橡皮筋也会穿透）
+    const stopTouch = (e: TouchEvent) => {
+      const t = e.target as Node | null
+      if (t && dialogRef.current?.contains(t)) return
+      e.preventDefault()
+    }
+    // passive:false 才能真正 preventDefault
+    document.addEventListener('touchmove', stopTouch, { passive: false })
 
     return () => {
       document.body.style.overflow = prevOverflow
+      document.documentElement.style.overflow = prevHtmlOverflow
+      document.removeEventListener('touchmove', stopTouch)
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current)
     }
   }, [])
@@ -275,7 +349,12 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
             <button className="auth-kicked-close" aria-label={t('auth.closeDialog')} onClick={clearKickedMsg}>&times;</button>
           </div>
         )}
-        <h2 id="auth-dialog-title" className="auth-title">{title}</h2>
+        <h2
+          id="auth-dialog-title"
+          className={`auth-title ${(mode === 'login' || mode === 'register') ? 'auth-title--with-tabs' : ''}`}
+        >
+          {title}
+        </h2>
 
         {(mode === 'login' || mode === 'register') && (
           <div className="auth-tabs" role="tablist" aria-label={title}>
@@ -483,6 +562,19 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
               {t('auth.forgotLink')}
             </button>
           </div>
+        )}
+        {mode === 'login' && gatewayEnabled && (
+          <>
+            <div className="auth-divider" aria-hidden="true"><span>或</span></div>
+            <button
+              type="button"
+              className="auth-gateway-btn"
+              id="auth-gateway-login"
+              onClick={() => { window.location.href = '/auth/gateway/start' }}
+            >
+              🛡️ 使用认证网关登录
+            </button>
+          </>
         )}
         {(mode === 'forgot' || mode === 'reset') && (
           <div className="auth-links">
