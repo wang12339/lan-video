@@ -400,26 +400,36 @@
 
 @media (max-width: 480px) {
   .auth-dialog {
-    padding: 24px 20px 20px;
+    padding: 20px 20px 16px;
     max-width: 100%;
     border-radius: var(--radius) var(--radius) 0 0;
-    /* 先写 vh 兜底（iOS<15.4 不认识 dvh，会整条丢弃），dvh 修正 iOS 100vh 含工具栏的问题 */
-    max-height: 88vh;
-    max-height: 88dvh;
+    /* vh 兜底（老内核不认识 dvh 会整条丢弃），dvh 修正 iOS 100vh 含工具栏的问题 */
+    max-height: calc(100vh - 80px);
+    max-height: calc(100dvh - 80px);
     margin-top: auto;
   }
 
   .auth-overlay {
     align-items: flex-end;
-    /* 同理：overlay 用 100vh 会在 iOS 上比可视区高，底部内容被顶出屏幕 */
     height: 100vh;
     height: 100dvh;
-    padding: 0;
+    /* 安卓夸克/UC 等浏览器的悬浮工具栏直接盖在页面底边上，dvh 探测不到它。
+       把弹窗整体抬离底边 64px(+安全区)，保证最底部的网关按钮不被压住 */
+    padding: 0 0 calc(64px + env(safe-area-inset-bottom, 0px));
   }
 
   .auth-tab {
     padding: 12px 8px;
     font-size: 15px;
+  }
+
+  .auth-title {
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+
+  .auth-tabs {
+    margin-bottom: 16px;
   }
 
   .auth-input {
@@ -433,8 +443,12 @@
     font-size: 16px;
   }
 
-  .auth-title {
-    font-size: 22px;
+  .auth-links {
+    margin-top: 12px;
+  }
+
+  .auth-divider {
+    margin: 10px 0;
   }
 
   .auth-close {
