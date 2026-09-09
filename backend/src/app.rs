@@ -83,6 +83,20 @@ async fn spa_status_fix(req: Request, next: axum_mw::Next) -> axum::response::Re
     resp
 }
 
+/// 老 cookie 会话自愈的出口：cookie 认证的 GET 响应缺 csrf_token cookie 时
+/// 补发（前端下一轮 JS 读到后写操作即可通过 csrf_guard）。
+/// 见 middleware::auth::ensure_csrf_cookie 的 doc 注释。
+async fn csrf_self_heal(req: Request, next: axum_mw::Next) -> axum::response::Response {
+    let is_get = req.method() == axum::http::Method::GET;
+    let method = req.method().clone();
+    let headers = req.headers().clone();
+    let mut resp = next.run(req).await;
+    if is_get {
+        crate::middleware::auth::ensure_csrf_cookie_from_parts(&method, &headers, &mut resp);
+    }
+    resp
+}
+
 pub async fn build_router(config: AppConfig) -> Router {
     // 进程级安全/工具配置：优先使用 AppConfig 显式值（env 已由 from_env 收归）。
     crate::util::net::configure_trusted_proxy(config.trusted_proxy);
@@ -676,6 +690,11 @@ pub async fn build_router(config: AppConfig) -> Router {
             // Login and register must be accessible without auth
             .route("/auth/register", post(handlers::auth::register))
             .route("/auth/login", post(handlers::auth::login))
+            // Auth Gateway SSO（GATEWAY_* 未配置时返回 404）
+            .route("/auth/gateway/status", get(handlers::gateway::status))
+            .route("/auth/gateway/start", get(handlers::gateway::start))
+            .route("/auth/gateway/callback", get(handlers::gateway::callback))
+            .route("/auth/gateway/exchange", post(handlers::gateway::exchange))
             .route(
                 "/auth/forgot-password",
                 post(handlers::auth::forgot_password),
@@ -880,6 +899,7 @@ pub async fn build_router(config: AppConfig) -> Router {
                 .layer(cors),
         )
         .layer(axum_mw::from_fn(crate::middleware::tenant::resolve_tenant))
+        .layer(axum_mw::from_fn(csrf_self_heal))
         .layer(inject_state)
         .layer(axum_mw::from_fn(security_headers))
         .with_state(state)

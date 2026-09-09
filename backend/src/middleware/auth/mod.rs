@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::Request,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -31,33 +31,54 @@ pub(super) fn csrf_guard(req: &Request) -> Result<(), Box<Response>> {
 
     // Only enforce for mutation requests authenticated via cookie
     if is_mutation && extract_bearer_token(req.headers()).is_none() {
-        // Standard CSRF defense: reject requests without a custom header.
-        // Browsers will not set X-Requested-With cross-origin without a CORS
-        // preflight, and the CORS layer does NOT include x-requested-with in
-        // Access-Control-Allow-Headers, so this is safe.
-        if req
-            .headers()
-            .get("x-requested-with")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v == "XMLHttpRequest")
-            .unwrap_or(false)
-        {
-            return Ok(());
-        }
-        // x-csrf-token is a fallback for more granular control.
-        if req
+        // L1 修复：严格 double-submit——`X-CSRF-Token` 头必须存在且与
+        // `csrf_token` cookie 一致。此前只验头存在不比对，攻击者若能在
+        // 目标域种任意 cookie/值即可绕过。
+        let header_val = req
             .headers()
             .get("x-csrf-token")
             .and_then(|v| v.to_str().ok())
-            .is_none()
-        {
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let cookie_val = extract_csrf_from_cookie(req.headers());
+        let matched = matches!((header_val, cookie_val), (Some(h), Some(c)) if h == c);
+        if !matched {
             return Err(Box::new(error_response_response(
                 StatusCode::FORBIDDEN,
-                "CSRF protection: missing required header",
+                "CSRF protection: token mismatch or missing",
             )));
         }
     }
     Ok(())
+}
+
+/// 老 cookie 会话自愈：只带 token cookie、缺 `csrf_token` cookie 的客户端
+/// （早于 L1 修复登录、换设备恢复、浏览器清理等）会在任何写操作上被
+/// csrf_guard 卡成 403 —— 前端静默吞掉后表现为“退出登录没反应/退了又自动
+/// 登回来”。在 cookie 认证的 GET 上检测到 csrf 缺失时补发一个新 csrf
+/// cookie，客户端下一轮 JS 即可读到并走正常的 double-submit。
+pub fn ensure_csrf_cookie_from_parts(
+    method: &axum::http::Method,
+    headers: &HeaderMap,
+    response: &mut axum::response::Response,
+) {
+    if method != axum::http::Method::GET {
+        return; // 只在幂等读上补发，避免与写路径的 Set-Cookie 竞争
+    }
+    if extract_token_from_cookie(headers).is_none() {
+        return; // 非 cookie 认证（游客/纯 Bearer）不涉及
+    }
+    if extract_csrf_from_cookie(headers).is_some() {
+        return; // 已有，不覆盖（值必须与客户端回传头一致，轮换会打断在途请求）
+    }
+    if let Ok(val) = HeaderValue::from_str(&set_csrf_cookie(
+        crate::services::auth_service::COOKIE_MAX_AGE,
+        true,
+    )) {
+        response
+            .headers_mut()
+            .append(axum::http::header::SET_COOKIE, val);
+    }
 }
 
 pub async fn bearer_auth(req: Request, next: Next) -> Response {
@@ -228,6 +249,42 @@ pub fn set_token_cookie(token: &str, max_age_secs: i64, secure: bool) -> String 
         "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={}{}",
         token, max_age_secs, secure_flag
     )
+}
+
+/// CSRF double-submit cookie（L1 修复配套）：非 HttpOnly，前端 JS 读取后
+/// 以 `X-CSRF-Token` 头回传，`csrf_guard` 严格比对两者。
+#[inline]
+pub fn set_csrf_cookie(max_age_secs: i64, secure: bool) -> String {
+    let secure_flag = if secure { "; Secure" } else { "" };
+    let token = random_alnum_csrf();
+    format!(
+        "csrf_token={}; SameSite=Strict; Path=/; Max-Age={}{}",
+        token, max_age_secs, secure_flag
+    )
+}
+
+/// 供 csrf cookie 生成的随机串（32 字符字母数字）。
+#[inline]
+fn random_alnum_csrf() -> String {
+    use rand::Rng;
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    (0..32)
+        .map(|_| CHARS[rand::thread_rng().gen_range(0..CHARS.len())] as char)
+        .collect()
+}
+
+/// 读取 double-submit 的 cookie 值。
+#[inline]
+pub fn extract_csrf_from_cookie(headers: &HeaderMap) -> Option<String> {
+    let cookie = headers.get("Cookie")?.to_str().ok()?;
+    for pair in cookie.split(';') {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next()?.trim() == "csrf_token" {
+            let value = parts.next()?.trim();
+            return (!value.is_empty()).then(|| value.to_string());
+        }
+    }
+    None
 }
 
 #[inline]

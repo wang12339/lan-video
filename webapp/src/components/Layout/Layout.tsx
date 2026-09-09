@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
@@ -56,6 +56,16 @@ function NavBar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [showAuth, setShowAuth] = useState(false)
+  const [searchParams] = useSearchParams()
+
+  // 网关 SSO 回跳落地（/webapp/?gw_code=... 或 ?gw_error=...）：
+  // AuthDialog 只在 showAuth=true 时渲染，而回跳发生在新页面加载里，
+  // 必须自动打开弹窗，否则 gw_code 无人消费、30 秒后过期 = SSO 登录失败。
+  useEffect(() => {
+    if (searchParams.has('gw_code') || searchParams.has('gw_error')) {
+      setShowAuth(true)
+    }
+  }, [searchParams])
   const suggestTimer = useRef<ReturnType<typeof setTimeout>>()
   const suggestSeq = useRef(0)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -177,8 +187,9 @@ function NavBar() {
     setConfirmLogout(false)
     closeMenu()
     try {
-      await logout()
-      toast(t('nav.logoutSuccess'), 'success')
+      const serverOk = await logout()
+      // 老会话缺 csrf cookie 时后端 403，会话没真吊销：提示刷新重试
+      toast(t(serverOk ? 'nav.logoutSuccess' : 'nav.logoutRetryHint'), serverOk ? 'success' : 'error')
     } catch {
       toast(t('auth.error'), 'error')
     }

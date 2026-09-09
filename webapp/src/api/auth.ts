@@ -59,13 +59,30 @@ export async function register(username: string, password: string): Promise<Auth
 
 /**
  * 用户登出
- * 清除本地 token 和会话缓存，即使服务端请求失败也会执行本地清理
+ * 清除本地 token 和会话缓存，即使服务端请求失败也会执行本地清理。
+ * 返回服务端登出是否真正成功——失败（如老会话缺 csrf cookie 被 403）时
+ * 调用方应提示用户刷新页面重试，否则会话仍存活、刷新后又会"自动登录"。
  */
-export async function logout(): Promise<void> {
-  try { await request('/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+export async function logout(): Promise<boolean> {
+  let serverOk = true;
+  try {
+    await request('/auth/logout', { method: 'POST' });
+  } catch {
+    // CSRF 403 = 会话未被服务端吊销（老 cookie 会话缺 csrf_token cookie）。
+    // 先请求任意 API 让后端自愈补发 csrf cookie，再重试一次。
+    serverOk = false;
+    try {
+      await request('/auth/user', { silent: true });
+    } catch { /* 自愈探测失败也不阻塞登出 */ }
+    try {
+      await request('/auth/logout', { method: 'POST' });
+      serverOk = true;
+    } catch { /* 仍然失败：交给调用方提示 */ }
+  }
   // 清除会话缓存，避免登出后 60 秒内 checkSession() 仍返回旧结果
   resetSessionCache();
   clearToken();
+  return serverOk;
 }
 
 /**

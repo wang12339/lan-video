@@ -766,6 +766,8 @@
   .ptab {
     padding: 14px 16px;
     font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .profile-content {
     padding: 12px 14px 40px;

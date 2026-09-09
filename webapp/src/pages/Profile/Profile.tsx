@@ -71,6 +71,8 @@ export default function Profile() {
 
   const handleLogout = useCallback(async () => {
     await logout()
+    // 老会话缺 csrf cookie 时登出可能未在服务端生效，跳首页后若仍显示
+    // 已登录即自愈中间件已补发 csrf，用户再点一次即可真正退出
     navigate('/')
   }, [logout, navigate])
 

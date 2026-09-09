@@ -12,6 +12,7 @@
     "logout": "Sign out",
     "logoutConfirm": "Sign out?",
     "logoutSuccess": "Signed out",
+    "logoutRetryHint": "Sign-out not fully applied — refresh the page and try again",
     "myProfile": "My profile",
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode",

@@ -362,17 +362,57 @@
   color: var(--accent);
 }
 
+/* ---------- 网关登录 ---------- */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 12px;
+  color: var(--text3);
+  font-size: 12px;
+  user-select: none;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-gateway-btn {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: var(--text1);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.auth-gateway-btn:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 @media (max-width: 480px) {
   .auth-dialog {
-    padding: 24px 20px;
+    padding: 24px 20px 20px;
     max-width: 100%;
     border-radius: var(--radius) var(--radius) 0 0;
-    max-height: 90vh;
+    /* dvh 而非 vh：iOS Safari 100vh 含被工具栏遮住的部分，
+       用 vh 时弹窗底部(确定/网关按钮)会被工具栏盖住 */
+    max-height: 88dvh;
     margin-top: auto;
   }
 
   .auth-overlay {
     align-items: flex-end;
+    /* 同理：overlay 用 100vh 会在 iOS 上比可视区高，底部内容被顶出屏幕 */
+    height: 100dvh;
     padding: 0;
   }
 

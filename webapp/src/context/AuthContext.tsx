@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
-import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, setOnAuthRequired, AuthError } from '../api'
+import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, setOnAuthRequired, AuthError, saveToken } from '../api'
 import type { UserInfo } from '../api/types'
 import i18n from '../i18n'
 
@@ -9,8 +9,9 @@ interface AuthContextType {
   kickedMsg: string | null;
   clearKickedMsg: () => void;
   login: (username: string, password: string) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
   register: (username: string, password: string) => Promise<string | null>;
-  logout: () => Promise<void>;
+  logout: () => Promise<boolean>;
   refreshUser: () => Promise<void>;
   setUser: (user: UserInfo | null) => void;
 }
@@ -90,6 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshUser()
   }, [refreshUser])
 
+  // 网关 SSO：后端已换好 token，直接落盘并拉取用户信息
+  const loginWithToken = useCallback(async (token: string) => {
+    saveToken(token)
+    sessionRef.current += 1
+    await refreshUser()
+  }, [refreshUser])
+
   const register = useCallback(async (username: string, password: string): Promise<string | null> => {
     const res = await apiRegister(username, password)
     if (res.token) {
@@ -102,14 +110,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     sessionRef.current += 1 // 先作废在途的 refreshUser 结果
-    await apiLogout()
+    const serverOk = await apiLogout()
     setUser(null)
     setKickedMsg(null)
+    return serverOk
   }, [setUser])
 
   const value = useMemo(() => ({
-    user, loading, kickedMsg, clearKickedMsg, login, register, logout, refreshUser, setUser
-  }), [user, loading, kickedMsg, clearKickedMsg, login, register, logout, refreshUser, setUser])
+    user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, refreshUser, setUser
+  }), [user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, refreshUser, setUser])
 
   return (
     <AuthContext.Provider value={value}>
