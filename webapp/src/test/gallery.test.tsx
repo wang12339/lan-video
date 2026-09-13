@@ -61,6 +61,7 @@ vi.mock('../api', async (importOriginal) => {
     ...mod,
     listVideos: vi.fn(),
     mapImage: vi.fn(),
+    burnVideo: vi.fn(),
   }
 })
 
@@ -112,12 +113,13 @@ function scrollToBottom() {
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
-const { listVideos, mapImage } = await import('../api')
+const { listVideos, mapImage, burnVideo } = await import('../api')
 const { useAuth } = await import('../context/AuthContext')
 
 const mockListVideos = vi.mocked(listVideos)
 const mockMapImage = vi.mocked(mapImage)
 const mockUseAuth = vi.mocked(useAuth)
+const mockBurnVideo = vi.mocked(burnVideo)
 
 function makeUser() {
   return {
@@ -153,6 +155,9 @@ beforeEach(() => {
 
   // mapImage 透传
   mockMapImage.mockImplementation((v: unknown) => v as MappedImage)
+
+  // 焚毁接口默认成功
+  mockBurnVideo.mockResolvedValue(undefined)
 
   // 模拟 scrollHeight > innerHeight 以禁用自动补页
   Object.defineProperty(document.documentElement, 'scrollHeight', { value: 2000, configurable: true })
@@ -600,10 +605,26 @@ describe('Gallery 页面', () => {
       return result
     }
 
+    /** 点击阅后即焚确认门的"查看"按钮 */
+    async function confirmBurnGate() {
+      const confirmBtn = await screen.findByRole('button', { name: '查看' })
+      await act(async () => {
+        fireEvent.click(confirmBtn)
+      })
+    }
+
+    /** 通过确认门打开灯箱（阅后即焚确认后才会显示） */
+    async function openLightbox(container: HTMLElement, idx: number) {
+      await act(async () => {
+        fireEvent.click(container.querySelectorAll('.gallery-card')[idx]!)
+      })
+      await confirmBurnGate()
+    }
+
     it('点击图片卡片打开灯箱', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -617,7 +638,7 @@ describe('Gallery 页面', () => {
     it('灯箱显示图片标题和计数', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-title')).toBeInTheDocument()
@@ -633,7 +654,7 @@ describe('Gallery 页面', () => {
     it('灯箱有正确的 ARIA 属性', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         const lightbox = document.querySelector('.lightbox')
@@ -647,7 +668,7 @@ describe('Gallery 页面', () => {
     it('点击关闭按钮关闭灯箱', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -664,7 +685,7 @@ describe('Gallery 页面', () => {
     it('点击灯箱背景关闭灯箱', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -681,7 +702,7 @@ describe('Gallery 页面', () => {
     it('点击灯箱图片不关闭灯箱', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -696,7 +717,7 @@ describe('Gallery 页面', () => {
     it('按下 Escape 键关闭灯箱', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -712,7 +733,7 @@ describe('Gallery 页面', () => {
     it('按下右箭头键切换到下一张', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
@@ -732,7 +753,7 @@ describe('Gallery 页面', () => {
     it('按下左箭头键切换到上一张', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[1]!)
+      await openLightbox(container, 1)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-counter')).toHaveTextContent('2 / 3')
@@ -751,7 +772,7 @@ describe('Gallery 页面', () => {
     it('第一张图片时隐藏上一张按钮', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -764,7 +785,7 @@ describe('Gallery 页面', () => {
     it('最后一张图片时隐藏下一张按钮', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[2]!)
+      await openLightbox(container, 2)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -777,7 +798,7 @@ describe('Gallery 页面', () => {
     it('点击导航按钮切换图片', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
@@ -802,7 +823,10 @@ describe('Gallery 页面', () => {
       const { container } = await renderWithImages()
 
       const cards = container.querySelectorAll('.gallery-card')
-      fireEvent.keyDown(cards[0]!, { key: 'Enter' })
+      await act(async () => {
+        fireEvent.keyDown(cards[0]!, { key: 'Enter' })
+      })
+      await confirmBurnGate()
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -813,7 +837,10 @@ describe('Gallery 页面', () => {
       const { container } = await renderWithImages()
 
       const cards = container.querySelectorAll('.gallery-card')
-      fireEvent.keyDown(cards[0]!, { key: ' ' })
+      await act(async () => {
+        fireEvent.keyDown(cards[0]!, { key: ' ' })
+      })
+      await confirmBurnGate()
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox')).toBeInTheDocument()
@@ -823,7 +850,7 @@ describe('Gallery 页面', () => {
     it('灯箱打开时添加 overflow-hidden 类', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.documentElement.classList.contains('overflow-hidden')).toBe(true)
@@ -833,7 +860,7 @@ describe('Gallery 页面', () => {
     it('灯箱关闭时移除 overflow-hidden 类', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.documentElement.classList.contains('overflow-hidden')).toBe(true)
@@ -849,7 +876,7 @@ describe('Gallery 页面', () => {
     it('灯箱导航不会越界（左边界）', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      await openLightbox(container, 0)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-counter')).toHaveTextContent('1 / 3')
@@ -865,7 +892,7 @@ describe('Gallery 页面', () => {
     it('灯箱导航不会越界（右边界）', async () => {
       const { container } = await renderWithImages()
 
-      fireEvent.click(container.querySelectorAll('.gallery-card')[2]!)
+      await openLightbox(container, 2)
 
       await waitFor(() => {
         expect(document.querySelector('.lightbox-counter')).toHaveTextContent('3 / 3')
@@ -875,6 +902,47 @@ describe('Gallery 页面', () => {
       fireEvent.keyDown(document, { key: 'ArrowRight' })
 
       expect(document.querySelector('.lightbox-counter')).toHaveTextContent('3 / 3')
+    })
+
+    it('关闭灯箱时焚毁本次查看的图片并从列表移除', async () => {
+      const { container } = await renderWithImages()
+
+      await openLightbox(container, 0)
+      await waitFor(() => {
+        expect(document.querySelector('.lightbox')).toBeInTheDocument()
+      })
+
+      // 切换到第二张：两张都算已查看
+      fireEvent.keyDown(document, { key: 'ArrowRight' })
+      await waitFor(() => {
+        expect(document.querySelector('.lightbox-counter')).toHaveTextContent('2 / 3')
+      })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      await waitFor(() => {
+        expect(mockBurnVideo).toHaveBeenCalledWith('img1')
+        expect(mockBurnVideo).toHaveBeenCalledWith('img2')
+      })
+      await waitFor(() => {
+        expect(container.querySelectorAll('.gallery-card')).toHaveLength(1)
+      })
+      expect(mockBurnVideo).not.toHaveBeenCalledWith('img3')
+    })
+
+    it('取消确认门不打开灯箱也不焚毁', async () => {
+      const { container } = await renderWithImages()
+
+      await act(async () => {
+        fireEvent.click(container.querySelectorAll('.gallery-card')[0]!)
+      })
+      const cancelBtn = await screen.findByRole('button', { name: '取消' })
+      await act(async () => {
+        fireEvent.click(cancelBtn)
+      })
+
+      expect(document.querySelector('.lightbox')).not.toBeInTheDocument()
+      expect(mockBurnVideo).not.toHaveBeenCalled()
     })
   })
 })

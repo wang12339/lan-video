@@ -775,9 +775,9 @@ pub fn spec() -> serde_json::Value {
             },
             "/videos/{id}/burn": {
                 "post": {
-                    "summary": "Burn video after watch",
+                    "summary": "Burn video or image after view",
                     "operationId": "burnVideo",
-                    "description": "阅后即焚（平台全局行为）：永久删除该视频（物理文件 + 数据库记录）。适用于所有视频、所有用户（含上传者与存量视频）。要求调用者对该视频的播放进度 ≥ 90%，未完整观看返回 403。",
+                    "description": "阅后即焚（平台全局行为）：永久删除该视频/图片（物理文件 + 数据库记录）。适用于所有内容、所有用户（含上传者与存量内容）。视频要求调用者播放进度 ≥ 90%，未完整观看返回 403；图片无片长/进度要求，拥有者或管理员在查看结束后调用即可（仅上传者本人或管理员可焚毁）。",
                     "parameters": [
                         {
                             "name": "id",

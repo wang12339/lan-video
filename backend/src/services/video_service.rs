@@ -106,8 +106,10 @@ impl VideoService {
     ///
     /// # 触发条件
     /// - 视频存在
-    /// - 请求者对该视频存在播放进度，且已观看 ≥ [`BURN_WATCH_THRESHOLD`]
+    /// - 视频类：请求者对该视频存在播放进度，且已观看 ≥ [`BURN_WATCH_THRESHOLD`]
     ///   （时长未知时退化为"有播放记录即可"）
+    /// - 图片类（`source_type` 含 `image`）：无片长/进度要求，拥有者或管理员
+    ///   在查看结束后调用即可（前端在关闭查看器时触发）
     /// - 不区分用户：上传者本人观看同样触发；存量视频同样生效
     ///
     /// # 删除行为
@@ -125,18 +127,22 @@ impl VideoService {
     ) -> Result<(), ServiceError> {
         // 先判存在性：已焚毁/不存在的视频必须 404（而不是被观看校验的
         // 403 掩盖——首次焚毁会级联删除播放历史，重复请求会走不到进度）
-        self.repo
+        let video = self
+            .repo
             .find_by_id(tenant_id, video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
-        let (position_ms, duration_ms) = self
-            .playback
-            .get_playback_data(tenant_id, username, video_id)
-            .await?
-            .ok_or_else(|| ServiceError::Forbidden("需完整观看后才能焚毁".into()))?;
-        if !is_watch_complete(position_ms, duration_ms) {
-            return Err(ServiceError::Forbidden("需完整观看后才能焚毁".into()));
+        // 图片没有播放进度：拥有者/管理员校验在 burn_video_record 内完成
+        if !is_image_source(&video.source_type) {
+            let (position_ms, duration_ms) = self
+                .playback
+                .get_playback_data(tenant_id, username, video_id)
+                .await?
+                .ok_or_else(|| ServiceError::Forbidden("需完整观看后才能焚毁".into()))?;
+            if !is_watch_complete(position_ms, duration_ms) {
+                return Err(ServiceError::Forbidden("需完整观看后才能焚毁".into()));
+            }
         }
         // burn_video_record 内部会再做 owner-or-admin 与片长门槛校验
         self.burn_video_record(tenant_id, requester_id, requester_is_admin, video_id)
@@ -146,12 +152,13 @@ impl VideoService {
     /// 执行焚毁（无观看校验——调用方自行完成前置判定）。
     ///
     /// # 权限（H1 修复）
-    /// 仅允许视频上传者本人或管理员焚毁；其余一律 403。
+    /// 仅允许上传者本人或管理员焚毁；其余一律 403。
     /// 存量数据 `uploader_id` 为 NULL 时仅管理员可焚毁。
     ///
     /// # 片长门槛（H1 修复）
-    /// 服务端片长未知（<=0）的视频禁止焚毁——"完整观看"无从判定，
+    /// 仅**视频类**要求片长已知（>0）："完整观看"无从判定时禁止焚毁，
     /// 否则客户端谎报进度即可烧掉任何视频（已实测复现）。
+    /// 图片类（`source_type` 含 `image`）无片长概念，不受此限制。
     ///
     /// - 数据库：`delete_video_cascade`（视频行 + 播放历史/点赞/收藏/评论/
     ///   标签关联，变体/弹幕/分享等由外键级联）
@@ -170,7 +177,7 @@ impl VideoService {
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
-        if video.duration <= 0 {
+        if !is_image_source(&video.source_type) && video.duration <= 0 {
             return Err(ServiceError::BadRequest("视频片长未知，无法焚毁".into()));
         }
         let is_owner = video.uploader_id == Some(requester_id);
@@ -703,6 +710,14 @@ impl VideoService {
             .await
             .map_err(ServiceError::from)
     }
+}
+
+/// source_type 是否图片。
+///
+/// 图片没有片长与播放进度概念，"阅后即焚"退化为：拥有者/管理员在查看
+/// 结束后调用焚毁接口即可（确认门由前端负责）。
+fn is_image_source(source_type: &str) -> bool {
+    source_type.contains("image")
 }
 
 /// 阅后即焚的"完整观看"判定阈值：播放进度 ≥ 总时长的 90%。

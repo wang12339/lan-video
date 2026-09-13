@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo, type KeyboardE
 import { createPortal } from 'react-dom'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { listVideos, mapImage } from '../../api'
+import { listVideos, mapImage, burnVideo } from '../../api'
 import { getToken } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
+import { useToast } from '../../components/Toast/Toast'
+import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import type { MappedImage } from '../../api/types'
 import './Gallery.css'
 
@@ -101,6 +103,7 @@ const GalleryCard = memo(function GalleryCard({ img, index, onClick, onKeyDown, 
 export default function Gallery() {
   const { t } = useTranslation()
   const { user } = useAuth()
+  const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
 
   // 筛选/排序状态以 URL 为准：刷新后保留，浏览器前进/后退可同步
@@ -115,6 +118,10 @@ export default function Gallery() {
   const [lbOpen, setLbOpen] = useState(false)
   const [lbIndex, setLbIndex] = useState(-1)
   const [searchInput, setSearchInput] = useState(query)
+  // 阅后即焚确认门：待确认的图片下标（null = 无）
+  const [burnConfirmIdx, setBurnConfirmIdx] = useState<number | null>(null)
+  // 本次灯箱会话中已查看的图片 id（确认进入 + 灯箱内切换浏览），关闭时统一焚毁
+  const viewedIdsRef = useRef<string[]>([])
 
   const pageRef = useRef(0)
   const loadGenRef = useRef(0)
@@ -225,17 +232,77 @@ export default function Gallery() {
     }
   }, [images, loading, loadImages])
 
+  // 阅后即焚：关闭查看器时焚毁本次查看过的全部图片（平台全局行为）。
+  // 404 视为已焚毁（其他端/重复请求）同样成功；失败弹 toast 并保留在列表中。
+  const burnViewedImages = useCallback(() => {
+    const ids = viewedIdsRef.current
+    viewedIdsRef.current = []
+    if (ids.length === 0) return
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          await burnVideo(id)
+          return id
+        } catch (e) {
+          const status = (e as { status?: number } | null)?.status
+          if (status === 404) return id
+          const msg = (e as { message?: string } | null)?.message
+          toast(msg || t('gallery.burnFailed'), 'error')
+          return null
+        }
+      })
+    ).then((results) => {
+      const burned = results.filter((x): x is string => x !== null)
+      if (burned.length === 0) return
+      const burnedSet = new Set(burned)
+      setImages((prev) => prev.filter((i) => !burnedSet.has(i.id)))
+      setTotal((n) => Math.max(0, n - burned.length))
+      clearGalleryCache()
+      toast(t('gallery.burnedCount', { count: burned.length }), 'success')
+    })
+  }, [toast, t])
+
   const openLightbox = useCallback((idx: number) => {
+    const img = images[idx]
+    if (!img) return
+    // 阅后即焚确认门：与播放器一致，未确认前不打开查看器
+    if (user) {
+      setBurnConfirmIdx(idx)
+      return
+    }
     setLbIndex(idx)
     setLbOpen(true)
     document.documentElement.classList.add('overflow-hidden')
+  }, [images, user])
+
+  const handleBurnConfirm = useCallback(() => {
+    const idx = burnConfirmIdx
+    if (idx === null) return
+    const img = images[idx]
+    if (img && !viewedIdsRef.current.includes(img.id)) viewedIdsRef.current.push(img.id)
+    setBurnConfirmIdx(null)
+    setLbIndex(idx)
+    setLbOpen(true)
+    document.documentElement.classList.add('overflow-hidden')
+  }, [burnConfirmIdx, images])
+
+  const handleBurnCancel = useCallback(() => {
+    setBurnConfirmIdx(null)
   }, [])
 
   const closeLightbox = useCallback(() => {
     setLbOpen(false)
     setLbIndex(-1)
     document.documentElement.classList.remove('overflow-hidden')
-  }, [])
+    burnViewedImages()
+  }, [burnViewedImages])
+
+  // 灯箱内切换浏览的图片同样属于"已查看"，关闭时一并焚毁
+  useEffect(() => {
+    if (!lbOpen || lbIndex < 0) return
+    const img = images[lbIndex]
+    if (img && !viewedIdsRef.current.includes(img.id)) viewedIdsRef.current.push(img.id)
+  }, [lbOpen, lbIndex, images])
 
   const lbPrev = useCallback(() => {
     setLbIndex((i) => Math.max(0, i - 1))
@@ -537,13 +604,6 @@ export default function Gallery() {
             </div>
           </div>
 
-          <div className="lightbox-topbar">
-            <span className="lightbox-title">{currentImage.title}</span>
-            <div className="lightbox-actions">
-              <button className="lightbox-close" onClick={closeLightbox} aria-label={t('gallery.close')}>✕</button>
-            </div>
-          </div>
-
           <div
             className="lightbox-img-container"
             onClick={(e) => e.stopPropagation()}
@@ -572,6 +632,19 @@ export default function Gallery() {
         </div>,
         document.body
       )}
+
+      {/* 阅后即焚确认门（与播放器一致，确认后才会打开查看器） */}
+      <ConfirmDialog
+        open={burnConfirmIdx !== null}
+        title={t('gallery.burnConfirmTitle')}
+        message={t('gallery.burnConfirmMessage')}
+        danger
+        confirmVariant="danger"
+        confirmText={t('gallery.burnView')}
+        closeOnOverlay={false}
+        onConfirm={handleBurnConfirm}
+        onCancel={handleBurnCancel}
+      />
       </>
       )}
     </div>

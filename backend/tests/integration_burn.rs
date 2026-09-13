@@ -397,3 +397,72 @@ async fn test_burn_triggers_server_side_on_history_save_at_end() {
     cleanup_test_user(fx.state.repos.video.pool(), &fx.uploader.0).await;
     cleanup_test_video(fx.state.repos.video.pool(), fx.video_id).await;
 }
+
+/// 图片阅后即焚：无片长/播放进度要求，拥有者查看结束即可焚毁。
+///
+/// 与视频不同，图片 duration=0 且没有播放记录；服务端仅校验
+/// 拥有者/管理员（防止他人销毁别人的图片）。
+#[tokio::test]
+async fn test_burn_image_without_progress() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let state = test_app_state().await;
+    let app = build_test_app().await;
+
+    let uploader = create_test_user_with_credentials(&state, "burn_img_owner").await;
+    let other = create_test_user_with_credentials(&state, "burn_img_other").await;
+    // 测试助手默认创建管理员（role=3），这里降为普通用户以校验 owner 限制
+    sqlx::query("UPDATE users SET role = 1 WHERE id = $1")
+        .bind(other.2)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("demote other user");
+
+    let image_id = create_test_video_owned_by(&state, "burnimg", uploader.2).await;
+    sqlx::query("UPDATE videos SET source_type = 'local_image', duration = 0 WHERE id = $1")
+        .bind(image_id)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("mark as image");
+    let id_param = hash_id(image_id);
+
+    // 非拥有者 → 403（图片不需要进度，但仍受 owner/admin 限制）
+    let (status, body) = send_json(
+        &app,
+        Method::POST,
+        &format!("/videos/{id_param}/burn"),
+        Some(&other.3),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+    assert_eq!(body["error"], json!("只有视频所有者或管理员可以焚毁"));
+
+    // 拥有者：无任何播放进度也能焚毁 → 204
+    let (status, body) = send_json(
+        &app,
+        Method::POST,
+        &format!("/videos/{id_param}/burn"),
+        Some(&uploader.3),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "body: {body}");
+
+    // 行已删除：详情 404、再次焚毁 404
+    let (status, _) = send_json(
+        &app,
+        Method::GET,
+        &format!("/videos/{id_param}"),
+        Some(&uploader.3),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    cleanup_test_user(state.repos.video.pool(), &other.0).await;
+    cleanup_test_user(state.repos.video.pool(), &uploader.0).await;
+    cleanup_test_video(state.repos.video.pool(), image_id).await;
+}

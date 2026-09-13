@@ -162,7 +162,12 @@
     "authRequired": "请先登录",
     "authHint": "登录后即可浏览图片库",
     "newBadge": "新视频",
-    "goUpload": "去上传图片"
+    "goUpload": "去上传图片",
+    "burnConfirmTitle": "阅后即焚图片",
+    "burnConfirmMessage": "图片查看结束后将被永久删除且无法恢复，浏览期间切换查看的图片同样会焚毁。确定要查看吗？",
+    "burnView": "查看",
+    "burnedCount": "已焚毁 {{count}} 张图片",
+    "burnFailed": "焚毁失败，请稍后重试"
   },
   "player": {
     "play": "播放",

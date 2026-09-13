@@ -162,7 +162,12 @@
     "authRequired": "Please sign in first",
     "authHint": "Sign in to browse the image gallery",
     "newBadge": "New video",
-    "goUpload": "Upload images"
+    "goUpload": "Upload images",
+    "burnConfirmTitle": "Burn-after-view image",
+    "burnConfirmMessage": "Images you view will be permanently deleted when you close the viewer — images you switch to while browsing are burned as well. Continue?",
+    "burnView": "View",
+    "burnedCount": "{{count}} image(s) burned",
+    "burnFailed": "Burn failed, please try again later"
   },
   "player": {
     "play": "Play",

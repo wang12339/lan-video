@@ -304,11 +304,14 @@ pub async fn get_favorite_status(
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
 
-/// POST /videos/{id}/burn — 阅后即焚：完整观看后永久删除视频
+/// POST /videos/{id}/burn — 阅后即焚：永久删除视频或图片
 ///
-/// 平台全局行为：适用于所有视频、所有用户（含上传者与存量视频）；
-/// 请求者需有 ≥90% 的播放进度。删除为物理级（主文件/变体/封面/缩略图）
-/// 加数据库级联，不可恢复。
+/// 平台全局行为：适用于所有视频/图片、所有用户（含上传者与存量内容）。
+/// - 视频：请求者需有 ≥90% 的播放进度。
+/// - 图片：无片长/进度要求，拥有者或管理员在查看结束后调用即可
+///   （前端在关闭图片查看器时触发）。
+///
+/// 删除为物理级（主文件/变体/封面/缩略图）加数据库级联，不可恢复。
 pub async fn burn_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
