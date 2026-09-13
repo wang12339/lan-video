@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import Layout from '../components/Layout/Layout'
@@ -32,6 +32,7 @@ vi.mock('../api', async (importOriginal) => {
     ...mod,
     searchSuggest: vi.fn(),
     setOnError: vi.fn(),
+    getPendingUserCount: vi.fn(),
   }
 })
 
@@ -58,10 +59,11 @@ vi.mock('../components/Toast/Toast', () => ({
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
 const { useAuth } = await import('../context/AuthContext')
-const { searchSuggest } = await import('../api')
+const { searchSuggest, getPendingUserCount } = await import('../api')
 
 const mockUseAuth = vi.mocked(useAuth)
 const mockSearchSuggest = vi.mocked(searchSuggest)
+const mockGetPendingUserCount = vi.mocked(getPendingUserCount)
 
 /** zh-CN 语言包中 nav 和 common 的翻译键 */
 const zh = {
@@ -163,6 +165,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   mockAuth(makeUser())
   mockSearchSuggest.mockResolvedValue([])
+  mockGetPendingUserCount.mockResolvedValue(0)
 
   // 确保 i18n 初始化完成并切换到 zh-CN
   if (!i18n.isInitialized) {
@@ -243,6 +246,47 @@ describe('Layout 导航栏', () => {
 
     expect(screen.getByText(t('nav', 'upload'))).toBeInTheDocument()
     expect(screen.queryByText(t('nav', 'admin'))).not.toBeInTheDocument()
+  })
+
+  it('管理员有待审批用户时显示徽标并深链到用户管理', async () => {
+    mockAuth(makeAdmin())
+    mockGetPendingUserCount.mockResolvedValue(3)
+    renderLayout()
+
+    const badge = await screen.findByText('3')
+    expect(badge).toHaveAttribute('aria-label', '3 个待审批用户')
+    const adminLink = screen.getByText(t('nav', 'admin')).closest('a')
+    expect(adminLink).toHaveAttribute('href', '/admin?tab=users')
+  })
+
+  it('无待审批用户时不显示徽标且管理链接为默认路径', async () => {
+    mockAuth(makeAdmin())
+    mockGetPendingUserCount.mockResolvedValue(0)
+    renderLayout()
+
+    await waitFor(() => expect(mockGetPendingUserCount).toHaveBeenCalled())
+    expect(screen.queryByLabelText(/待审批用户/)).not.toBeInTheDocument()
+    const adminLink = screen.getByText(t('nav', 'admin')).closest('a')
+    expect(adminLink).toHaveAttribute('href', '/admin')
+  })
+
+  it('普通用户不请求待审批数', () => {
+    mockAuth(makeUser({ isAdmin: false }))
+    renderLayout()
+
+    expect(mockGetPendingUserCount).not.toHaveBeenCalled()
+  })
+
+  it('审批事件触发后徽标立即刷新', async () => {
+    mockAuth(makeAdmin())
+    mockGetPendingUserCount.mockResolvedValueOnce(1).mockResolvedValueOnce(4)
+    renderLayout()
+
+    await screen.findByText('1')
+    await act(async () => {
+      window.dispatchEvent(new Event('atmos:pending-users-changed'))
+    })
+    await waitFor(() => expect(screen.getByText('4')).toBeInTheDocument())
   })
 
   it('点击头像打开用户菜单', () => {

@@ -42,6 +42,11 @@ impl AdminService {
         Ok(users)
     }
 
+    /// 待审批注册用户数（管理导航徽标轮询用）。
+    pub async fn count_pending_users(&self, tenant_id: i64) -> Result<i64, ServiceError> {
+        Ok(self.user_repo.count_pending_users(tenant_id).await?)
+    }
+
     /// Deletes the user identified by `target_id`.
     ///
     /// Returns an error if the actor attempts to delete themselves.

@@ -40,6 +40,22 @@ pub async fn list_users(
     Ok(Json(users))
 }
 
+/// GET /admin/users/pending/count — 待审批注册用户数。
+///
+/// 管理端导航徽标轮询用：只返回计数，避免轮询时反复传输整个用户列表。
+pub async fn pending_user_count(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let count = state
+        .services
+        .admin
+        .count_pending_users(auth_user.tenant_id)
+        .await
+        .map_err(map_admin_err)?;
+    Ok(Json(serde_json::json!({ "count": count })))
+}
+
 pub async fn delete_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

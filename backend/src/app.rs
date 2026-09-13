@@ -566,6 +566,10 @@ pub async fn build_router(config: AppConfig) -> Router {
     let admin_routes = with_timeout(
         Router::new()
             .route("/admin/users", get(handlers::admin::list_users))
+            .route(
+                "/admin/users/pending/count",
+                get(handlers::admin::pending_user_count),
+            )
             .route("/admin/users/{id}", delete(handlers::admin::delete_user))
             .route(
                 "/admin/videos/external",

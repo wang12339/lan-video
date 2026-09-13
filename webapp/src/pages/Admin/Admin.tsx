@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { ErrorBoundary } from './components'
 import './Admin.css'
@@ -39,7 +39,12 @@ export default function Admin() {
   const { t } = useTranslation()
   const { user, loading } = useAuth()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('dashboard')
+  const [searchParams] = useSearchParams()
+  // 支持 /admin?tab=users 深链（导航待审批徽标跳转用）
+  const [tab, setTab] = useState<Tab>(() => {
+    const q = searchParams.get('tab')
+    return TABS.some((x) => x.key === q) ? (q as Tab) : 'dashboard'
+  })
   const [mediaTab, setMediaTab] = useState<MediaSubTab>('video')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 

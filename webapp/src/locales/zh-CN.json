@@ -435,6 +435,8 @@
       "title": "用户管理",
       "total": "共 {{count}} 个用户",
       "pending": "{{count}} 个待审批",
+      "pendingAria": "{{count}} 个待审批用户",
+      "newPendingToast": "有 {{count}} 个新注册用户待审批",
       "avatar": "头像",
       "username": "用户名",
       "status": "状态",

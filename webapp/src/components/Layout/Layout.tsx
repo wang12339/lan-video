@@ -3,7 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { useChatRoom } from '../../context/ChatContext'
-import { searchSuggest, setOnError } from '../../api'
+import { searchSuggest, setOnError, getPendingUserCount, PENDING_USERS_CHANGED_EVENT } from '../../api'
 import { addToSearchHistory } from '../../utils/searchHistory'
 import { trackClick } from '../../utils/track'
 import { ToastProvider, useToast } from '../Toast/Toast'
@@ -53,6 +53,9 @@ function NavBar() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState(-1)
+  // 管理员：待审批注册用户数（导航徽标提醒）
+  const [pendingCount, setPendingCount] = useState(0)
+  const prevPendingRef = useRef<number | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchTried, setSearchTried] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -215,6 +218,52 @@ function NavBar() {
     }
   }, [logout, toast, t, closeMenu])
 
+  // 管理员：待审批注册用户提醒（徽标 + 新注册 toast，60s 轮询 + 回前台/审批后刷新）
+  // toast/t 放进 ref：轮询只应随登录态（isAdmin）启停，避免依赖引用变化导致重复注册定时器
+  const pendingToastRef = useRef(toast)
+  pendingToastRef.current = toast
+  const pendingTRef = useRef(t)
+  pendingTRef.current = t
+  useEffect(() => {
+    if (!user?.isAdmin) {
+      setPendingCount(0)
+      prevPendingRef.current = null
+      return
+    }
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const n = await getPendingUserCount()
+        if (cancelled) return
+        setPendingCount(n)
+        const prev = prevPendingRef.current
+        if (prev !== null && n > prev) {
+          pendingToastRef.current(
+            pendingTRef.current('admin.users.newPendingToast', { count: n }),
+            'info',
+          )
+        }
+        prevPendingRef.current = n
+      } catch {
+        // 静默失败：徽标保持上次值，下一轮再试
+      }
+    }
+    void refresh()
+    const timer = setInterval(refresh, 60_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    const onChanged = () => void refresh()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener(PENDING_USERS_CHANGED_EVENT, onChanged)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener(PENDING_USERS_CHANGED_EVENT, onChanged)
+    }
+  }, [user?.isAdmin])
+
   const handleGuestLogin = useCallback(() => {
     closeMenu()
     // 访客身份点击登录：直接弹登录框（不需要跳个人中心）
@@ -315,7 +364,19 @@ function NavBar() {
             <Link to="/upload" className={`nav-link ${isActive('/upload') ? 'active' : ''}`} aria-current={isActive('/upload') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.upload')); closeMenu() }}>{t('nav.upload')}</Link>
           )}
           {user?.isAdmin && (
-            <Link to="/admin" className={`nav-link ${isActive('/admin') ? 'active' : ''}`} aria-current={isActive('/admin') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.admin')); closeMenu() }}>{t('nav.admin')}</Link>
+            <Link
+              to={pendingCount > 0 ? '/admin?tab=users' : '/admin'}
+              className={`nav-link ${isActive('/admin') ? 'active' : ''}`}
+              aria-current={isActive('/admin') ? 'page' : undefined}
+              onClick={() => { trackClick('导航', t('nav.admin')); closeMenu() }}
+            >
+              {t('nav.admin')}
+              {pendingCount > 0 && (
+                <span className="nav-admin-badge" aria-label={t('admin.users.pendingAria', { count: pendingCount })}>
+                  {pendingCount > 99 ? '99+' : pendingCount}
+                </span>
+              )}
+            </Link>
           )}
           <div className="nav-mobile-user">
             {user ? (

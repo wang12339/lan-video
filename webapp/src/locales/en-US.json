@@ -435,6 +435,8 @@
       "title": "Users",
       "total": "{{count}} users total",
       "pending": "{{count}} pending",
+      "pendingAria": "{{count}} user(s) awaiting approval",
+      "newPendingToast": "{{count}} new registration(s) awaiting approval",
       "avatar": "Avatar",
       "username": "Username",
       "status": "Status",

@@ -2,6 +2,19 @@
 
 import { request, cacheClear, APIError } from './client';
 
+/** 待审批用户数变化事件：管理页审批操作后派发，导航徽标立即刷新 */
+export const PENDING_USERS_CHANGED_EVENT = 'atmos:pending-users-changed'
+
+/** 待审批注册用户数（管理导航徽标轮询用，仅返回计数） */
+export async function getPendingUserCount(): Promise<number> {
+  const res = await request<{ count: number }>('/admin/users/pending/count', {
+    auth: true,
+    skipCache: true,
+    silent: true,
+  })
+  return res.count
+}
+
 /** 判断是否为权限类错误（403），供页面统一给出中文提示 */
 export function isForbidden(err: unknown): boolean {
   return err instanceof APIError && err.status === 403;

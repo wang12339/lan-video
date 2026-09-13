@@ -22,7 +22,7 @@ export { listComments, listReplies, createComment, deleteComment } from './comme
 export type { Comment, CommentListResponse } from './comments';
 export { createShareLink, getShareVideo, deleteShareLink, listMyShares, revokeMyShare } from './shares';
 export type { ShareLink, ShareListItem, ShareVideoInfo } from './shares';
-export { listUsers, deleteUser as adminDeleteUser, listAdminVideos, updateVideo as adminUpdateVideo, addExternalVideo, uploadCover as adminUploadCover, scanMedia, backfillThumbnails, getStats, batchUpdateCategory, resetUserPassword, toggleUserAdmin, approveUser, kickUser, getRegistrationEnabled, setRegistrationEnabled, getSystemInfo, isForbidden } from './admin';
+export { listUsers, deleteUser as adminDeleteUser, listAdminVideos, updateVideo as adminUpdateVideo, addExternalVideo, uploadCover as adminUploadCover, scanMedia, backfillThumbnails, getStats, batchUpdateCategory, resetUserPassword, toggleUserAdmin, approveUser, kickUser, getRegistrationEnabled, setRegistrationEnabled, getSystemInfo, isForbidden, getPendingUserCount, PENDING_USERS_CHANGED_EVENT } from './admin';
 export type { AdminUser, AdminVideo, AdminStats, SystemInfo } from './admin';
 export { getLogs, clearLogs } from './logs';
 export type { LogEntry, LogsResponse } from './logs';

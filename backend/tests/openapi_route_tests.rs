@@ -189,6 +189,7 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
     // 管理路由（app.rs `admin_routes`）
     for (m, p) in [
         ("GET", "/admin/users"),
+        ("GET", "/admin/users/pending/count"),
         ("DELETE", "/admin/users/{id}"),
         ("POST", "/admin/videos/external"),
         ("POST", "/admin/videos/check-hashes"),

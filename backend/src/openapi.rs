@@ -1986,6 +1986,32 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/admin/users/pending/count": {
+                "get": {
+                    "summary": "Pending user count",
+                    "operationId": "pendingUserCount",
+                    "description": "返回当前租户待审批注册用户数（管理员导航徽标轮询用，仅计数）",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Pending count",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "count": { "type": "integer", "minimum": 0 }
+                                        },
+                                        "required": ["count"]
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
             "/admin/users/{id}": {
                 "delete": {
                     "summary": "Delete a user",

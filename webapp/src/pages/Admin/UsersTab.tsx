@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../context/AuthContext'
-import { listUsers, deleteUser, resetUserPassword, toggleUserAdmin, approveUser, kickUser } from '../../api/admin'
+import { listUsers, deleteUser, resetUserPassword, toggleUserAdmin, approveUser, kickUser, PENDING_USERS_CHANGED_EVENT } from '../../api/admin'
 import type { AdminUser } from '../../api/admin'
 import { useDebouncedValue } from '../../utils/throttle'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
@@ -129,6 +129,8 @@ export default function UsersTab() {
         try {
           await approveUser(u.id, approved)
           queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+          // 通知导航徽标立即刷新待审批数
+          window.dispatchEvent(new Event(PENDING_USERS_CHANGED_EVENT))
         } catch {
           showAlert(t('admin.users.operationFailed'))
         }

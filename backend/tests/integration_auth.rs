@@ -2338,3 +2338,35 @@ async fn test_rate_limiting_on_login() {
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
+
+/// 待审批计数：注册普通用户 +1，审批后回落；供管理端导航徽标轮询。
+#[tokio::test]
+async fn test_pending_user_count_tracks_registrations() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let state = test_app_state().await;
+    let svc = auth_service(&state);
+    let admin =
+        atmos_video_backend::services::admin_service::AdminService::new(state.repos.user.clone());
+
+    let before = admin.count_pending_users(1).await.expect("count before");
+
+    let username = unique_username("pending_cnt");
+    register_user(&svc, &username, STRONG_PASSWORD).await;
+    assert_eq!(
+        admin.count_pending_users(1).await.expect("count after"),
+        before + 1,
+        "未审批注册应使待审批计数 +1"
+    );
+
+    approve_user(&state, &username).await;
+    assert_eq!(
+        admin.count_pending_users(1).await.expect("count approved"),
+        before,
+        "审批通过后计数应回落"
+    );
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
