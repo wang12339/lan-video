@@ -2340,33 +2340,133 @@ async fn test_rate_limiting_on_login() {
 }
 
 /// 待审批计数：注册普通用户 +1，审批后回落；供管理端导航徽标轮询。
+///
+/// 使用独立临时租户，避免与并行运行的其他用例的注册/审批相互干扰。
 #[tokio::test]
 async fn test_pending_user_count_tracks_registrations() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
+    let pool = test_pool().await;
+    let slug = format!("t_pending_{}_{}", std::process::id(), unique_username("u"));
+    let (tenant_id,): (i64,) =
+        sqlx::query_as("INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id")
+            .bind(&slug)
+            .bind(&slug)
+            .fetch_one(&pool)
+            .await
+            .expect("create temp tenant");
+
     let state = test_app_state().await;
     let svc = auth_service(&state);
     let admin =
         atmos_video_backend::services::admin_service::AdminService::new(state.repos.user.clone());
 
-    let before = admin.count_pending_users(1).await.expect("count before");
+    assert_eq!(
+        admin
+            .count_pending_users(tenant_id)
+            .await
+            .expect("count before"),
+        0,
+        "新租户应无待审批用户"
+    );
 
     let username = unique_username("pending_cnt");
-    register_user(&svc, &username, STRONG_PASSWORD).await;
+    let reg = svc
+        .register(
+            &AuthRequest {
+                username: username.clone(),
+                password: STRONG_PASSWORD.into(),
+            },
+            "127.0.0.1",
+            tenant_id,
+        )
+        .await
+        .expect("register should not error");
+    assert!(reg.ok, "registration should succeed");
+    assert!(reg.token.is_none(), "待审批用户不应返回 token");
+
     assert_eq!(
-        admin.count_pending_users(1).await.expect("count after"),
-        before + 1,
+        admin
+            .count_pending_users(tenant_id)
+            .await
+            .expect("count after"),
+        1,
         "未审批注册应使待审批计数 +1"
     );
 
-    approve_user(&state, &username).await;
+    let user = state
+        .repos
+        .user
+        .find_by_username(tenant_id, &username)
+        .await
+        .expect("find user")
+        .expect("user should exist");
+    state
+        .repos
+        .user
+        .approve_user(user.id, true)
+        .await
+        .expect("approve");
+
     assert_eq!(
-        admin.count_pending_users(1).await.expect("count approved"),
-        before,
+        admin
+            .count_pending_users(tenant_id)
+            .await
+            .expect("count approved"),
+        0,
         "审批通过后计数应回落"
     );
 
-    cleanup_test_user(state.repos.video.pool(), &username).await;
+    cleanup_test_user(&pool, &username).await;
+    let _ = sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await;
+}
+
+/// 管理员邮箱列表：只包含 role>=3 且邮箱非空的管理员（待审批通知收件人来源）。
+#[tokio::test]
+async fn test_list_admin_emails_filters_admin_and_email() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let state = test_app_state().await;
+
+    // 管理员（create_test_user 默认 role=3）+ 邮箱 → 应纳入
+    let (admin_name, admin_id) = create_test_user(&state, "notify_admin").await;
+    let admin_email = format!("{}@example.com", admin_name);
+    sqlx::query("UPDATE users SET email = $1, email_verified = true WHERE id = $2")
+        .bind(&admin_email)
+        .bind(admin_id)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("set admin email");
+
+    // 普通用户（降级）+ 邮箱 → 不应纳入
+    let (plain_name, plain_id) = create_test_user(&state, "notify_plain").await;
+    let plain_email = format!("{}@example.com", plain_name);
+    sqlx::query("UPDATE users SET role = 1, email = $1 WHERE id = $2")
+        .bind(&plain_email)
+        .bind(plain_id)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("demote plain user");
+
+    let emails = state
+        .repos
+        .user
+        .list_admin_emails(1)
+        .await
+        .expect("list admin emails");
+    assert!(emails.contains(&admin_email), "管理员邮箱应被包含");
+    assert!(
+        !emails.iter().any(|e| e == &plain_email),
+        "普通用户邮箱不应被包含"
+    );
+
+    cleanup_test_user(state.repos.video.pool(), &admin_name).await;
+    cleanup_test_user(state.repos.video.pool(), &plain_name).await;
 }

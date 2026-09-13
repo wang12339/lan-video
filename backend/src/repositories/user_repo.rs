@@ -653,6 +653,22 @@ impl UserRepository {
         Ok(count)
     }
 
+    /// 租户管理员的邮箱列表（新用户注册待审批邮件通知用）。
+    ///
+    /// 仅返回非空邮箱；不要求 `email_verified`——该邮箱是管理员自己
+    /// 在个人资料中维护的通知地址，是否验证与能否收信无关。
+    pub async fn list_admin_emails(&self, tenant_id: i64) -> Result<Vec<String>, sqlx::Error> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT email FROM users \
+             WHERE tenant_id = $1 AND role >= 3 AND email IS NOT NULL AND email <> '' \
+             ORDER BY id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(email,)| email).collect())
+    }
+
     /// Purge all expired and revoked tokens from the database.
     ///
     /// **SQL**: `DELETE FROM auth_tokens WHERE expires_at <= CURRENT_TIMESTAMP OR revoked`

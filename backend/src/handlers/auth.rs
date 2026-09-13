@@ -158,6 +158,59 @@ async fn merge_guest_session_if_any(
     }
 }
 
+/// 新用户注册待审批：异步邮件通知租户管理员（不阻塞注册响应）。
+///
+/// 收件人 = 管理员账号邮箱 + 可选 `ADMIN_NOTIFY_EMAILS`（逗号分隔，用于
+/// 管理员账号未填邮箱或需要分发列表的场景），去重后逐个发送。
+/// SMTP 未配置时 `EmailService::send` 只记日志，不会报错。
+fn notify_admins_new_registration(state: Arc<AppState>, tenant_id: i64, username: String) {
+    tokio::spawn(async move {
+        let mut recipients = match state.repos.user.list_admin_emails(tenant_id).await {
+            Ok(list) => list,
+            Err(e) => {
+                tracing::warn!(
+                    "pending-registration notice: failed to load admin emails: {}",
+                    e
+                );
+                Vec::new()
+            }
+        };
+        if let Ok(extra) = std::env::var("ADMIN_NOTIFY_EMAILS") {
+            recipients.extend(
+                extra
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        recipients.sort();
+        recipients.dedup();
+
+        if recipients.is_empty() {
+            tracing::info!("pending-registration notice: no admin email configured, skipping");
+            return;
+        }
+
+        let admin_url = format!(
+            "{}/webapp/admin?tab=users",
+            state.config.public_url.trim_end_matches('/')
+        );
+        for email in &recipients {
+            state
+                .services
+                .email
+                .send_pending_registration_notice(email, &username, &admin_url)
+                .await;
+        }
+        tracing::info!(
+            user = %username,
+            recipients = recipients.len(),
+            "pending-registration notice sent"
+        );
+    });
+}
+
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
@@ -191,6 +244,9 @@ pub async fn register(
         if resp.ok {
             if let Some(token) = &resp.token {
                 merge_guest_session_if_any(&state, &headers, token, tenant.tenant_id).await;
+            } else {
+                // 无 token = 等待管理员审批的新注册 → 邮件通知管理员
+                notify_admins_new_registration(state.clone(), tenant.tenant_id, auth_req.username);
             }
         }
     }

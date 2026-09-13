@@ -118,6 +118,42 @@ impl EmailService {
         self.send(email, subject, &body).await;
     }
 
+    /// 新用户注册待审批：通知管理员前往审批。
+    pub async fn send_pending_registration_notice(
+        &self,
+        email: &str,
+        username: &str,
+        admin_url: &str,
+    ) {
+        // 主题里剔除控制字符（用户名来自用户输入；换行会破坏邮件头）
+        let subject_username: String = username.chars().filter(|c| !c.is_control()).collect();
+        let subject = format!("新用户注册待审批：{}", subject_username);
+        let safe_username = Self::html_escape(username);
+        let safe_url = Self::html_escape(admin_url);
+        let body = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; color: #333;">
+  <h2 style="color: #ff4433;">新用户注册待审批</h2>
+  <p>有新的注册申请等待审批：</p>
+  <p style="font-size: 16px; margin: 16px 0;"><strong>{}</strong></p>
+  <p>审批通过后该用户才能登录使用。</p>
+  <p style="text-align: center; margin: 30px 0;">
+    <a href="{}" style="background: #ff4433; color: white; padding: 12px 32px; text-decoration: none; border-radius: 8px; font-weight: 500;">前往审批</a>
+  </p>
+  <p style="color: #666; font-size: 13px;">如果按钮无法点击，请复制以下链接到浏览器打开：</p>
+  <p style="color: #666; font-size: 13px; word-break: break-all;">{}</p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿直接回复。</p>
+  <p style="color: #999; font-size: 12px;">Atmos Video</p>
+</body>
+</html>"#,
+            safe_username, safe_url, safe_url
+        );
+        self.send(email, &subject, &body).await;
+    }
+
     fn build_mailer(&self) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
         let creds = Credentials::new(
             self.config.smtp_username.clone(),
