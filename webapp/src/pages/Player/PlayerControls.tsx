@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { TFunction } from 'i18next'
 import { formatDuration } from '../../api'
-import { SEEK_STEP_S } from './constants'
+import { SEEK_STEP_S, IOS_SYSTEM_VOLUME } from './constants'
 import type { VideoVariant } from '../../api/types'
 import { usePlayerGestures } from './hooks/usePlayerGestures'
 import ProgressBar from './components/ProgressBar'
@@ -149,14 +149,16 @@ function PlayerControlsImpl({
               setSpeedValue={setSpeedValue}
               t={t}
             />
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              toggleMute={toggleMute}
-              setVolumeValue={setVolumeValue}
-              setVolume={setVolume}
-              t={t}
-            />
+            {!IOS_SYSTEM_VOLUME && (
+              <VolumeControl
+                volume={volume}
+                muted={muted}
+                toggleMute={toggleMute}
+                setVolumeValue={setVolumeValue}
+                setVolume={setVolume}
+                t={t}
+              />
+            )}
             <button className="ctrl-btn" onClick={toggleFullscreen} aria-label={t('player.fullscreen')}>
               <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
             </button>

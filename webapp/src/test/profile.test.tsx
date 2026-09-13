@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -6,7 +6,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Profile from '../pages/Profile/Profile'
 import type { UserProfile, MappedVideo, MappedHistory, PlaybackHistory, VideoListResponse } from '../api/types'
 import type { Playlist } from '../api/playlists'
-import type { ShareListItem } from '../api'
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -107,24 +106,6 @@ const mockUserProfile: UserProfile = {
   recentHistory: [],
 }
 
-function makeMappedVideo(overrides: Partial<MappedVideo> = {}): MappedVideo {
-  return {
-    id: 'v1',
-    title: '测试视频',
-    category: '科技',
-    description: '',
-    thumb: '/media/thumb.jpg',
-    stream: '/media/v.mp4',
-    cover: null,
-    sourceType: 'local_video',
-    duration: 120,
-    views: 500,
-    date: '2024-01-01T00:00:00Z',
-    progress: 0,
-    ...overrides,
-  }
-}
-
 function makeMappedHistory(overrides: Partial<MappedHistory> = {}): MappedHistory {
   return {
     id: 'h1',
@@ -160,16 +141,6 @@ function makePlaylist(overrides: Partial<Playlist> = {}): Playlist {
     item_count: 5,
     created_at: '2024-03-01T00:00:00Z',
     updated_at: '2024-03-15T00:00:00Z',
-    ...overrides,
-  }
-}
-
-function makeShare(overrides: Partial<ShareListItem> = {}): ShareListItem {
-  return {
-    id: 's1',
-    expiresAt: null,
-    createdAt: '2024-05-01T00:00:00Z',
-    active: true,
     ...overrides,
   }
 }

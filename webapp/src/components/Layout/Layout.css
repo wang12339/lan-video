@@ -223,6 +223,28 @@
   white-space: nowrap;
 }
 
+/* 访客模式徽标（用户名右侧） */
+.nav-guest-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--text2);
+  background: var(--bg3, rgba(127, 127, 127, 0.18));
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+/* 访客菜单内的合并提示文案 */
+.nav-user-menu-hint {
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text3);
+}
+
 .nav-user-menu-item {
   display: flex;
   align-items: center;
@@ -285,6 +307,7 @@
 .page-content {
   padding-top: calc(var(--nav-h) + env(safe-area-inset-top) + 16px);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .nav-menu-toggle {
@@ -392,6 +415,7 @@
     display: none;
     z-index: 99;
     max-height: calc(100vh - var(--nav-h) - env(safe-area-inset-top));
+    max-height: calc(100dvh - var(--nav-h) - env(safe-area-inset-top));
     overflow-y: auto;
     overscroll-behavior: contain;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -481,18 +505,19 @@
     height: 38px;
   }
 
-  /* 搜索框换行后导航更高（实测 107px）：页内容/抽屉/吸顶工具条
-     都按「第二行搜索框实际高度」让位，抽屉顶紧贴导航底无缝隙 */
+  /* 搜索框换行后导航更高：页内容/抽屉/吸顶工具条按 JS 实测的
+     --nav-h-actual（导航真实渲染高度，已含安全区与两行结构）让位，
+     抽屉顶紧贴导航底无缝隙。变量缺失时回退到旧魔数公式。 */
   .page-content {
-    padding-top: calc(var(--nav-h) + env(safe-area-inset-top) + 51px);
+    padding-top: calc(var(--nav-h-actual, calc(var(--nav-h) + env(safe-area-inset-top) + 51px)) + 8px);
   }
 
   .nav-links {
-    top: calc(var(--nav-h) + env(safe-area-inset-top) + 51px);
+    top: var(--nav-h-actual, calc(var(--nav-h) + env(safe-area-inset-top) + 51px));
   }
 
   .gallery-toolbar {
-    top: calc(var(--nav-h) + env(safe-area-inset-top) + 59px);
+    top: calc(var(--nav-h-actual, calc(var(--nav-h) + env(safe-area-inset-top) + 59px)) + 8px);
   }
 
   /* 竖排抽屉里的激活态：左侧短条替代通栏下划线 */

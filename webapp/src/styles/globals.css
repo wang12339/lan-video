@@ -101,6 +101,19 @@ html {
   scroll-behavior: smooth;
 }
 
+/* 触屏防双击缩放/误触：交互元素统一关闭 double-tap-to-zoom
+   （viewport meta 已消 300ms 延迟，这里补 double-tap 缩放） */
+button,
+a,
+[role='button'],
+input,
+select,
+textarea,
+label,
+summary {
+  touch-action: manipulation;
+}
+
 body {
   min-height: 100%;
   font-family: inherit;
@@ -288,7 +301,11 @@ img {
   .cat-tag,
   .auth-tab,
   .auth-btn,
-  .cd-btn {
+  .cd-btn,
+  .admin-btn,
+  .admin-icon-btn,
+  .admin-tab,
+  .gv-btn {
     min-block-size: 44px;
   }
 }

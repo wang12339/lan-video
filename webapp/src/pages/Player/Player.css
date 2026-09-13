@@ -34,6 +34,7 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  min-height: 100dvh;
   color: var(--text2);
   gap: 16px;
   padding: 32px;
@@ -100,6 +101,7 @@
 .player-page {
   background: #000;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -1160,8 +1162,10 @@
 @media (orientation: landscape) and (max-height: 500px) {
   .player-wrap {
     max-height: 100vh;
+    max-height: 100dvh;
     aspect-ratio: unset;
     height: 100vh;
+    height: 100dvh;
   }
   .player-detail,
   .player-related {
@@ -1346,5 +1350,13 @@
   }
   .prs-title::before {
     background: #000;
+  }
+}
+
+/* 触屏：片尾推荐按钮加大到 44px 触摸目标 */
+@media (hover: none) and (pointer: coarse) {
+  .video-ended-btn {
+    min-height: 44px;
+    padding: 12px 24px;
   }
 }

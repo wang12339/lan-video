@@ -534,11 +534,14 @@ async fn create_test_user(pool: &sqlx::PgPool, prefix: &str) -> (i64, String) {
 
 /// 构造一个 role=1 的测试 AuthUser，用于直接调用需要认证的 handler。
 fn test_auth_user(id: i64, username: &str) -> AuthUser {
+    // is_admin=true：列表/详情/搜索按 owner 隔离后，uploader 为 NULL 的测试视频
+    // 只有管理员能查到；各 handler 单测关注的是分页/解码等行为本身。
     AuthUser {
         id,
         username: username.to_string(),
-        is_admin: false,
+        is_admin: true,
         role: 1,
+        is_guest: false,
         tenant_id: 1,
     }
 }
@@ -1096,6 +1099,7 @@ async fn test_get_video_handler_invalid_ids() {
         let res = handlers::videos::get_video(
             State(state.clone()),
             Extension(test_tenant()),
+            Extension(test_auth_user(9999, "viewer")),
             Path(bad.to_string()),
         )
         .await;
@@ -1111,6 +1115,7 @@ async fn test_get_video_handler_invalid_ids() {
     let res = handlers::videos::get_video(
         State(state.clone()),
         Extension(test_tenant()),
+        Extension(test_auth_user(9999, "viewer")),
         Path("999999999999".into()),
     )
     .await;
@@ -1120,9 +1125,13 @@ async fn test_get_video_handler_invalid_ids() {
     // hashid 编码的合法 id → 200 并返回正确视频
     let id = create_test_video(&state, "hashid").await;
     let hash = atmos_video_backend::util::hashid::encode_id(id);
-    let res =
-        handlers::videos::get_video(State(state.clone()), Extension(test_tenant()), Path(hash))
-            .await;
+    let res = handlers::videos::get_video(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "viewer")),
+        Path(hash),
+    )
+    .await;
     let Json(video) = res.expect("hashid 解码应成功");
     assert_eq!(video.id, id, "hashid 解码后应拿到同一视频");
 
@@ -1405,7 +1414,7 @@ async fn test_list_videos_handler_clamps_pagination() {
     ensure_chinese_ts_config(state.repos.video.pool()).await;
     let user = test_auth_user(1, "list_handler");
 
-    // 负 page / 负 size → clamp 到 page=1, size=1
+    // 负 page / 负 size → clamp 到 page=0, size=1（/videos 是 0 基分页）
     let q = VideoQuery {
         query: None,
         source_type: None,
@@ -1420,7 +1429,7 @@ async fn test_list_videos_handler_clamps_pagination() {
             .await
             .expect("clamped request 应成功");
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(resp.page, 1, "负 page 应被 clamp 到 1");
+    assert_eq!(resp.page, 0, "负 page 应被 clamp 到 0");
     assert_eq!(resp.size, 1, "负 size 应被 clamp 到 1");
 
     // 超大 page / size → clamp 到上限（MAX_PAGE=10000, size 上限 100）
@@ -1440,7 +1449,7 @@ async fn test_list_videos_handler_clamps_pagination() {
     assert_eq!(resp.page, 10_000, "超大 page 应 clamp 到上限");
     assert_eq!(resp.size, 100, "超大 size 应 clamp 到 100");
 
-    // 缺省值 → page=1, size=20
+    // 缺省值 → page=0, size=20（0 基契约，offset = 0*size = 0）
     let q = VideoQuery {
         query: None,
         source_type: None,
@@ -1454,7 +1463,7 @@ async fn test_list_videos_handler_clamps_pagination() {
         handlers::videos::list_videos(State(state.clone()), Extension(user.clone()), Query(q))
             .await
             .expect("default request");
-    assert_eq!(resp.page, 1);
+    assert_eq!(resp.page, 0);
     assert_eq!(resp.size, 20);
 
     // 查询词超过 200 字符 → 400
@@ -1509,10 +1518,14 @@ async fn test_search_videos_handler_edges() {
         page: None,
         size: None,
     };
-    let Json(resp) =
-        handlers::videos::search_videos(State(state.clone()), Extension(test_tenant()), Query(q))
-            .await
-            .expect("empty q");
+    let Json(resp) = handlers::videos::search_videos(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "searcher")),
+        Query(q),
+    )
+    .await
+    .expect("empty q");
     assert_eq!(resp.total, 0);
     assert!(resp.items.is_empty());
 
@@ -1522,10 +1535,14 @@ async fn test_search_videos_handler_edges() {
         page: Some(-3),
         size: Some(-7),
     };
-    let Json(resp) =
-        handlers::videos::search_videos(State(state.clone()), Extension(test_tenant()), Query(q))
-            .await
-            .expect("whitespace q");
+    let Json(resp) = handlers::videos::search_videos(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "searcher")),
+        Query(q),
+    )
+    .await
+    .expect("whitespace q");
     assert_eq!(resp.total, 0);
     assert_eq!(resp.page, 1, "负 page 应 clamp 到 1");
     assert_eq!(resp.size, 1, "负 size 应 clamp 到 1");
@@ -1536,9 +1553,13 @@ async fn test_search_videos_handler_edges() {
         page: None,
         size: None,
     };
-    let res =
-        handlers::videos::search_videos(State(state.clone()), Extension(test_tenant()), Query(q))
-            .await;
+    let res = handlers::videos::search_videos(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "searcher")),
+        Query(q),
+    )
+    .await;
     match res {
         Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
         Ok(_) => panic!("超长搜索词应 400"),
@@ -1550,10 +1571,14 @@ async fn test_search_videos_handler_edges() {
         page: Some(0),
         size: Some(10),
     };
-    let Json(resp) =
-        handlers::videos::search_videos(State(state.clone()), Extension(test_tenant()), Query(q))
-            .await
-            .expect("matching q");
+    let Json(resp) = handlers::videos::search_videos(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "searcher")),
+        Query(q),
+    )
+    .await
+    .expect("matching q");
     assert!(resp.total >= 1, "搜索应命中刚创建的视频");
     assert!(
         resp.items.iter().any(|i| i.id == id),
@@ -1566,10 +1591,14 @@ async fn test_search_videos_handler_edges() {
         page: None,
         size: None,
     };
-    let Json(resp) =
-        handlers::videos::search_videos(State(state.clone()), Extension(test_tenant()), Query(q))
-            .await
-            .expect("special chars q");
+    let Json(resp) = handlers::videos::search_videos(
+        State(state.clone()),
+        Extension(test_tenant()),
+        Extension(test_auth_user(9999, "searcher")),
+        Query(q),
+    )
+    .await
+    .expect("special chars q");
     assert_eq!(resp.total, 0);
 
     cleanup_test_video(state.repos.video.pool(), id).await;
@@ -1798,6 +1827,180 @@ async fn test_upload_resume_handler_size_limits() {
     assert_eq!(body["received"], 0);
 }
 
+/// 分片续传完整流程（需要数据库）：偏移校验、幂等重放、去重预检、
+/// finalize 去重与哈希校验。覆盖"超时重试导致重复分片"的历史写坏场景。
+#[tokio::test]
+async fn test_upload_resume_chunked_idempotent_flow() {
+    use atmos_video_backend::handlers::admin::UploadStatusQuery;
+    use sha2::{Digest, Sha256};
+
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let pool = state.repos.video.pool();
+    let (user_id, username) = create_test_user(pool, "resume_flow").await;
+    std::fs::create_dir_all(&state.config.media_root).unwrap();
+    let before = list_media_files(&state.config.media_root);
+    let user = test_auth_user(user_id, &username);
+
+    // 最小合法 MP4（ftyp + isom 主品牌）
+    let mp4: Vec<u8> = vec![
+        0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, //
+        0x69, 0x73, 0x6F, 0x6D, 0x00, 0x00, 0x02, 0x00, //
+        0x69, 0x73, 0x6F, 0x6D, 0x69, 0x73, 0x6F, 0x32, //
+        0x6D, 0x70, 0x34, 0x31, 0x00, 0x00, 0x00, 0x00, //
+    ];
+    let hash = format!("{:x}", Sha256::digest(&mp4));
+    let split = 16usize;
+    let first = Bytes::from(mp4[..split].to_vec());
+    let second = Bytes::from(mp4[split..].to_vec());
+
+    let mk_headers = |offset: Option<i64>, hash: &str| {
+        let mut h = HeaderMap::new();
+        h.insert("x-upload-size", mp4.len().to_string().parse().unwrap());
+        h.insert("x-upload-hash", hash.parse().unwrap());
+        h.insert("x-upload-name", "resume_flow.mp4".parse().unwrap());
+        h.insert("x-upload-category", "local".parse().unwrap());
+        if let Some(o) = offset {
+            h.insert("x-upload-offset", o.to_string().parse().unwrap());
+        }
+        h
+    };
+
+    // 1) 首片 → 206
+    let (status, Json(body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(0), &hash),
+        first.clone(),
+    )
+    .await
+    .expect("首片应成功");
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body["received"], split as i64);
+
+    // 2) 重放首片（模拟超时后的重试）→ 409 offset_mismatch + data.received
+    let (status, Json(err_body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(0), &hash),
+        first.clone(),
+    )
+    .await
+    .expect_err("重复分片应按偏移不一致拒绝");
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(err_body.code.as_deref(), Some("offset_mismatch"));
+    assert_eq!(
+        err_body.data.as_ref().unwrap()["received"],
+        split as i64,
+        "错误应携带服务端已接收偏移供客户端回退"
+    );
+
+    // 3) 上传前预检：未完成，无重复
+    let (_, Json(body)) = handlers::admin::upload_status(
+        State(state.clone()),
+        Extension(user.clone()),
+        Query(UploadStatusQuery {
+            hash: hash.clone(),
+            size: Some(mp4.len() as i64),
+        }),
+    )
+    .await
+    .expect("状态查询应成功");
+    assert_eq!(body["exists"], false);
+    assert_eq!(body["received"], split as i64);
+
+    // 4) 末片 → 201
+    let (status, Json(body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(split as i64), &hash),
+        second.clone(),
+    )
+    .await
+    .expect("末片应完成上传");
+    assert_eq!(status, StatusCode::CREATED);
+    let id = body["id"].as_i64().expect("应返回视频 id");
+
+    // 5) 重放末片（201 响应丢失）→ 201 同 id，幂等
+    let (status, Json(body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(split as i64), &hash),
+        second.clone(),
+    )
+    .await
+    .expect("末片重放应幂等");
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["id"].as_i64(), Some(id));
+
+    // 6) 预检：命中同上传者已有内容，可零传输跳过
+    let (_, Json(body)) = handlers::admin::upload_status(
+        State(state.clone()),
+        Extension(user.clone()),
+        Query(UploadStatusQuery {
+            hash: hash.clone(),
+            size: None,
+        }),
+    )
+    .await
+    .expect("状态查询应成功");
+    assert_eq!(body["exists"], true);
+    assert_eq!(body["existing_id"].as_i64(), Some(id));
+
+    // 7) 相同内容重新走一遍完整上传 → finalize 去重 409 duplicate
+    let _ = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(0), &hash),
+        first.clone(),
+    )
+    .await
+    .expect("重新上传首片应成功");
+    let (status, Json(err_body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(split as i64), &hash),
+        second.clone(),
+    )
+    .await
+    .expect_err("重复内容应在 finalize 被拒绝");
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(err_body.code.as_deref(), Some("duplicate"));
+
+    // 8) 客户端声明哈希（即上传 key）与实际内容不符 → 400 hash_mismatch
+    let bad_key = "0".repeat(64);
+    let _ = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(0), &bad_key),
+        first.clone(),
+    )
+    .await
+    .expect("首片应成功");
+    let (status, Json(err_body)) = handlers::admin::upload_resume(
+        State(state.clone()),
+        Extension(user.clone()),
+        mk_headers(Some(split as i64), &bad_key),
+        second.clone(),
+    )
+    .await
+    .expect_err("哈希不符应被拒绝");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(err_body.code.as_deref(), Some("hash_mismatch"));
+
+    // 清理：视频行 + 新增媒体文件 + 临时文件 + 测试用户
+    cleanup_test_video(pool, id).await;
+    let after = list_media_files(&state.config.media_root);
+    for f in after.difference(&before) {
+        let _ = std::fs::remove_file(f);
+    }
+    cleanup_test_user(pool, &username).await;
+}
+
 // ── Update / delete ──
 
 #[tokio::test]
@@ -1996,7 +2199,7 @@ async fn test_recommendations_latest_and_trending_ordering() {
     let recent = state
         .services
         .recommendation
-        .get_recent_videos(1, 0, 500)
+        .get_recent_videos(1, None, 0, 500)
         .await
         .expect("recent");
     let mine: Vec<_> = recent.0.iter().filter(|r| ids.contains(&r.id)).collect();
@@ -2010,7 +2213,7 @@ async fn test_recommendations_latest_and_trending_ordering() {
     let trending = state
         .services
         .recommendation
-        .get_trending_videos(1, 0, 500)
+        .get_trending_videos(1, None, 0, 500)
         .await
         .expect("trending");
     let mine: Vec<_> = trending.0.iter().filter(|r| ids.contains(&r.id)).collect();

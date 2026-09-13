@@ -1,6 +1,13 @@
 import type { TFunction } from 'i18next'
 import type { LogEntry } from '../../../api/logs'
 
+// 无用户名的日志（系统/静态资源请求）统一归入该虚拟账号，便于在账号路线视图中展示
+export const SYSTEM_USER = '__system__'
+
+export function displayUserName(user: string, t: TFunction): string {
+  return user === SYSTEM_USER ? t('admin.logs.systemUser') : user
+}
+
 // 路由 → i18n key（路径是数据，文案走 t 翻译）
 export const ROUTE_KEYS: Record<string, string> = {
   '/auth/login': 'admin.logs.routes.authLogin',
@@ -72,6 +79,7 @@ const MSG_FORMATTERS: { keyword: string; format: (entry: LogEntry, t: TFunction)
   { keyword: 'toggle like', format: (e, t) => ({ desc: (e.message || '').includes('liked: true') ? t('admin.logs.system.liked') : t('admin.logs.system.unliked'), type: 'like' }) },
   { keyword: 'toggle favorite', format: (e, t) => ({ desc: (e.message || '').includes('favorited: true') ? t('admin.logs.system.favorited') : t('admin.logs.system.unfavorited'), type: 'fav' }) },
   { keyword: 'user logged in', format: (_e, t) => ({ desc: t('admin.logs.system.loginSuccess'), type: 'login' }) },
+  { keyword: 'user logged out', format: (_e, t) => ({ desc: t('admin.logs.system.logoutSuccess'), type: 'login' }) },
   { keyword: 'failed login', format: (_e, t) => ({ desc: t('admin.logs.system.loginFailed'), type: 'error' }) },
   { keyword: 'rate limit', format: (_e, t) => ({ desc: t('admin.logs.system.rateLimit'), type: 'danger' }) },
   { keyword: 'Path traversal', format: (_e, t) => ({ desc: t('admin.logs.system.pathTraversal'), type: 'danger' }) },

@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation, useNavigate, useSearchParams } from 'react-r
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
+import { useChatRoom } from '../../context/ChatContext'
 import { searchSuggest, setOnError } from '../../api'
 import { addToSearchHistory } from '../../utils/searchHistory'
 import { trackClick } from '../../utils/track'
@@ -9,6 +10,7 @@ import { ToastProvider, useToast } from '../Toast/Toast'
 import PageTransition from '../ui/PageTransition'
 import AuthDialog from '../AuthDialog/AuthDialog'
 import ThemeToggle from '../ui/ThemeToggle'
+import { useScrollLock } from '../../hooks/useScrollLock'
 import './Layout.css'
 
 function ErrorBoundaryInit() {
@@ -43,6 +45,7 @@ export default function Layout() {
 function NavBar() {
   const { t, i18n } = useTranslation()
   const { user, logout } = useAuth()
+  const { unread } = useChatRoom()
   const { toast } = useToast()
   const location = useLocation()
   const navigate = useNavigate()
@@ -53,6 +56,23 @@ function NavBar() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchTried, setSearchTried] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  // 汉堡抽屉打开时锁背景滚动（移动端防穿透；抽屉自身 overscroll-behavior:contain）
+  useScrollLock(menuOpen)
+
+  // 实测导航实际高度写入 CSS 变量：≤640 时顶栏两行化，第二行搜索框的
+  // 高度随断点/字体变化，此前用实测魔数 51px 让位，行高一变就错位。
+  // ResizeObserver 让 .page-content/抽屉/吸顶工具条永远贴住导航底边。
+  const navRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const el = navRef.current
+    if (!el) return
+    const apply = () =>
+      document.documentElement.style.setProperty('--nav-h-actual', `${el.offsetHeight}px`)
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [showAuth, setShowAuth] = useState(false)
@@ -78,7 +98,7 @@ function NavBar() {
     e.preventDefault()
     const q = selectedIdx >= 0 ? (suggestions[selectedIdx] ?? '') : searchQuery.trim()
     if (q) {
-      try { addToSearchHistory(q) } catch {}
+      try { addToSearchHistory(q) } catch (e) { void e; }
       navigate(`/?q=${encodeURIComponent(q)}`)
       setShowSuggestions(false)
       setSearchQuery(q)
@@ -197,19 +217,24 @@ function NavBar() {
 
   const handleGuestLogin = useCallback(() => {
     closeMenu()
+    // 访客身份点击登录：直接弹登录框（不需要跳个人中心）
+    if (user?.isGuest) {
+      setShowAuth(true)
+      return
+    }
     // 首页对游客强制弹出登录框，避免重复叠加
     if (location.pathname === '/') {
       navigate('/profile')
     } else {
       setShowAuth(true)
     }
-  }, [closeMenu, location.pathname, navigate])
+  }, [closeMenu, location.pathname, navigate, user])
 
   const isActive = useCallback((path: string) => location.pathname === path, [location.pathname])
 
   return (
     <>
-      <nav className="nav" aria-label={t('nav.mainNav')}>
+      <nav ref={navRef} className="nav" aria-label={t('nav.mainNav')}>
         <Link to="/" className="nav-logo">{t('nav.logo')}</Link>
 
         <div className="nav-search" ref={searchRef}>
@@ -244,7 +269,7 @@ function NavBar() {
                     role="option"
                     aria-selected={i === selectedIdx}
                     onMouseDown={() => {
-                      try { addToSearchHistory(s) } catch {}
+                      try { addToSearchHistory(s) } catch (e) { void e; }
                       navigate(`/?q=${encodeURIComponent(s)}`)
                       setShowSuggestions(false)
                       setSearchQuery(s)
@@ -280,6 +305,12 @@ function NavBar() {
         <div ref={linksRef} className={`nav-links ${menuOpen ? 'open' : ''}`}>
           <Link to="/" className={`nav-link ${isActive('/') ? 'active' : ''}`} aria-current={isActive('/') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.home')); closeMenu() }}>{t('nav.home')}</Link>
           <Link to="/gallery" className={`nav-link ${isActive('/gallery') ? 'active' : ''}`} aria-current={isActive('/gallery') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.gallery')); closeMenu() }}>{t('nav.gallery')}</Link>
+          {user && (
+            <Link to="/chat" className={`nav-link ${isActive('/chat') ? 'active' : ''}`} aria-current={isActive('/chat') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.chat')); closeMenu() }}>
+              {t('nav.chat')}
+              {unread > 0 && <span className="nav-chat-badge" aria-label={t('chat.unread', { count: unread })}>{unread > 99 ? '99+' : unread}</span>}
+            </Link>
+          )}
           {user && (
             <Link to="/upload" className={`nav-link ${isActive('/upload') ? 'active' : ''}`} aria-current={isActive('/upload') ? 'page' : undefined} onClick={() => { trackClick('导航', t('nav.upload')); closeMenu() }}>{t('nav.upload')}</Link>
           )}
@@ -318,7 +349,7 @@ function NavBar() {
           onClick={() => {
             const next = i18n.language === 'zh-CN' ? 'en-US' : 'zh-CN'
             i18n.changeLanguage(next)
-            try { localStorage.setItem('atmos.lang', next) } catch {}
+            try { localStorage.setItem('atmos.lang', next) } catch (e) { void e; }
           }}
           aria-label={t('nav.toggleLanguage')}
           title={t('nav.toggleLanguage')}
@@ -343,7 +374,13 @@ function NavBar() {
             </button>
             {userMenuOpen && (
               <div className="nav-user-menu" role="menu" aria-label={t('nav.myProfile')}>
-                <div className="nav-user-menu-name">{user.username}</div>
+                <div className="nav-user-menu-name">
+                  {user.username}
+                  {user.isGuest && <span className="nav-guest-badge">{t('nav.guestMode')}</span>}
+                </div>
+                {user.isGuest && (
+                  <div className="nav-user-menu-hint">{t('nav.guestHint')}</div>
+                )}
                 <Link
                   to="/profile"
                   role="menuitem"
@@ -352,6 +389,16 @@ function NavBar() {
                 >
                   {t('nav.myProfile')}
                 </Link>
+                {user.isGuest && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="nav-user-menu-item"
+                    onClick={() => { trackClick('导航', t('nav.guestLoginCta')); setUserMenuOpen(false); handleGuestLogin() }}
+                  >
+                    {t('nav.guestLoginCta')}
+                  </button>
+                )}
                 <button
                   type="button"
                   role="menuitem"
@@ -376,7 +423,7 @@ function NavBar() {
         )}
       </nav>
 
-      {showAuth && !user && (
+      {showAuth && (!user || user.isGuest) && (
         <AuthDialog onClose={() => setShowAuth(false)} />
       )}
     </>

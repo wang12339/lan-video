@@ -418,3 +418,40 @@
 .tenant-error {
   color: var(--red);
 }
+
+/* ── 移动端适配（与全站 ≤640 统一断点） ── */
+@media (max-width: 640px) {
+  .tenant-tab {
+    padding: 12px;
+  }
+
+  .tenant-header h2 {
+    font-size: 20px;
+  }
+
+  /* 双栏布局（列表+详情）在手机上改单列纵向堆叠 */
+  .tenant-content {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .tenant-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .tenant-list-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .tenant-card {
+    padding: 12px;
+  }
+
+  .tenant-stats-preview {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}

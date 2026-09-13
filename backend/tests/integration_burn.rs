@@ -77,6 +77,13 @@ async fn setup_video() -> BurnFixture {
     let uploader = create_test_user_with_credentials(&state, "burn_owner").await;
     let viewer = create_test_user_with_credentials(&state, "burn_view").await;
     let video_id = create_test_video_owned_by(&state, "burn", uploader.2).await;
+    // 焚毁要求服务端片长已知（H1 修复后 duration<=0 一律 400）；
+    // 外链测试视频默认 duration=0，这里补成 100s，与种子进度 100_000ms 对齐。
+    sqlx::query("UPDATE videos SET duration = 100 WHERE id = $1")
+        .bind(video_id)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("set test video duration");
 
     BurnFixture {
         state,

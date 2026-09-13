@@ -50,6 +50,19 @@ export default function Profile() {
   const [alertMsg, setAlertMsg] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
+  // Tabs 横向滚动状态：右缘渐隐提示（滚到底自动隐藏）
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const [tabsAtEnd, setTabsAtEnd] = useState(false)
+  useEffect(() => {
+    const el = tabsRef.current
+    if (!el) return
+    const update = () =>
+      setTabsAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 4)
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    return () => el.removeEventListener('scroll', update)
+  }, [])
+
   const { profile, worksQuery, worksTotal, works, history, favorites, playlists, shares } =
     useProfileData(user?.id, activeTab)
 
@@ -268,7 +281,12 @@ export default function Profile() {
         </div>
       </div>
 
-      <div className="profile-tabs" role="tablist" aria-label={t('profile.tabsAria')}>
+      <div
+        ref={tabsRef}
+        className={`profile-tabs ${tabsAtEnd ? 'tabs-at-end' : ''}`}
+        role="tablist"
+        aria-label={t('profile.tabsAria')}
+      >
         {tabs.map((tab) => (
           <button
             key={tab.key}

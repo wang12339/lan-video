@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useId, useCallback } from 'react'
 import i18n from '../../i18n'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import { useScrollLock } from '../../hooks/useScrollLock'
 import './ConfirmDialog.css'
 
 type ButtonVariant = 'primary' | 'danger' | 'ghost' | 'outline'
@@ -131,8 +132,9 @@ export default function ConfirmDialog({
     return () => window.removeEventListener('keydown', handler)
   }, [open, loading, handleClose])
 
-  // 焦点陷阱
+  // 焦点陷阱 + 移动端锁背景滚动（防穿透）
   useFocusTrap(dialogRef, open, { autoFocus: false })
+  useScrollLock(open)
 
   if (!open && !closing) return null
 
@@ -241,8 +243,9 @@ export function AlertDialog({
     return () => window.removeEventListener('keydown', handler)
   }, [open, handleClose])
 
-  // 焦点陷阱
+  // 焦点陷阱 + 移动端锁背景滚动（防穿透）
   useFocusTrap(dialogRef, open)
+  useScrollLock(open)
 
   if (!open && !closing) return null
 

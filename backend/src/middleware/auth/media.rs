@@ -32,14 +32,16 @@ fn media_auth_cache() -> &'static Cache<String, CachedAuthUser> {
 
 #[derive(Clone)]
 struct CachedAuthUser {
+    user_id: i64,
     username: std::sync::Arc<str>,
+    is_admin: bool,
     tenant_id: i64,
 }
 
 const MEDIA_AUTH_CACHE_TTL_SECS: u64 = 10;
 
 /// 从共享 Redis 读取 media 鉴权缓存（未配置 Redis 或读取失败则视为 miss）。
-/// 缓存值格式：`{tenant_id}|{username}`（username 不含 `|`）。
+/// 缓存值格式：`{tenant_id}|{user_id}|{is_admin}|{username}`（username 不含 `|`）。
 async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Option<CachedAuthUser> {
     let conn = state.redis.as_ref()?;
     let key = format!("media:auth:{}", token);
@@ -51,10 +53,15 @@ async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Optio
         .ok()
         .flatten();
     let val = val?;
-    let (tenant_part, username_part) = val.split_once('|')?;
+    let (tenant_part, rest) = val.split_once('|')?;
+    let (user_part, rest) = rest.split_once('|')?;
+    let (admin_part, username_part) = rest.split_once('|')?;
     let tenant_id = tenant_part.parse::<i64>().ok()?;
+    let user_id = user_part.parse::<i64>().ok()?;
     Some(CachedAuthUser {
+        user_id,
         username: username_part.into(),
+        is_admin: admin_part == "1",
         tenant_id,
     })
 }
@@ -62,7 +69,13 @@ async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Optio
 async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &CachedAuthUser) {
     if let Some(conn) = state.redis.as_ref() {
         let key = format!("media:auth:{}", token);
-        let val = format!("{}|{}", user.tenant_id, user.username);
+        let val = format!(
+            "{}|{}|{}|{}",
+            user.tenant_id,
+            user.user_id,
+            if user.is_admin { 1 } else { 0 },
+            user.username
+        );
         let mut conn = conn.clone();
         let _ = redis::cmd("SETEX")
             .arg(&key)
@@ -114,8 +127,8 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
     // Thumbnails and covers are preview images rendered in listing pages.
     // They are NOT publicly accessible: unauthenticated requests are denied
     // (except share-token bound access, handled by the fallback below).
-    // Logged-in users may fetch them via cookie auth (browser <img> tags
-    // automatically send cookies) without an active playback session.
+    // 访客模式/私有化：即使已登录，也只能取自己视频的缩略图/封面
+    //（见下方归属检查）——列表页之外任何人都拿不到别人的预览图。
     let is_preview_image = is_thumbnail_or_cover_path(path);
 
     let path_video_id = extract_video_id_from_path(path);
@@ -135,14 +148,11 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
             .map(|t| t.tenant_id)
             .unwrap_or(1);
         match resolve_media_user(&state, &token, tenant_id).await {
-            MediaAuthResult::Authorized(username) => {
-                // Preview images (thumbnails/covers) are shown on listing
-                // pages where no playback session exists — skip the session
-                // check for authenticated users.
-                if is_preview_image {
-                    return next.run(req).await;
-                }
-
+            MediaAuthResult::Authorized {
+                user_id,
+                username,
+                is_admin,
+            } => {
                 // SECURITY (M-03): authorization must be video-scoped. The
                 // video_id comes from the path (canonical layout, thumbnails,
                 // covers, transcoded variants) or from the videos table via
@@ -151,27 +161,49 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 // user read unregistered files (.upload_* temp files, orphan
                 // files). The only exempt layout is /media/avatars/*, which
                 // is public static media by design.
-                let video_id = if let Some(id) = path_video_id {
-                    id
+                // 聊天室图片：登录即可（无需 playback session/归属校验），
+                // 复用 60s 的视频详情缓存不可用——chat 图片不对应 videos 行。
+                if is_chat_media_path(path) {
+                    return next.run(req).await;
+                }
+
+                let video_item = if let Some(id) = path_video_id {
+                    // 复用 60s 的视频详情缓存吸收 <video> Range 请求风暴，
+                    // 避免每个分片请求都打一次归属查询。
+                    if let Some(cached) = state.video_detail_cache.get(&(tenant_id, id)) {
+                        Some(cached)
+                    } else {
+                        match state.repos.video.find_by_id(tenant_id, id).await {
+                            Ok(Some(video)) => {
+                                let item = crate::models::video::VideoItem::from(video);
+                                state
+                                    .video_detail_cache
+                                    .insert((tenant_id, id), item.clone());
+                                Some(item)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                tracing::error!("DB error finding video by id: {}", e);
+                                return error_response_response(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "internal error",
+                                );
+                            }
+                        }
+                    }
                 } else if is_public_static_media_path(path) {
                     return next.run(req).await;
                 } else {
                     // Path does not contain video_id (e.g. /media/{timestamp}_{filename}.mp4)
-                    // Query database to find the video by stream_url and verify playback session
-                    let request_path = path;
-                    match state
-                        .repos
-                        .video
-                        .find_by_stream_url(tenant_id, request_path)
-                        .await
-                    {
-                        Ok(Some(video)) => video.id,
+                    // Query database to find the video by stream_url.
+                    match state.repos.video.find_by_stream_url(tenant_id, path).await {
+                        Ok(Some(video)) => Some(crate::models::video::VideoItem::from(video)),
                         Ok(None) => {
                             // Not a registered video and not an allowed public
                             // asset — deny instead of serving the file.
                             tracing::warn!(
                                 username = %username,
-                                path = %request_path,
+                                path = %path,
                                 "media_auth: denying unregistered media path"
                             );
                             return error_response_response(
@@ -188,6 +220,39 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                         }
                     }
                 };
+                let video = match video_item {
+                    Some(v) => v,
+                    None => {
+                        // 路径含 video_id 但库里查不到（孤儿/已删除）→ 拒绝
+                        tracing::warn!(
+                            username = %username,
+                            path = %path,
+                            "media_auth: denying media path without video row"
+                        );
+                        return error_response_response(StatusCode::FORBIDDEN, "无权访问该媒体");
+                    }
+                };
+                let video_id = video.id;
+
+                // 访客模式/私有化：媒体文件只对上传者本人（或管理员）开放。
+                // 非所有者唯一的合法通道是绑定该视频的分享 token。
+                let is_owner = is_admin || video.uploader_id == Some(user_id);
+                if !is_owner {
+                    match share_token_authorizes(&state, req.uri(), req.headers(), video_id).await {
+                        Ok(true) => return next.run(req).await,
+                        Ok(false) => {
+                            return error_response_response(StatusCode::FORBIDDEN, "无权访问该媒体")
+                        }
+                        Err(resp) => return *resp,
+                    }
+                }
+
+                // Preview images (thumbnails/covers) are shown on listing
+                // pages where no playback session exists — skip the session
+                // check for owners.
+                if is_preview_image {
+                    return next.run(req).await;
+                }
 
                 // The in-memory session tracker (with 120s heartbeat timeout) is
                 // the source of truth for active playback sessions. We no longer
@@ -319,7 +384,11 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
 }
 
 enum MediaAuthResult {
-    Authorized(String),
+    Authorized {
+        user_id: i64,
+        username: String,
+        is_admin: bool,
+    },
     Pass,
     Denied(Response),
 }
@@ -355,14 +424,14 @@ async fn share_token_authorizes(
 
 async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) -> MediaAuthResult {
     let cached = media_auth_cache().get(token);
-    let username = if let Some(ref c) = cached {
+    let user = if let Some(ref c) = cached {
         if c.tenant_id != tenant_id {
             return MediaAuthResult::Denied(error_response_response(
                 StatusCode::FORBIDDEN,
                 "无效的登录凭证",
             ));
         }
-        c.username.to_string()
+        c.clone()
     } else {
         // 共享 Redis 缓存（多实例一致），miss 后落本地 moka 快路径
         let from_redis = media_auth_cache_get_redis(state, token).await;
@@ -374,7 +443,7 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                 ));
             }
             media_auth_cache().insert(token.to_string(), c.clone());
-            c.username.to_string()
+            c
         } else {
             match state.repos.user.find_user_by_token(token).await {
                 Ok(Some(u)) => {
@@ -394,14 +463,15 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                             "账号未启用",
                         ));
                     }
-                    let username_arc: std::sync::Arc<str> = u.username.clone().into();
                     let entry = CachedAuthUser {
-                        username: username_arc.clone(),
+                        user_id: u.id,
+                        username: u.username.clone().into(),
+                        is_admin: u.role >= 3,
                         tenant_id,
                     };
                     media_auth_cache().insert(token.to_string(), entry.clone());
                     media_auth_cache_put_redis(state, token, &entry).await;
-                    username_arc.to_string()
+                    entry
                 }
                 Ok(None) => return MediaAuthResult::Pass,
                 Err(e) => {
@@ -415,7 +485,11 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
         }
     };
 
-    MediaAuthResult::Authorized(username)
+    MediaAuthResult::Authorized {
+        user_id: user.user_id,
+        username: user.username.to_string(),
+        is_admin: user.is_admin,
+    }
 }
 
 #[inline]
@@ -492,6 +566,13 @@ fn is_public_static_media_path(path: &str) -> bool {
     path.starts_with("/media/avatars/")
 }
 
+/// 聊天室图片：对已登录用户（含访客）公开——聊天室内容本质公共；
+/// 未登录仍拒绝（分享 token 用户不涉及聊天）。
+#[inline]
+fn is_chat_media_path(path: &str) -> bool {
+    path.starts_with("/media/chat/")
+}
+
 #[inline]
 fn is_thumbnail_or_cover_path(path: &str) -> bool {
     let stripped = path.strip_prefix("/media/").unwrap_or(path);
@@ -530,6 +611,9 @@ pub struct AuthUser {
     pub username: String,
     pub is_admin: bool,
     pub role: i16,
+    /// 访客影子账号（聊天室徽标等场景需要真实判定，
+    /// 不能靠 guest_ 前缀——普通用户可注册此类用户名仿冒）
+    pub is_guest: bool,
     pub tenant_id: i64,
 }
 
@@ -605,13 +689,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn csrf_post_passes_with_x_requested_with() {
+    async fn csrf_post_passes_with_matching_double_submit() {
+        // L1 修复后：头与 cookie 必须一致才放行
         let res = csrf_router()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/test")
-                    .header("x-requested-with", "XMLHttpRequest")
+                    .header("x-csrf-token", "token-value")
+                    .header("cookie", "csrf_token=token-value")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -621,19 +707,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn csrf_post_passes_with_csrf_token() {
+    async fn csrf_post_rejects_mismatched_double_submit() {
+        // 头存在但不匹配 → 拒绝（原实现只验头存在，这里验证修复）
         let res = csrf_router()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/test")
-                    .header("x-csrf-token", "token-value")
+                    .header("x-csrf-token", "wrong-value")
+                    .header("cookie", "csrf_token=token-value")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
@@ -643,6 +731,7 @@ mod tests {
             username: "alice".into(),
             is_admin: true,
             role: 3,
+            is_guest: false,
             tenant_id: 1,
         };
         assert!(user.is_admin);
@@ -656,6 +745,7 @@ mod tests {
             username: "bob".into(),
             is_admin: false,
             role: 1,
+            is_guest: false,
             tenant_id: 1,
         };
         assert!(!user.is_admin);
@@ -793,5 +883,12 @@ mod tests {
         assert!(!is_public_static_media_path("/media/.upload_abc123"));
         assert!(!is_public_static_media_path("/media/avatars"));
         assert!(!is_public_static_media_path("/media/avatars3.jpg"));
+
+        // 聊天室图片路径（迁移 054）：登录用户放行的前缀
+        assert!(is_chat_media_path("/media/chat/abc123.jpg"));
+        assert!(is_chat_media_path("/media/chat/.tmp-42.webp"));
+        assert!(!is_chat_media_path("/media/chat"));
+        assert!(!is_chat_media_path("/media/chatfoo/x.jpg"));
+        assert!(!is_chat_media_path("/media/videos/x.jpg"));
     }
 }

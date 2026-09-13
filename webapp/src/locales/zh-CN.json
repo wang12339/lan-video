@@ -18,7 +18,11 @@
     "switchToLight": "切换到浅色模式",
     "openMenu": "打开菜单",
     "closeMenu": "关闭菜单",
-    "toggleLanguage": "切换语言"
+    "toggleLanguage": "切换语言",
+    "guestMode": "访客模式",
+    "guestHint": "匿名访客：内容仅自己可见，注册后自动保留",
+    "guestLoginCta": "登录 / 注册以保存内容",
+    "chat": "聊天室"
   },
   "auth": {
     "login": "登录",
@@ -66,7 +70,8 @@
       "passwordLength": "密码长度需在 8-128 位之间",
       "passwordStrength": "密码过于简单，请包含大写字母、小写字母、数字、特殊字符中至少三种",
       "tokenRequired": "请输入重置令牌"
-    }
+    },
+    "guestEnter": "先逛逛，以访客身份进入"
   },
   "toast": {
     "close": "关闭提示"
@@ -135,7 +140,11 @@
       "external": "外部"
     },
     "gridView": "网格视图",
-    "listView": "列表视图"
+    "listView": "列表视图",
+    "guestEnter": "以访客身份进入",
+    "guestEntering": "进入中…",
+    "guestEnterHint": "无需注册：可上传视频/图片，内容仅自己可见。之后注册或登录会自动保留访客期间的内容。",
+    "guestEnterFailed": "进入访客模式失败，请稍后重试"
   },
   "gallery": {
     "search": "搜索图片...",
@@ -315,6 +324,8 @@
     "uploadBusy": "请先完成或取消当前上传",
     "cancelled": "已取消",
     "hashFailed": "哈希计算失败",
+    "hashMismatch": "文件校验失败，请重试上传",
+    "quotaExceeded": "存储配额已用尽，请删除部分文件后重试",
     "uploadFailed": "上传失败",
     "cancelledToast": "上传已取消",
     "successCount": "{{count}} 个文件上传成功",
@@ -329,7 +340,9 @@
     "view": "查看",
     "retryTitle": "重新上传（自动从已传位置续传）",
     "remove": "移除",
-    "removeAria": "移除 {{name}}"
+    "removeAria": "移除 {{name}}",
+    "resumeNotice": "检测到上次有 {{count}} 个文件未完成上传，请重新选择相同文件以继续",
+    "resumeNoticeDismiss": "忽略"
   },
   "comments": {
     "title": "评论",
@@ -366,7 +379,17 @@
       "tenants": "租户管理",
       "plans": "套餐管理",
       "system": "系统操作",
-      "logs": "日志"
+      "logs": "日志",
+      "chat": "聊天管理"
+    },
+    "chatTab": {
+      "title": "公共聊天室管理",
+      "messageCount": "当前消息数",
+      "countLoadFailed": "消息数加载失败",
+      "clearConfirmTitle": "清空聊天室",
+      "clearConfirmText": "确定要清空公共聊天室的全部消息吗？此操作不可恢复，所有在线用户会立即看到消息被清空。",
+      "cleared": "已清空 {{count}} 条消息",
+      "clearFailed": "清空失败，请重试"
     },
     "stats": {
       "videos": "视频",
@@ -456,7 +479,8 @@
       "regularUser": "普通用户",
       "currentAccount": "当前账号",
       "noMatch": "无匹配用户",
-      "pageInfo": "第 {{page}} / {{total}} 页（共 {{count}} 个）"
+      "pageInfo": "第 {{page}} / {{total}} 页（共 {{count}} 个）",
+      "guest": "访客"
     },
     "media": {
       "subVideo": "视频",
@@ -668,6 +692,7 @@
       "totalLogs": "日志总量",
       "activeUsers": "活跃账号",
       "errors": "错误",
+      "systemUser": "访客 / 系统",
       "autoRefresh": "实时",
       "paused": "暂停",
       "clear": "清空",
@@ -677,6 +702,9 @@
       "firstActive": "首次: {{time}}",
       "lastActive": "末次: {{time}}",
       "lastActiveShort": "最后活跃 {{time}}",
+      "lastLogin": "登录: {{time}}",
+      "lastLogout": "退出: {{time}}",
+      "loginIp": "IP: {{ip}}",
       "route": "操作路线",
       "selectUser": "选择左侧账号查看使用路线",
       "clearTitle": "清空日志",
@@ -687,6 +715,8 @@
       "duration": "耗时",
       "requestId": "请求ID",
       "error": "错误",
+      "message": "消息",
+      "user": "账号",
       "videoId": "视频 #{{id}}",
       "ms": " {{ms}}毫秒",
       "autoRefreshAria": "自动刷新",
@@ -766,8 +796,9 @@
         "unliked": "取消点赞",
         "favorited": "收藏",
         "unfavorited": "取消收藏",
-        "loginSuccess": "登录成功",
-        "loginFailed": "登录失败",
+"loginSuccess": "登录成功",
+      "logoutSuccess": "登出成功",
+      "loginFailed": "登录失败",
         "rateLimit": "请求限制",
         "pathTraversal": "路径遍历警告",
         "invalidFile": "无效文件警告",
@@ -932,5 +963,29 @@
     "syncNow": "立即同步",
     "seconds": "秒",
     "minutes": "分"
+  },
+  "chat": {
+    "title": "公共聊天室",
+    "onlineCount": "{{count}} 人在线",
+    "placeholder": "说点什么…（最多 500 字）",
+    "send": "发送",
+    "loadOlder": "加载更早的消息",
+    "empty": "暂无消息，来抢个沙发～",
+    "reconnecting": "连接中断，正在重连…",
+    "notConnected": "连接已断开，请稍候重试",
+    "guest": "访客",
+    "you": "我",
+    "loginPrompt": "登录或以访客身份进入后即可参与聊天",
+    "unread": "{{count}} 条未读消息",
+    "emoji": "表情",
+    "sendImage": "发送图片（≤10MB）",
+    "sendVideo": "发送视频（≤50MB，支持 MP4/MOV/MKV 等）",
+    "imageTooLarge": "图片不能超过 10MB",
+    "imageUploadFailed": "图片上传失败，请重试",
+    "videoTooLarge": "视频不能超过 50MB",
+    "videoUploadFailed": "视频上传失败，请重试",
+    "imageAlt": "{{name}} 发送的图片",
+    "mentionCandidates": "在线成员",
+    "backToBottom": "回到底部"
   }
 }

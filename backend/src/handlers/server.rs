@@ -7,8 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::server::{
-    CheckStatus, DiskUsage, HealthCheckResponse, MemoryUsage, MetricsResponse, ServerInfo,
-    SystemInfo,
+    CheckStatus, DiskUsage, HealthCheckResponse, MetricsResponse, ServerInfo,
 };
 use crate::state::AppState;
 
@@ -116,15 +115,17 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 
     // System info
-    let system_info = get_system_info();
-
-    // Build response
+    // 侦察面收敛（渗透报告建议）：/health 是公开端点，只回最简状态。
+    // 详细的 checks/system_info（内存、磁盘、版本）仅对管理员开放
+    // （/admin/system-info），这里不再输出，避免公网指纹泄露。
+    // 503 语义不变：任一关键检查失败仍返回 503 供 CF/监控判活。
+    let _ = &checks;
     let response = HealthCheckResponse {
         status: if all_ok { "healthy" } else { "unhealthy" }.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
-        checks,
-        system_info,
+        checks: HashMap::new(),
+        system_info: Default::default(),
     };
 
     let mut headers = HeaderMap::new();
@@ -183,42 +184,8 @@ fn check_disk_space(path: &std::path::Path) -> Result<DiskUsage, String> {
     })
 }
 
-/// Get system information
-fn get_system_info() -> SystemInfo {
-    use sysinfo::System;
-
-    let mut sys = System::new();
-    sys.refresh_memory();
-
-    let memory_usage = MemoryUsage {
-        total_bytes: sys.total_memory(),
-        used_bytes: sys.used_memory(),
-        available_bytes: sys.available_memory(),
-        usage_percent: if sys.total_memory() > 0 {
-            (sys.used_memory() as f64 / sys.total_memory() as f64) * 100.0
-        } else {
-            0.0
-        },
-    };
-
-    SystemInfo {
-        uptime_secs: get_uptime_seconds(),
-        disk_usage: DiskUsage {
-            total_bytes: 0,
-            used_bytes: 0,
-            available_bytes: 0,
-            usage_percent: 0.0,
-        },
-        memory_usage: Some(memory_usage),
-    }
-}
-
-/// Get system uptime in seconds
-fn get_uptime_seconds() -> u64 {
-    // This is a simplified version - in production you might want to use a proper uptime crate
-    // For now, we'll return 0 or use process uptime
-    0
-}
+// get_system_info 已移除：/health 不再泄露系统信息（渗透报告建议），
+// 管理端由 handlers::admin::system_info 提供。
 
 /// GET /metrics — Prometheus metrics endpoint
 ///

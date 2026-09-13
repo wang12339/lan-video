@@ -1,5 +1,6 @@
 .profile-page {
   min-height: 100vh;
+  min-height: 100dvh;
   container-type: inline-size;
   container-name: profile;
 }
@@ -12,6 +13,12 @@
   justify-content: center;
   padding: 120px 20px 60px;
   gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .profile-login-prompt {
+    padding: 72px 20px 48px;
+  }
 }
 
 .profile-login-avatar {
@@ -125,6 +132,21 @@
   opacity: 1;
 }
 
+/* 触屏/移动端：换头像入口常显。
+   双条件兜底：部分安卓 WebView 不报 (pointer: coarse)，
+   所以补 (max-width: 640px)。用渐变遮罩：上半部透出头像素/字母，
+   下半部深色托底放"更换头像"，两者都不糊。 */
+@media (hover: none) and (pointer: coarse), (max-width: 640px) {
+  .profile-avatar-overlay {
+    opacity: 1;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.05) 65%);
+    align-items: flex-end;
+    padding-bottom: 9px;
+    font-size: 11px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+}
+
 .profile-avatar-wrap:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -181,9 +203,29 @@
   padding: 0 48px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   position: sticky;
-  top: calc(var(--nav-h) + env(safe-area-inset-top));
+  /* ≤640 顶栏两行化后用 JS 实测的真实导航高度（--nav-h-actual，含安全区），
+     否则 sticky tab 会被第二行搜索框遮住 */
+  top: var(--nav-h-actual, calc(var(--nav-h) + env(safe-area-inset-top)));
   z-index: 89;
   background: var(--bg);
+}
+
+/* 右缘渐隐：提示还有更多 tab 可横滑；滚到底由 JS 加 .tabs-at-end 隐藏 */
+.profile-tabs::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 1px;
+  width: 36px;
+  background: linear-gradient(to right, transparent, var(--bg));
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+
+.profile-tabs.tabs-at-end::after {
+  opacity: 0;
 }
 
 .ptab {
@@ -569,7 +611,8 @@
   width: 40px;
   height: 22px;
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.06);
+  /* 用主题变量：浅色主题下 rgba(255,255,255,0.06) 几乎隐形（只剩圆点悬空） */
+  background: var(--bg3, rgba(127, 127, 127, 0.25));
   transition: all 0.2s;
   position: relative;
 }
@@ -739,42 +782,74 @@
   .profile-cover {
     height: 100px;
   }
+  /* 移动端头部改纵向堆叠：原 flex-end 横排会把用户名/bio 顶进深色
+     封面区（浅色主题下低对比不可读），长用户名还会顶破宽度 */
   .profile-info {
-    padding: 0 14px 16px;
-    gap: 16px;
-    margin-top: -36px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 0 14px 12px;
+    margin-top: -32px;
   }
   .profile-avatar-wrap,
   .profile-avatar,
   .profile-avatar-img {
-    width: 64px;
-    height: 64px;
+    width: 72px;
+    height: 72px;
   }
   .profile-avatar {
-    font-size: 22px;
+    font-size: 26px;
+  }
+  .profile-data {
+    padding-top: 0;
+    min-width: 0;
+    max-width: 100%;
   }
   .profile-name {
-    font-size: 20px;
+    font-size: 18px;
+    /* 访客用户名 guest_xxxxxxxxxxxx 21 字符：单行省略防顶破 */
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: break-all;
   }
+  .profile-bio {
+    margin-bottom: 10px;
+  }
+  /* 统计栏：4 项 + 长数值（"2.5 小时"）在 360px 下会溢出，允许换行 */
   .profile-stats {
-    gap: 16px;
+    gap: 12px 16px;
+    flex-wrap: wrap;
+  }
+  .stat-num {
+    font-size: 15px;
   }
   .profile-tabs {
-    padding: 0 14px;
+    padding: 0 8px;
     overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .profile-tabs::-webkit-scrollbar {
+    display: none;
   }
   .ptab {
-    padding: 14px 16px;
+    padding: 14px 14px;
     font-size: 13px;
     white-space: nowrap;
     flex-shrink: 0;
   }
   .profile-content {
-    padding: 12px 14px 40px;
+    padding: 12px 14px calc(40px + env(safe-area-inset-bottom));
   }
   .profile-btn,
   .profile-btn-secondary {
     padding: 11px 16px;
+  }
+  /* 触屏删除/撤销按钮加到 40px 目标（默认 4px 10px 太小） */
+  .profile-btn-danger {
+    padding: 10px 14px;
+    font-size: 13px;
   }
   .profile-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -797,6 +872,51 @@
   .new-playlist-form {
     flex-direction: column;
     align-items: stretch;
+  }
+  /* iOS 聚焦输入框时 <16px 字号会触发整页自动放大 */
+  .new-playlist-form input,
+  .email-input {
+    font-size: 16px;
+  }
+  .email-actions {
+    flex-wrap: wrap;
+  }
+  .email-input {
+    height: 40px;
+  }
+  .settings-row {
+    padding: 12px 14px;
+  }
+  .playlist-item {
+    padding: 12px 14px;
+  }
+  .playlist-item .profile-btn-danger {
+    flex-shrink: 0;
+  }
+  /* 分享列表：链接/撤销在窄屏改为上下两行，长 URL 可断行 */
+  .share-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+  .share-item .profile-btn-danger {
+    align-self: flex-end;
+  }
+  .share-meta {
+    word-break: break-all;
+  }
+}
+
+/* 极窄屏（≤380）：统计栏改 2×2 网格，避免横向溢出 */
+@media (max-width: 380px) {
+  .profile-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+  }
+  .stat-item {
+    text-align: left;
   }
 }
 

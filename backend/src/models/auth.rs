@@ -28,6 +28,12 @@ pub struct UserInfoResponse {
     pub email: Option<String>,
     #[serde(rename = "emailVerified")]
     pub email_verified: bool,
+    /// 头像 URL（/media/avatars/{id}.{ext}）；未设置时不下发
+    #[serde(rename = "avatarUrl", skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    /// 访客模式：当前会话是否为匿名访客影子账号
+    #[serde(rename = "isGuest")]
+    pub is_guest: bool,
 }
 
 #[derive(Debug, Serialize)]

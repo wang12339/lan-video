@@ -72,6 +72,11 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/health"),
         ("POST", "/auth/register"),
         ("POST", "/auth/login"),
+        ("POST", "/auth/guest"),
+        ("GET", "/auth/gateway/status"),
+        ("GET", "/auth/gateway/start"),
+        ("GET", "/auth/gateway/callback"),
+        ("POST", "/auth/gateway/exchange"),
         ("POST", "/auth/forgot-password"),
         ("GET", "/auth/reset-password"),
         ("POST", "/auth/reset-password"),
@@ -163,6 +168,24 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         routes.push((m, p));
     }
 
+    // 聊天室（app.rs `chat_routes` + `chat_ws_route`）
+    for (m, p) in [
+        ("GET", "/chat/messages"),
+        ("POST", "/chat/image"),
+        ("POST", "/chat/video"),
+        ("GET", "/ws/chat"),
+    ] {
+        routes.push((m, p));
+    }
+
+    // 聊天室管理（app.rs admin_routes 内）
+    for (m, p) in [
+        ("DELETE", "/admin/chat/messages"),
+        ("GET", "/admin/chat/stats"),
+    ] {
+        routes.push((m, p));
+    }
+
     // 管理路由（app.rs `admin_routes`）
     for (m, p) in [
         ("GET", "/admin/users"),
@@ -196,6 +219,7 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("POST", "/admin/users/{id}/kick"),
         ("GET", "/admin/config/registration"),
         ("PUT", "/admin/config/registration"),
+        ("DELETE", "/admin/chat/messages/{id}"),
         ("GET", "/admin/system"),
         ("GET", "/admin/logs"),
         ("DELETE", "/admin/logs"),

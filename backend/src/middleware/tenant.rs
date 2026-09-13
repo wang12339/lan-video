@@ -256,7 +256,6 @@ mod tests {
     use crate::services::transcoder::Transcoder;
     use crate::services::video_service::VideoService;
     use crate::state::{AppState, PlaybackSessionTracker, RepoLayer, ServiceLayer};
-    use dashmap::DashMap;
     use moka::sync::Cache;
     use sqlx::postgres::PgPoolOptions;
 
@@ -301,6 +300,11 @@ mod tests {
             transcode_max_duration_secs: 7200,
             ffmpeg_path: "ffmpeg".into(),
             ffprobe_path: "ffprobe".into(),
+            gateway_url: String::new(),
+            gateway_internal_url: String::new(),
+            gateway_client_id: String::new(),
+            gateway_client_secret: String::new(),
+            gateway_redirect_uri: String::new(),
         };
         let pool = PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_millis(500))
@@ -313,6 +317,7 @@ mod tests {
             playback: PlaybackRepository::new(pool.clone()),
             playlist: PlaylistRepository::new(pool.clone()),
             comment: CommentRepository::new(pool.clone()),
+            chat: crate::repositories::chat_repo::ChatRepository::new(pool.clone()),
             danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
@@ -355,7 +360,7 @@ mod tests {
             recommendation_cache: Cache::builder().max_capacity(10_000).build(),
             video_detail_cache: Cache::builder().max_capacity(10_000).build(),
             playback_sessions: Arc::new(PlaybackSessionTracker::new()),
-            upload_locks: Arc::new(DashMap::new()),
+            chat_hub: Arc::new(crate::state::ChatHub::new()),
             metrics: Metrics::new(),
             redis: None,
             transcoder: transcoder.clone(),

@@ -375,6 +375,19 @@
   color: var(--text3);
 }
 
+.a-user-sess {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.a-user-ip {
+  font-family: monospace;
+}
+
 .a-main {
   flex: 1;
   display: flex;
@@ -424,6 +437,18 @@
   color: var(--text3);
   display: flex;
   gap: 6px;
+}
+
+.a-profile-sess {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.a-profile-ip {
+  font-family: monospace;
 }
 
 .a-type-bar {

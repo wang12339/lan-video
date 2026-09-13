@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { clearLogs, type LogEntry, type LogsResponse } from '../../api/logs'
 import { request } from '../../api/client'
 import { ConfirmDialog } from './components'
-import { formatLog, TYPE_STYLES, TYPE_ICONS, fmtTimeFull } from './utils/logFormatter'
+import { formatLog, TYPE_STYLES, TYPE_ICONS, fmtTimeFull, displayUserName, SYSTEM_USER } from './utils/logFormatter'
 import LogFilters from './components/LogFilters'
 import UserTimeline from './components/UserTimeline'
 import './LogsTab.css'
@@ -134,13 +134,16 @@ export default function LogsTab() {
       types: Record<string, number>
       lastActive: string
       firstActive: string
+      lastLogin: string
+      lastLogout: string
+      ip: string
       videos: Set<number>
     }> = {}
 
     visibleEntries.forEach(e => {
-      if (!e.user) return
-      if (!map[e.user]) map[e.user] = { logs: [], count: 0, types: {}, lastActive: '', firstActive: '', videos: new Set() }
-      const u = map[e.user]!
+      const key = e.user || SYSTEM_USER
+      if (!map[key]) map[key] = { logs: [], count: 0, types: {}, lastActive: '', firstActive: '', lastLogin: '', lastLogout: '', ip: '', videos: new Set() }
+      const u = map[key]!
       u.logs.push(e)
       u.count++
       const { type } = formatLog(e, t)
@@ -148,6 +151,15 @@ export default function LogsTab() {
       if (e.video_id) u.videos.add(e.video_id)
       if (!u.lastActive || e.timestamp > u.lastActive) u.lastActive = e.timestamp
       if (!u.firstActive || e.timestamp < u.firstActive) u.firstActive = e.timestamp
+      // 日志为倒序（最新在前），首次命中即最近一次登录/登出/IP
+      if (e.message === 'user logged in') {
+        if (!u.lastLogin) u.lastLogin = e.timestamp
+        if (!u.ip && e.client_ip) u.ip = e.client_ip
+      } else if (e.message === 'user logged out') {
+        if (!u.lastLogout) u.lastLogout = e.timestamp
+        if (!u.ip && e.client_ip) u.ip = e.client_ip
+      }
+      if (!u.ip && e.client_ip) u.ip = e.client_ip
     })
 
     return Object.entries(map)
@@ -225,7 +237,7 @@ export default function LogsTab() {
         <div className="a-sidebar">
           <h3 className="a-sidebar-title">{t('admin.logs.userList')}</h3>
           <div className="a-user-list">
-            {userData.map(({ user, count, types, videos, firstActive, lastActive }) => (
+            {userData.map(({ user, count, types, videos, firstActive, lastActive, lastLogin, lastLogout, ip }) => (
               <div
                 key={user}
                 className={`a-user-card ${selectedUser === user ? 'selected' : ''}`}
@@ -233,10 +245,10 @@ export default function LogsTab() {
               >
                 <div className="a-user-header">
                   <div className="a-user-avatar" style={{ background: TYPE_STYLES[Object.entries(types).sort((a, b) => b[1] - a[1])[0]?.[0] || 'default']?.color || '#6b7280' }}>
-                    {user[0]?.toUpperCase()}
+                    {displayUserName(user, t)[0]?.toUpperCase()}
                   </div>
                   <div className="a-user-info">
-                    <span className="a-user-name">{user}</span>
+                    <span className="a-user-name">{displayUserName(user, t)}</span>
                     <span className="a-user-meta">{t('admin.logs.operations', { count })} · {t('admin.logs.videos', { count: videos })}</span>
                   </div>
                 </div>
@@ -250,6 +262,11 @@ export default function LogsTab() {
                 <div className="a-user-time">
                   <span>{t('admin.logs.firstActive', { time: fmtTimeFull(firstActive) })}</span>
                   <span>{t('admin.logs.lastActive', { time: fmtTimeFull(lastActive) })}</span>
+                </div>
+                <div className="a-user-sess">
+                  {lastLogin && <span>{t('admin.logs.lastLogin', { time: fmtTimeFull(lastLogin) })}</span>}
+                  {lastLogout && <span>{t('admin.logs.lastLogout', { time: fmtTimeFull(lastLogout) })}</span>}
+                  {ip && <span className="a-user-ip">{t('admin.logs.loginIp', { ip })}</span>}
                 </div>
               </div>
             ))}

@@ -40,21 +40,6 @@ function getWebPUrl(url: string | null | undefined): string | null | undefined {
 }
 
 /**
- * 生成响应式图片的 srcSet 字符串
- * 假设后端支持通过查询参数获取不同尺寸：/media/cover_123.jpg?w=320
- *
- * 当前后端不支持图片调整大小，srcSet 的 ?w= 参数无意义，暂时禁用。
- * 待后端支持图片代理/调整大小后再启用。
- */
-function generateSrcSet(
-  _baseUrl: string,
-  _sizes: number[] = [320, 640, 960, 1280]
-): string | undefined {
-  // 后端不支持图片调整大小，返回 undefined 禁用 srcSet
-  return undefined
-}
-
-/**
  * 根据使用场景生成默认的 sizes 属性
  */
 function getDefaultSizes(context?: 'thumbnail' | 'card' | 'hero'): string {
@@ -119,6 +104,9 @@ interface LazyImageProps {
   imageContext?: 'thumbnail' | 'card' | 'hero'
   /** 自定义 srcSet（覆盖自动生成） */
   srcSet?: string
+  /** 高清源（与 src 组成 srcSet：src 640w / hiResSrc 1920w）。
+   *  网格用缩略图（thumb_*.jpg，640px 宽），大屏/高 dpr 自动切高清封面。 */
+  hiResSrc?: string | null
   /** 自定义 sizes 属性 */
   sizes?: string
   /** 是否显示加载占位符（默认 true） */
@@ -176,6 +164,7 @@ function LazyImageImpl({
   responsive = true,
   imageContext,
   srcSet: customSrcSet,
+  hiResSrc,
   sizes: customSizes,
   showPlaceholder = true,
   eager = false
@@ -198,14 +187,17 @@ function LazyImageImpl({
   const responsiveProps = useMemo(() => {
     if (!responsive || !finalSrc) return {}
 
-    const computedSrcSet = customSrcSet || generateSrcSet(finalSrc)
+    let computedSrcSet = customSrcSet
+    if (!computedSrcSet && hiResSrc && hiResSrc !== finalSrc && !finalSrc.startsWith('data:')) {
+      computedSrcSet = `${finalSrc} 640w, ${hiResSrc} 1920w`
+    }
     const computedSizes = customSizes || getDefaultSizes(imageContext)
 
     return {
       srcSet: computedSrcSet,
       sizes: computedSizes
     }
-  }, [responsive, finalSrc, customSrcSet, customSizes, imageContext])
+  }, [responsive, finalSrc, customSrcSet, customSizes, imageContext, hiResSrc])
 
   // 当原始 src 变化时重置状态
   useEffect(() => {
@@ -319,7 +311,6 @@ export function LazyImageWithSkeleton({
   const responsiveProps = useMemo(() => {
     if (!responsive || !finalSrc) return {}
     return {
-      srcSet: generateSrcSet(finalSrc),
       sizes: getDefaultSizes(imageContext)
     }
   }, [responsive, finalSrc, imageContext])

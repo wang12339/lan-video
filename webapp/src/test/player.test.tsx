@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -119,7 +119,7 @@ function renderPlayer(route = '/player?id=v1') {
 
 const { useAuth } = await import('../context/AuthContext')
 const { getVideo, mapVideo, incrementViews, savePlayback, startPlaybackSession,
-        heartbeatPlaybackSession, stopPlaybackSession, getSimilarVideos,
+        stopPlaybackSession, getSimilarVideos,
         listVideos } = await import('../api')
 const { request } = await import('../api/client')
 

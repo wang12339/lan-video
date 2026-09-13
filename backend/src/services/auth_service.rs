@@ -19,6 +19,10 @@ const IP_RATE_LIMIT_MAX_ATTEMPTS: u32 = 30;
 const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const IP_RATE_LIMIT_BLOCK_SECS: u64 = 0;
 
+/// 访客会话 IP 速率限制：每 IP 每小时最多 20 个新访客账号。
+const GUEST_IP_LIMIT: u32 = 20;
+const GUEST_IP_WINDOW_SECS: u64 = 3600;
+
 #[derive(Clone)]
 pub struct AuthService {
     user_repo: UserRepository,
@@ -309,7 +313,52 @@ impl AuthService {
         let reset_key = format!("auth:{}", req.username.trim().to_lowercase());
         self.rate_limiter.reset(&reset_key).await;
 
-        tracing::info!(username = %sanitize_for_log(&req.username), "user logged in");
+        tracing::info!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "user logged in");
+
+        Ok(AuthResponse {
+            ok: true,
+            token: Some(token),
+            error: None,
+        })
+    }
+
+    /// 创建（或复用）访客会话。
+    ///
+    /// 访客模式入口：为匿名访问者创建一个 `is_guest` 影子账号并签发 7 天
+    /// token（前端以 HttpOnly cookie 持有）。幂等性由上层保证——调用方
+    /// 应先用现有 cookie 会话调 `GET /auth/user`，仅在没有有效会话时才
+    /// 调本方法；若访客已有会话则不会走到这里。
+    ///
+    /// # 速率限制
+    /// 每 IP 每小时最多创建 `GUEST_IP_LIMIT` 个访客账号，防止恶意刷库。
+    ///
+    /// # 返回
+    /// - `Ok(AuthResponse)`：`token` 字段为访客会话 token（cookie 由 handler 下发）
+    /// - `Err(ServiceError::RateLimited)`：超出 IP 速率限制
+    pub async fn create_guest_session(
+        &self,
+        client_ip: &str,
+        tenant_id: i64,
+    ) -> Result<AuthResponse, ServiceError> {
+        let ip_key = format!("guest:ip:{client_ip}");
+        if self
+            .ip_rate_limiter
+            .check_with(&ip_key, GUEST_IP_LIMIT, GUEST_IP_WINDOW_SECS, 0)
+            .await
+            .is_err()
+        {
+            tracing::warn!(ip = %sanitize_for_log(client_ip), "guest session rejected: IP rate limited");
+            return Err(ServiceError::RateLimited);
+        }
+
+        let (user_id, username) = self.user_repo.create_guest_user(tenant_id).await?;
+        let token = self.user_repo.create_token(user_id).await?;
+
+        tracing::info!(
+            username = %sanitize_for_log(&username),
+            ip = %sanitize_for_log(client_ip),
+            "guest session created"
+        );
 
         Ok(AuthResponse {
             ok: true,
@@ -323,6 +372,7 @@ impl AuthService {
     /// # 参数
     /// - `username`: 可选的用户名，用于日志记录。如果未提供，会尝试从 token 解析
     /// - `token`: 可选的认证 token，用于删除会话
+    /// - `client_ip`: 客户端 IP 地址，用于日志记录
     ///
     /// # 返回
     /// - 无返回值（`()`），登出操作始终视为成功
@@ -331,7 +381,7 @@ impl AuthService {
     /// - 如果提供了 token，会从数据库中删除该 token
     /// - 如果未提供 username 但提供了 token，会尝试通过 token 查询用户名
     /// - 记录登出事件到日志（用户名使用 `<unknown>` 如果无法解析）
-    pub async fn logout(&self, username: Option<&str>, token: Option<&str>) {
+    pub async fn logout(&self, username: Option<&str>, token: Option<&str>, client_ip: &str) {
         let resolved_username = match username {
             Some(u) => Some(u.to_string()),
             None => {
@@ -355,6 +405,7 @@ impl AuthService {
         }
         tracing::info!(
             username = %sanitize_for_log(resolved_username.as_deref().unwrap_or("<unknown>")),
+            ip = %sanitize_for_log(client_ip),
             "user logged out"
         );
     }
@@ -593,6 +644,8 @@ impl AuthService {
                 .unwrap_or_default(),
             email: user.as_ref().and_then(|u| u.email.clone()),
             email_verified: user.as_ref().map(|u| u.email_verified).unwrap_or(false),
+            avatar_url: user.as_ref().and_then(|u| u.avatar_url.clone()),
+            is_guest: user.as_ref().map(|u| u.is_guest).unwrap_or(false),
         })
     }
 

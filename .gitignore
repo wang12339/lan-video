@@ -40,3 +40,6 @@ webapp/node_modules/.vite/
 backend/screenshot-*.png
 backend/.build_profile
 /media
+
+# TypeScript incremental build info
+*.tsbuildinfo

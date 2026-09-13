@@ -94,6 +94,8 @@ export interface UserInfo {
   createdAt: string;
   email?: string;
   emailVerified: boolean;
+  /** 访客模式：当前会话是否为匿名访客影子账号 */
+  isGuest: boolean;
 }
 
 export interface UserProfile extends UserInfo {

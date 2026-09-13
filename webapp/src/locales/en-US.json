@@ -18,7 +18,11 @@
     "switchToLight": "Switch to light mode",
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
-    "toggleLanguage": "Toggle language"
+    "toggleLanguage": "Toggle language",
+    "guestMode": "Guest mode",
+    "guestHint": "Anonymous guest: your content is private to you — sign up to keep it",
+    "guestLoginCta": "Sign in / Sign up to keep your content",
+    "chat": "Chat"
   },
   "auth": {
     "login": "Sign in",
@@ -66,7 +70,8 @@
       "passwordLength": "Password must be 8-128 characters",
       "passwordStrength": "Password is too weak: use at least 3 of uppercase, lowercase, digits and special characters",
       "tokenRequired": "Reset token is required"
-    }
+    },
+    "guestEnter": "Just browsing — enter as guest"
   },
   "toast": {
     "close": "Dismiss notification"
@@ -135,7 +140,11 @@
       "external": "External"
     },
     "gridView": "Grid view",
-    "listView": "List view"
+    "listView": "List view",
+    "guestEnter": "Enter as guest",
+    "guestEntering": "Entering…",
+    "guestEnterHint": "No sign-up needed: upload videos/images that only you can see. Your guest content is automatically kept when you later register or sign in.",
+    "guestEnterFailed": "Failed to enter guest mode, please try again later"
   },
   "gallery": {
     "search": "Search images...",
@@ -315,6 +324,8 @@
     "uploadBusy": "Please finish or cancel the current upload first",
     "cancelled": "Cancelled",
     "hashFailed": "Hashing failed",
+    "hashMismatch": "File verification failed. Please upload again",
+    "quotaExceeded": "Storage quota exhausted. Delete some files and try again",
     "uploadFailed": "Upload failed",
     "cancelledToast": "Upload cancelled",
     "successCount": "{{count}} files uploaded successfully",
@@ -329,7 +340,9 @@
     "view": "View",
     "retryTitle": "Re-upload (resumes from where it stopped)",
     "remove": "Remove",
-    "removeAria": "Remove {{name}}"
+    "removeAria": "Remove {{name}}",
+    "resumeNotice": "{{count}} unfinished upload(s) from last time — re-select the same files to resume",
+    "resumeNoticeDismiss": "Dismiss"
   },
   "comments": {
     "title": "Comments",
@@ -366,7 +379,17 @@
       "tenants": "Tenants",
       "plans": "Plans",
       "system": "System",
-      "logs": "Logs"
+      "logs": "Logs",
+      "chat": "Chat"
+    },
+    "chatTab": {
+      "title": "Public chat management",
+      "messageCount": "Messages",
+      "countLoadFailed": "Failed to load message count",
+      "clearConfirmTitle": "Clear chat room",
+      "clearConfirmText": "Delete ALL messages in the public chat room? This cannot be undone and online users will see messages disappear immediately.",
+      "cleared": "Cleared {{count}} messages",
+      "clearFailed": "Failed to clear, please retry"
     },
     "stats": {
       "videos": "Videos",
@@ -456,7 +479,8 @@
       "regularUser": "Regular user",
       "currentAccount": "Current account",
       "noMatch": "No matching users",
-      "pageInfo": "Page {{page}} / {{total}} ({{count}} total)"
+      "pageInfo": "Page {{page}} / {{total}} ({{count}} total)",
+      "guest": "Guest"
     },
     "media": {
       "subVideo": "Video",
@@ -668,6 +692,7 @@
       "totalLogs": "Total Logs",
       "activeUsers": "Active Users",
       "errors": "Errors",
+      "systemUser": "Guest / System",
       "autoRefresh": "Live",
       "paused": "Paused",
       "clear": "Clear",
@@ -677,6 +702,9 @@
       "firstActive": "First: {{time}}",
       "lastActive": "Last: {{time}}",
       "lastActiveShort": "Last active {{time}}",
+      "lastLogin": "Login: {{time}}",
+      "lastLogout": "Logout: {{time}}",
+      "loginIp": "IP: {{ip}}",
       "route": "Operation Route",
       "selectUser": "Select an account on the left to view their route",
       "clearTitle": "Clear Logs",
@@ -687,6 +715,8 @@
       "duration": "Duration",
       "requestId": "Request ID",
       "error": "Error",
+      "message": "Message",
+      "user": "Account",
       "videoId": "Video #{{id}}",
       "ms": " {{ms}}ms",
       "autoRefreshAria": "Auto refresh",
@@ -766,8 +796,9 @@
         "unliked": "Unliked",
         "favorited": "Favorited",
         "unfavorited": "Unfavorited",
-        "loginSuccess": "Login successful",
-        "loginFailed": "Login failed",
+"loginSuccess": "Login successful",
+      "logoutSuccess": "Signed out",
+      "loginFailed": "Login failed",
         "rateLimit": "Rate limit",
         "pathTraversal": "Path traversal warning",
         "invalidFile": "Invalid file warning",
@@ -932,5 +963,29 @@
     "syncNow": "Sync now",
     "seconds": "s",
     "minutes": "m"
+  },
+  "chat": {
+    "title": "Public Chat",
+    "onlineCount": "{{count}} online",
+    "placeholder": "Say something… (max 500 chars)",
+    "send": "Send",
+    "loadOlder": "Load earlier messages",
+    "empty": "No messages yet — say hi!",
+    "reconnecting": "Connection lost, reconnecting…",
+    "notConnected": "Disconnected — please wait and retry",
+    "guest": "Guest",
+    "you": "Me",
+    "loginPrompt": "Sign in or enter as guest to join the chat",
+    "unread": "{{count}} unread messages",
+    "emoji": "Emoji",
+    "sendImage": "Send image (≤10MB)",
+    "sendVideo": "Send video (≤50MB, MP4/MOV/MKV etc.)",
+    "imageTooLarge": "Image must be under 10MB",
+    "imageUploadFailed": "Image upload failed, please retry",
+    "videoTooLarge": "Video must be under 50MB",
+    "videoUploadFailed": "Video upload failed, please retry",
+    "imageAlt": "Image sent by {{name}}",
+    "mentionCandidates": "Online members",
+    "backToBottom": "Back to bottom"
   }
 }

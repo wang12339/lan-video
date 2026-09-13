@@ -25,4 +25,10 @@ export const HEARTBEAT_INTERVAL_MS = 45000
 export const MIN_PROGRESS_SAVE_S = 5
 export const PRELOAD_THRESHOLD = 0.85
 
+/** iOS 系统接管硬件音量，页面级音量控制无效——隐藏控制条音量按钮 */
+export const IOS_SYSTEM_VOLUME =
+  typeof navigator !== 'undefined' &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+
 export const MAX_RELATED_VIDEOS = 6

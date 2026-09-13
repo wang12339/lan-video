@@ -100,6 +100,16 @@ async fn csrf_self_heal(req: Request, next: axum_mw::Next) -> axum::response::Re
 pub async fn build_router(config: AppConfig) -> Router {
     // 进程级安全/工具配置：优先使用 AppConfig 显式值（env 已由 from_env 收归）。
     crate::util::net::configure_trusted_proxy(config.trusted_proxy);
+    crate::util::net::configure_trusted_proxy_peers(
+        std::env::var("TRUSTED_PROXY_PEERS")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|part| part.trim().parse::<std::net::IpAddr>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty()),
+    );
     crate::util::hashid::configure(&config.hashid_salt);
 
     let pool = init_pool(
@@ -115,6 +125,7 @@ pub async fn build_router(config: AppConfig) -> Router {
     let playback_repo = PlaybackRepository::new(pool.clone());
     let playlist_repo = PlaylistRepository::new(pool.clone());
     let comment_repo = CommentRepository::new(pool.clone());
+    let chat_repo = crate::repositories::chat_repo::ChatRepository::new(pool.clone());
     let share_repo = ShareRepository::new(pool.clone());
     let tag_repo = TagRepository::new(pool.clone());
     let tenant_repo = TenantRepository::new(pool.clone(), config.public_url.clone());
@@ -203,6 +214,7 @@ pub async fn build_router(config: AppConfig) -> Router {
             playback: playback_repo,
             playlist: playlist_repo,
             comment: comment_repo,
+            chat: chat_repo,
             danmaku: danmaku_repo,
             share: share_repo,
             tag: tag_repo,
@@ -233,7 +245,7 @@ pub async fn build_router(config: AppConfig) -> Router {
         recommendation_cache,
         video_detail_cache,
         playback_sessions: std::sync::Arc::new(PlaybackSessionTracker::new()),
-        upload_locks: std::sync::Arc::new(dashmap::DashMap::new()),
+        chat_hub: std::sync::Arc::new(crate::state::ChatHub::new()),
         metrics,
         transcoder,
         task_queue,
@@ -513,20 +525,34 @@ pub async fn build_router(config: AppConfig) -> Router {
         30,
     );
 
-    // Upload route with no body size limit (handles large video files)
+    // 上传路由。
+    //
+    // body 大小限制分开设置：
+    // - 整文件 multipart 接口流式写入临时文件（不会整体驻留内存），
+    //   保留 disable 以支持大文件；
+    // - 分片续传接口把请求体作为 `Bytes` 整体缓冲，必须设上限：前端分片
+    //   为 16MB，32MB 留出余量，防止恶意超大 body 打爆内存（DoS）。
+    //
+    // 访客模式：上传对全部登录身份（含匿名访客影子账号）开放，
+    // 仅要求 role >= 1（普通用户级别）。访客上传的内容归属其影子账号，
+    // 只能被自己看到；注册/登录真实账号时自动合并。
+    const UPLOAD_CHUNK_BODY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
     let upload_route = {
         let r = Router::new()
-            .route("/admin/videos/upload", post(handlers::admin::upload_video))
+            .route(
+                "/admin/videos/upload",
+                post(handlers::admin::upload_video).layer(DefaultBodyLimit::disable()),
+            )
             .route(
                 "/admin/videos/upload-resume",
-                post(handlers::admin::upload_resume),
+                post(handlers::admin::upload_resume)
+                    .layer(DefaultBodyLimit::max(UPLOAD_CHUNK_BODY_LIMIT_BYTES)),
             )
             .route(
                 "/admin/videos/upload-status",
                 get(handlers::admin::upload_status),
             )
-            .layer(DefaultBodyLimit::disable())
-            .route_layer(axum_mw::from_fn(admin_auth))
+            .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
             .route_layer(axum_mw::from_fn(bearer_auth));
         with_timeout(r, 7200)
     };
@@ -624,6 +650,15 @@ pub async fn build_router(config: AppConfig) -> Router {
                 "/admin/config/registration",
                 put(handlers::admin::set_registration_enabled),
             )
+            .route(
+                "/admin/chat/messages/{id}",
+                delete(handlers::chat::admin_delete_chat_message),
+            )
+            .route(
+                "/admin/chat/messages",
+                delete(handlers::chat::admin_clear_chat_messages),
+            )
+            .route("/admin/chat/stats", get(handlers::chat::admin_chat_stats))
             .route("/admin/system", get(handlers::admin::system_info))
             .route("/admin/logs", get(handlers::admin::get_logs))
             .route("/admin/logs", delete(handlers::admin::clear_logs))
@@ -690,6 +725,8 @@ pub async fn build_router(config: AppConfig) -> Router {
             // Login and register must be accessible without auth
             .route("/auth/register", post(handlers::auth::register))
             .route("/auth/login", post(handlers::auth::login))
+            // 访客模式：无会话访问者创建匿名影子账号（IP 限速在服务层）
+            .route("/auth/guest", post(handlers::auth::guest_session))
             // Auth Gateway SSO（GATEWAY_* 未配置时返回 404）
             .route("/auth/gateway/status", get(handlers::gateway::status))
             .route("/auth/gateway/start", get(handlers::gateway::start))
@@ -722,6 +759,34 @@ pub async fn build_router(config: AppConfig) -> Router {
             )),
         30,
     );
+
+    // 公共聊天室：REST + WebSocket。
+    // WS 是长连接，绝不能套 TimeoutLayer（30s 后会被掐断），所以单独分组。
+    let chat_routes = with_timeout(
+        Router::new()
+            .route("/chat/messages", get(handlers::chat::get_chat_history))
+            .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
+            .route_layer(axum_mw::from_fn(bearer_auth)),
+        30,
+    );
+
+    // 聊天媒体上传（图片 ≤10MB / 视频 ≤50MB，非 WebM 需 ffmpeg 转码）：
+    // 需与普通聊天接口分开设置超时，并解除 axum 默认 2MB body 限制；
+    // 实际大小上限由 handler 内部逐块校验。
+    let chat_upload_routes = with_timeout(
+        Router::new()
+            .route("/chat/image", post(handlers::chat::upload_chat_image))
+            .route("/chat/video", post(handlers::chat::upload_chat_video))
+            .layer(DefaultBodyLimit::disable())
+            .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
+            .route_layer(axum_mw::from_fn(bearer_auth)),
+        600,
+    );
+
+    let chat_ws_route = Router::new()
+        .route("/ws/chat", get(handlers::chat::ws_chat))
+        .route_layer(axum_mw::from_fn(|req, next| role_auth(req, next, 1)))
+        .route_layer(axum_mw::from_fn(bearer_auth));
 
     // Internal monitoring routes (bearer auth + admin only — sensitive system info)
     let internal_routes = with_timeout(
@@ -797,6 +862,8 @@ pub async fn build_router(config: AppConfig) -> Router {
         "/auth/",
         "/videos",
         "/playback/",
+        "/chat",
+        "/ws/",
         "/admin/",
         "/server/",
         "/metrics",
@@ -825,6 +892,8 @@ pub async fn build_router(config: AppConfig) -> Router {
                     StatusCode::NOT_FOUND,
                     Json(crate::util::response::ErrorResponse {
                         error: "接口不存在".to_string(),
+                        code: None,
+                        data: None,
                     }),
                 )
                     .into_response();
@@ -853,6 +922,9 @@ pub async fn build_router(config: AppConfig) -> Router {
         .merge(auth_routes)
         .merge(video_routes)
         .merge(playback_routes)
+        .merge(chat_routes)
+        .merge(chat_upload_routes)
+        .merge(chat_ws_route)
         .merge(upload_route)
         .merge(admin_routes)
         .merge(internal_routes)

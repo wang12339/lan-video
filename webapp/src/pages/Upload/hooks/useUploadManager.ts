@@ -16,10 +16,21 @@ export { CATEGORIES }
 
 const MAX_TOTAL_FILES = 50
 const MAX_TOTAL_SIZE = 200 * 1024 * 1024 * 1024
+const PENDING_STORAGE_KEY = 'atmos_upload_pending_v1'
 
+/** 未完成上传的元数据（File 对象无法持久化，刷新后需用户重新选择文件）。 */
+interface PendingUploadRecord {
+  name: string
+  size: number
+  lastModified: number
+  category: string
+}
+
+/* eslint-disable no-control-regex */
 function sanitizeFilename(name: string): string {
   return name.replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/\.+/g, '.').replace(/^\.+/, '').slice(0, 255)
 }
+/* eslint-enable no-control-regex */
 
 export function useUploadManager() {
   const { t } = useTranslation()
@@ -28,10 +39,44 @@ export function useUploadManager() {
   const [category, setCategory] = useState('all')
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [resumeNotice, setResumeNotice] = useState(0)
   const abortRef = useRef(false)
   const dragDepthRef = useRef(0)
   const filesRef = useRef<UploadItem[]>([])
   filesRef.current = files
+
+  // 刷新/重开页面后提示上次未完成的上传；服务端仍保有断点进度，
+  // 用户重新选择相同文件即可自动续传。
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PENDING_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed) && parsed.length > 0) setResumeNotice(parsed.length)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const pending: PendingUploadRecord[] = files
+        .filter((f) => f.status !== 'done')
+        .map((f) => ({
+          name: f.name,
+          size: f.size,
+          lastModified: f.file.lastModified,
+          category: f.category,
+        }))
+      if (pending.length === 0) sessionStorage.removeItem(PENDING_STORAGE_KEY)
+      else sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(pending))
+    } catch { /* ignore */ }
+  }, [files])
+
+  const dismissResumeNotice = useCallback(() => {
+    setResumeNotice(0)
+    try {
+      sessionStorage.removeItem(PENDING_STORAGE_KEY)
+    } catch { /* ignore */ }
+  }, [])
 
   useEffect(() => {
     if (!uploading) return
@@ -83,6 +128,7 @@ export function useUploadManager() {
         break
       }
       added.push({
+        uid: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
         file: f,
         name: sanitizeFilename(f.name),
         size: f.size,
@@ -92,6 +138,7 @@ export function useUploadManager() {
       })
     }
     if (added.length > 0) {
+      setResumeNotice(0)
       setFiles((prev) => {
         const existing = new Set(prev.map((f) => `${f.name}|${f.size}|${f.file.lastModified}`))
         const deduped = added.filter((item) => {
@@ -171,5 +218,6 @@ export function useUploadManager() {
     dragOver, uploading, addFiles,
     startUpload, cancelUpload,
     handleDrop, handleDragEnter, handleDragLeave,
+    resumeNotice, dismissResumeNotice,
   }
 }

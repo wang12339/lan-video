@@ -4,18 +4,60 @@ use axum::{
     Extension, Json,
 };
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::middleware::auth::AuthUser;
 use crate::models::video::*;
 use crate::services::media_service::is_safe_external_url;
 use crate::services::media_service::upload::stream_multipart_to_file;
+use crate::services::media_service::UploadAppendError;
 use crate::state::AppState;
 use crate::util::error::ServiceError;
 use crate::util::hashid;
-use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
+use crate::util::response::{
+    error_response, error_response_code, error_response_data, internal_error_log, ErrorResponse,
+    SafeJson,
+};
 use serde::Deserialize;
+
+/// 上传进度接口响应禁止缓存（代理/CDN 不得缓存进度）。
+fn no_store_headers() -> [(axum::http::HeaderName, &'static str); 1] {
+    [(axum::http::header::CACHE_CONTROL, "no-store")]
+}
+
+/// 将分片追加错误映射为 HTTP 状态码 + 机器可读 code。
+fn map_upload_append_error(e: UploadAppendError) -> (StatusCode, Json<ErrorResponse>) {
+    match e {
+        UploadAppendError::OffsetMismatch { received } => error_response_data(
+            StatusCode::CONFLICT,
+            "offset_mismatch",
+            "上传偏移不一致，请从已接收位置继续",
+            serde_json::json!({ "received": received }),
+        ),
+        UploadAppendError::HashMismatch => error_response_code(
+            StatusCode::BAD_REQUEST,
+            "hash_mismatch",
+            "文件校验失败，请重新上传",
+        ),
+        UploadAppendError::Duplicate(_) => error_response_code(
+            StatusCode::CONFLICT,
+            "duplicate",
+            "文件已存在，请勿重复上传",
+        ),
+        UploadAppendError::QuotaExceeded(_) => error_response_code(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "quota_exceeded",
+            "存储配额已用尽，请删除部分文件后重试",
+        ),
+        UploadAppendError::BadRequest(msg) => {
+            error_response_code(StatusCode::BAD_REQUEST, "invalid_request", msg)
+        }
+        UploadAppendError::Internal(msg) => {
+            tracing::warn!("upload_resume failed: {}", msg);
+            error_response_code(StatusCode::INTERNAL_SERVER_ERROR, "internal", "上传失败")
+        }
+    }
+}
 
 /// 将 `ServiceError` 映射为 handler 错误元组（上传场景专用）。
 ///
@@ -176,12 +218,26 @@ pub async fn upload_video(
         .await
     {
         Ok(id) => id,
-        Err(ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_)) => {
+        Err(e)
+            if matches!(
+                e,
+                ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_)
+            ) =>
+        {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             tracing::warn!(actor = %auth_user.username, "upload conflict");
-            return Err(error_response(
+            // 重复与配额超限分开 code：前端 worker 据此判定去重成功/配额错误
+            if let ServiceError::QuotaExceeded(_) = e {
+                return Err(error_response_code(
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    "quota_exceeded",
+                    "存储配额已用尽，请删除部分文件后重试",
+                ));
+            }
+            return Err(error_response_code(
                 StatusCode::CONFLICT,
-                "文件重复或存储配额已用尽",
+                "duplicate",
+                "文件已存在，请勿重复上传",
             ));
         }
         Err(e) => {
@@ -195,6 +251,7 @@ pub async fn upload_video(
     };
 
     state.invalidate_caches();
+    state.metrics.record_video_upload();
     tracing::info!(
         actor = %auth_user.username,
         video_id = id,
@@ -206,6 +263,8 @@ pub async fn upload_video(
 #[derive(serde::Deserialize)]
 pub struct UploadStatusQuery {
     pub hash: String,
+    /// 文件总大小（可选）。提供时在真正传输前做配额预检，超限直接 507。
+    pub size: Option<i64>,
 }
 
 fn is_valid_upload_hash(s: &str) -> bool {
@@ -214,23 +273,90 @@ fn is_valid_upload_hash(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// GET /admin/videos/upload-status?hash=xxx
+/// GET /admin/videos/upload-status?hash=xxx&size=yyy
+///
+/// 客户端在开始传输前调用：命中同上传者已有内容时返回 `exists: true`
+/// （可零传输跳过），带 `size` 时同时做配额预检。
 pub async fn upload_status(
     State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(q): Query<UploadStatusQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<
+    (
+        [(axum::http::HeaderName, &'static str); 1],
+        Json<serde_json::Value>,
+    ),
+    (StatusCode, Json<ErrorResponse>),
+> {
     if !is_valid_upload_hash(&q.hash) {
         return Err(error_response(StatusCode::BAD_REQUEST, "invalid hash"));
     }
-    let tmp = state.config.media_root.join(format!(".upload_{}", q.hash));
-    let received = match tokio::fs::metadata(&tmp).await {
-        Ok(m) => m.len() as i64,
-        Err(_) => 0,
-    };
-    Ok(Json(serde_json::json!({ "received": received })))
+
+    // 去重预检：命中则无需传输任何字节。查询失败不阻断上传，
+    // finalize 时仍会做权威去重。
+    match state
+        .services
+        .media
+        .find_upload_duplicate(auth_user.tenant_id, auth_user.id, &q.hash)
+        .await
+    {
+        Ok(Some(id)) => {
+            return Ok((
+                no_store_headers(),
+                Json(serde_json::json!({
+                    "received": 0,
+                    "exists": true,
+                    "existing_id": id,
+                })),
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("upload-status dedup check failed: {}", e),
+    }
+
+    // 配额预检：超限在传输第一个字节前返回 507。
+    if let Some(size) = q.size.filter(|s| *s > 0) {
+        if let Err(e) = state
+            .services
+            .media
+            .ensure_upload_quota(auth_user.id, size)
+            .await
+        {
+            if let ServiceError::QuotaExceeded(_) = e {
+                return Err(error_response_code(
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    "quota_exceeded",
+                    "存储配额已用尽，请删除部分文件后重试",
+                ));
+            }
+            tracing::warn!("upload-status quota check failed: {}", e);
+        }
+    }
+
+    let received = state
+        .services
+        .media
+        .upload_received_bytes(auth_user.tenant_id, auth_user.id, &q.hash)
+        .await
+        .map_err(|e| {
+            tracing::warn!("upload-status progress failed: {}", e);
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "查询上传进度失败")
+        })?;
+
+    Ok((
+        no_store_headers(),
+        Json(serde_json::json!({
+            "received": received,
+            "exists": false,
+        })),
+    ))
 }
 
 /// POST /admin/videos/upload-resume
+///
+/// 幂等分片追加：`x-upload-offset` 必须等于服务端已接收字节数，
+/// 否则返回 409 `offset_mismatch`（body.data.received 为服务端偏移），
+/// 客户端据此回退重切分片。最后一个分片触发 finalize 并做哈希校验。
 pub async fn upload_resume(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -271,78 +397,55 @@ pub async fn upload_resume(
         ));
     }
 
-    let tmp = state.config.media_root.join(format!(".upload_{}", hash));
-
-    // Empty body = check progress (no lock needed for read-only check)
-    if body.is_empty() {
-        let received = match tokio::fs::metadata(&tmp).await {
-            Ok(m) => m.len() as i64,
-            Err(_) => 0,
-        };
-        return Ok((
-            StatusCode::OK,
-            Json(serde_json::json!({ "received": received })),
-        ));
+    // 新协议：客户端声明本分片起始偏移；缺省时按旧协议在文件末尾追加
+    // （无幂等性，仅为兼容尚未更新的客户端）。
+    let offset = match headers.get("x-upload-offset") {
+        Some(v) => {
+            let raw = v
+                .to_str()
+                .map_err(|_| error_response(StatusCode::BAD_REQUEST, "x-upload-offset 无效"))?;
+            let n = raw
+                .parse::<i64>()
+                .map_err(|_| error_response(StatusCode::BAD_REQUEST, "x-upload-offset 无效"))?;
+            if n < 0 || n > total_size {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "x-upload-offset 超出范围",
+                ));
+            }
+            Some(n)
+        }
+        None => None,
+    };
+    if let Some(start) = offset {
+        if start + body.len() as i64 > total_size {
+            return Err(error_response_code(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "分片超出声明的文件总大小",
+            ));
+        }
     }
 
-    // Per-hash mutex to prevent concurrent writes from corrupting the temp file
-    let lock = state
-        .upload_locks
-        .entry(hash.clone())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .value()
-        .clone();
-    let _guard = lock.lock().await;
+    let outcome = state
+        .services
+        .media
+        .append_upload_chunk(
+            auth_user.tenant_id,
+            auth_user.id,
+            &hash,
+            &file_name,
+            total_size,
+            &category,
+            offset,
+            &body,
+        )
+        .await
+        .map_err(map_upload_append_error)?;
 
-    let mut f = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&tmp)
-        .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "打开临时文件失败"))?;
-    f.write_all(&body)
-        .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "写入失败"))?;
-    f.flush()
-        .await
-        .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "flush失败"))?;
-    drop(f);
-
-    let received = tokio::fs::metadata(&tmp)
-        .await
-        .map(|m| m.len() as i64)
-        .unwrap_or(0);
-
-    if received >= total_size {
-        let id = state
-            .services
-            .media
-            .upload_video_file(
-                auth_user.tenant_id,
-                &file_name,
-                &tmp,
-                &category,
-                auth_user.id,
-                None,
-            )
-            .await
-            .map_err(|e| {
-                let tmp_path = tmp.clone();
-                tokio::spawn(async move {
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                });
-                match &e {
-                    ServiceError::Duplicate(_) | ServiceError::QuotaExceeded(_) => {
-                        error_response(StatusCode::CONFLICT, "文件重复或存储配额已用尽")
-                    }
-                    _ => {
-                        tracing::warn!("upload_resume failed: {}", e);
-                        error_response(StatusCode::INTERNAL_SERVER_ERROR, "上传失败")
-                    }
-                }
-            })?;
-        state.upload_locks.remove(&hash);
+    if let Some(id) = outcome.video_id {
         state.invalidate_caches();
+        state.metrics.record_video_upload();
         tracing::info!(
             actor = %auth_user.username,
             video_id = id,
@@ -350,13 +453,20 @@ pub async fn upload_resume(
         );
         return Ok((
             StatusCode::CREATED,
-            Json(serde_json::json!({ "id": id, "received": received })),
+            Json(serde_json::json!({ "id": id, "received": outcome.received })),
+        ));
+    }
+
+    if body.is_empty() {
+        return Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({ "received": outcome.received })),
         ));
     }
 
     Ok((
         StatusCode::PARTIAL_CONTENT,
-        Json(serde_json::json!({ "received": received })),
+        Json(serde_json::json!({ "received": outcome.received })),
     ))
 }
 

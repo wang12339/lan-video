@@ -54,3 +54,21 @@
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
+
+/* ── 移动端适配（转码弹窗内容等，与全站 ≤640 统一断点） ── */
+@media (max-width: 640px) {
+  .admin-videos__variant-row {
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+  }
+
+  .admin-videos__resolution-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-videos__resolution-actions .admin-btn {
+    width: 100%;
+  }
+}

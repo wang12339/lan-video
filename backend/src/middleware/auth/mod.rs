@@ -155,6 +155,7 @@ pub async fn bearer_auth(req: Request, next: Next) -> Response {
         username: user.username,
         is_admin: user.role >= 3,
         role: user.role,
+        is_guest: user.is_guest,
         tenant_id,
     });
     next.run(req).await

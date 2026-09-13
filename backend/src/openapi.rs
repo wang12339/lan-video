@@ -124,6 +124,31 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/auth/guest": {
+                "post": {
+                    "summary": "Enter guest mode (anonymous session)",
+                    "operationId": "authGuestSession",
+                    "description": "Creates an anonymous guest shadow account (users.is_guest) and issues a 7-day token, delivered both as a bearer token and an HttpOnly session cookie. Guests have the same permission level as normal users but can only see/play the content they uploaded themselves. Content uploaded in guest mode is automatically merged into the real account when the guest later registers or logs in. Idempotency is the client's job: call GET /auth/user first and only invoke this on 401. Rate-limited per IP (20 new guest accounts per hour).",
+                    "responses": {
+                        "200": {
+                            "description": "Guest session created",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/AuthResponse" }
+                                }
+                            }
+                        },
+                        "429": {
+                            "description": "Too many guest sessions from this IP — rate limited",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/AuthResponse" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "/auth/logout": {
                 "post": {
                     "summary": "Logout and invalidate token",
@@ -140,6 +165,89 @@ pub fn spec() -> serde_json::Value {
                             }
                         },
                         "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/auth/gateway/status": {
+                "get": {
+                    "summary": "Auth Gateway SSO availability",
+                    "operationId": "authGatewayStatus",
+                    "description": "Returns whether Auth Gateway SSO login is enabled (all GATEWAY_* env vars configured).",
+                    "responses": {
+                        "200": {
+                            "description": "Gateway SSO availability",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": { "enabled": { "type": "boolean" } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/auth/gateway/start": {
+                "get": {
+                    "summary": "Start Auth Gateway SSO login",
+                    "operationId": "authGatewayStart",
+                    "description": "Creates a state+PKCE pair and 302-redirects the browser to the Auth Gateway authorization page. Returns 404 when SSO is not configured.",
+                    "responses": {
+                        "302": { "description": "Redirect to the gateway authorization page" },
+                        "404": { "description": "SSO not configured" }
+                    }
+                }
+            },
+            "/auth/gateway/callback": {
+                "get": {
+                    "summary": "Auth Gateway OAuth callback",
+                    "operationId": "authGatewayCallback",
+                    "description": "Receives the authorization code from the gateway, exchanges it for tokens, fetches userinfo, links/provisions the local account, mints an Atmos token, and 302-redirects to the webapp with a one-time exchange code (?gw_code=...). On failure redirects with ?gw_error=....",
+                    "parameters": [
+                        { "name": "code", "in": "query", "schema": { "type": "string" } },
+                        { "name": "state", "in": "query", "schema": { "type": "string" } },
+                        { "name": "error", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "302": { "description": "Redirect to the webapp landing page" }
+                    }
+                }
+            },
+            "/auth/gateway/exchange": {
+                "post": {
+                    "summary": "Exchange one-time gw_code for the Atmos token",
+                    "operationId": "authGatewayExchange",
+                    "description": "Consumes the one-time exchange code produced by the callback (30s TTL) and returns the Atmos auth token. The code is burned on first use.",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["code"],
+                                    "properties": { "code": { "type": "string" } }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Atmos auth token",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/AuthResponse" }
+                                }
+                            }
+                        },
+                        "400": {
+                            "description": "Invalid or expired code",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/AuthResponse" }
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -1368,8 +1476,8 @@ pub fn spec() -> serde_json::Value {
                 "post": {
                     "summary": "Upload a video file (multipart)",
                     "operationId": "uploadVideo",
-                    "description": "Upload a video or image file via multipart form. The file is validated against its magic bytes. Duplicate files (by MD5 hash) are rejected. Thumbnails are generated automatically for video files.",
-                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "description": "Upload a single video or image file via multipart form. The file is streamed to disk while a SHA-256 hash is computed, then validated against its magic bytes. Duplicate files (same uploader + file hash) are rejected with code `duplicate`. Thumbnails are generated automatically for video files. The request body is streamed and has no size limit; the file itself is capped at 50 GB. Available to any authenticated identity with role >= 1 — including anonymous guest sessions (guest mode); uploaded content is bound to the caller and only visible to them. Note: the webapp uses the chunked `/admin/videos/upload-resume` endpoint instead; this endpoint remains for API clients.",
+                    "security": [{ "bearerAuth": [] }],
                     "requestBody": {
                         "required": true,
                         "content": {
@@ -1377,9 +1485,8 @@ pub fn spec() -> serde_json::Value {
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "file": { "type": "string", "format": "binary", "description": "Video or image file" },
-                                        "category": { "type": "string", "default": "local", "description": "Category for the uploaded file" },
-                                        "fileHash": { "type": "string", "description": "Pre-computed MD5 hash for duplicate detection" }
+                                        "file": { "type": "string", "format": "binary", "description": "Video or image file (single file only)" },
+                                        "category": { "type": "string", "default": "local", "description": "Category for the uploaded file" }
                                     },
                                     "required": ["file"]
                                 }
@@ -1399,27 +1506,37 @@ pub fn spec() -> serde_json::Value {
                         "401": { "$ref": "#/components/responses/Unauthorized" },
                         "403": { "$ref": "#/components/responses/Forbidden" },
                         "409": {
-                            "description": "Duplicate file — video already exists",
+                            "description": "Duplicate file — same uploader already uploaded this content (error code `duplicate`)",
                             "content": {
                                 "application/json": {
                                     "schema": { "$ref": "#/components/schemas/ErrorResponse" }
                                 }
                             }
                         },
-                        "500": { "$ref": "#/components/responses/InternalError" }
+                        "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+                        "500": { "$ref": "#/components/responses/InternalError" },
+                        "507": {
+                            "description": "Per-user storage quota exhausted (error code `quota_exceeded`)",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        }
                     }
                 }
             },
             "/admin/videos/upload-resume": {
                 "post": {
-                    "summary": "Resume or append to an upload",
+                    "summary": "Append a chunk to an upload (idempotent, resumable)",
                     "operationId": "uploadResume",
-                    "description": "Append data to a partial upload identified by hash. When the total received bytes equals x-upload-size, the upload is finalized. Returns 206 Partial Content if more data is needed.",
-                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "description": "Append a chunk to a partial upload identified by `x-upload-hash` (the file's SHA-256 hex, which also acts as the upload key). Chunks are 16 MB in the webapp; the request body is capped at 32 MB. `x-upload-offset` must equal the number of bytes the server has already received — if it does not, the server returns 409 with code `offset_mismatch` and `data.received` so the client can re-slice from the correct offset (this makes retrying a chunk after a timeout safe). When the total received bytes equal `x-upload-size`, the upload is finalized: the incrementally computed SHA-256 is compared against `x-upload-hash` (mismatch → 400 `hash_mismatch`, temp file deleted), then the file is moved into place, deduplicated (409 `duplicate`), and charged against the quota (507 `quota_exceeded`). A successful finalization returns 201 with the new video ID; replaying the final chunk after a lost 201 is idempotent and returns the same ID. An empty request body performs a progress query, and an empty body with `x-upload-offset` equal to `x-upload-size` re-triggers finalization (recovery for a fully received temp file). Omitting `x-upload-offset` falls back to legacy append-at-end semantics (not idempotent; provided for backward compatibility only). Available to any authenticated identity with role >= 1 (including guest sessions).",
+                    "security": [{ "bearerAuth": [] }],
                     "parameters": [
-                        { "name": "x-upload-hash", "in": "header", "required": true, "description": "Unique upload identifier (alphanumeric, dash, underscore, max 128 chars)", "schema": { "type": "string" } },
+                        { "name": "x-upload-hash", "in": "header", "required": true, "description": "SHA-256 hex of the complete file (alphanumeric, dash, underscore, max 128 chars). Used as the upload key and verified at finalization.", "schema": { "type": "string" } },
+                        { "name": "x-upload-offset", "in": "header", "required": false, "description": "Byte offset at which this chunk starts (must equal server-received bytes). Strongly recommended; omit only for legacy clients.", "schema": { "type": "integer" } },
                         { "name": "x-upload-name", "in": "header", "description": "Original filename", "schema": { "type": "string", "default": "video.mp4" } },
-                        { "name": "x-upload-size", "in": "header", "required": true, "description": "Total expected file size in bytes", "schema": { "type": "integer" } },
+                        { "name": "x-upload-size", "in": "header", "required": true, "description": "Total expected file size in bytes (max 50 GB)", "schema": { "type": "integer" } },
                         { "name": "x-upload-category", "in": "header", "description": "Category for the uploaded file", "schema": { "type": "string", "default": "local" } }
                     ],
                     "requestBody": {
@@ -1432,7 +1549,7 @@ pub fn spec() -> serde_json::Value {
                     },
                     "responses": {
                         "200": {
-                            "description": "Upload status (empty body — just check received bytes)",
+                            "description": "Progress query (empty body) — returns bytes received",
                             "content": {
                                 "application/json": {
                                     "schema": {
@@ -1443,7 +1560,7 @@ pub fn spec() -> serde_json::Value {
                             }
                         },
                         "201": {
-                            "description": "Upload finalized",
+                            "description": "Upload finalized (idempotent for a replayed final chunk)",
                             "content": {
                                 "application/json": {
                                     "schema": {
@@ -1467,42 +1584,88 @@ pub fn spec() -> serde_json::Value {
                                 }
                             }
                         },
-                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "400": {
+                            "description": "Invalid headers/offset, or final hash mismatch (code `hash_mismatch`)",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        },
                         "401": { "$ref": "#/components/responses/Unauthorized" },
-                        "403": { "$ref": "#/components/responses/Forbidden" }
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "409": {
+                            "description": "Offset mismatch (code `offset_mismatch`, `data.received` = server offset) or duplicate content (code `duplicate`)",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        },
+                        "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+                        "500": { "$ref": "#/components/responses/InternalError" },
+                        "507": {
+                            "description": "Per-user storage quota exhausted (code `quota_exceeded`)",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        }
                     }
                 }
             },
             "/admin/videos/upload-status": {
                 "get": {
-                    "summary": "Check upload progress",
+                    "summary": "Check upload progress / duplicate / quota",
                     "operationId": "uploadStatus",
-                    "description": "Check how many bytes have been received for a partial upload",
-                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "description": "Pre-flight check before uploading. If `exists` is true, the same uploader already has this exact content (`existing_id` is the video ID) and the client can skip the transfer entirely. When `size` is supplied, the per-user quota is checked before any bytes are sent (507 `quota_exceeded`). Otherwise returns `received`, the number of bytes already accepted for this upload key. Response is never cached (`Cache-Control: no-store`). Available to any authenticated identity with role >= 1 (including guest sessions).",
+                    "security": [{ "bearerAuth": [] }],
                     "parameters": [
                         {
                             "name": "hash",
                             "in": "query",
                             "required": true,
-                            "description": "Upload hash identifier",
+                            "description": "Upload key — SHA-256 hex of the complete file",
                             "schema": { "type": "string" }
+                        },
+                        {
+                            "name": "size",
+                            "in": "query",
+                            "required": false,
+                            "description": "Total file size in bytes (optional; enables the quota pre-check)",
+                            "schema": { "type": "integer" }
                         }
                     ],
                     "responses": {
                         "200": {
-                            "description": "Upload progress",
+                            "description": "Upload pre-flight result",
                             "content": {
                                 "application/json": {
                                     "schema": {
                                         "type": "object",
-                                        "properties": { "received": { "type": "integer", "description": "Bytes received so far" } }
+                                        "properties": {
+                                            "received": { "type": "integer", "description": "Bytes received so far" },
+                                            "exists": { "type": "boolean", "description": "Same uploader already has this content" },
+                                            "existing_id": { "type": "integer", "description": "Existing video ID when `exists` is true" }
+                                        },
+                                        "required": ["received", "exists"]
                                     }
                                 }
                             }
                         },
                         "400": { "$ref": "#/components/responses/BadRequest" },
                         "401": { "$ref": "#/components/responses/Unauthorized" },
-                        "403": { "$ref": "#/components/responses/Forbidden" }
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "500": { "$ref": "#/components/responses/InternalError" },
+                        "507": {
+                            "description": "Per-user storage quota exhausted (code `quota_exceeded`)",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -2010,6 +2173,40 @@ pub fn spec() -> serde_json::Value {
                         "401": { "$ref": "#/components/responses/Unauthorized" },
                         "403": { "$ref": "#/components/responses/Forbidden" },
                         "500": { "$ref": "#/components/responses/InternalError" }
+                    }
+                }
+            },
+            "/admin/chat/messages/{id}": {
+                "delete": {
+                    "summary": "Delete a chat message (admin)",
+                    "operationId": "adminDeleteChatMessage",
+                    "description": "管理员删除一条公共聊天室消息，并向在线客户端广播删除事件（前端同步移除）。",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Deleted",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": { "ok": { "type": "boolean" } }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" },
+                        "404": {
+                            "description": "Message not found",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -2704,6 +2901,182 @@ pub fn spec() -> serde_json::Value {
                     }
                 }
             },
+            "/chat/messages": {
+                "get": {
+                    "summary": "Chat history (paged, newest first)",
+                    "operationId": "chatHistory",
+                    "description": "公共聊天室历史分页。按消息 id 倒序游标翻页（before_id），前端反转拼接。消息上限 500 字符；发言限速 5 条/10 秒（WS 端）。",
+                    "security": [{ "bearerAuth": [] }],
+                    "parameters": [
+                        { "name": "before_id", "in": "query", "schema": { "type": "integer" }, "description": "游标：返回 id 小于该值的消息" },
+                        { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 100 } }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Chat history page",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "items": {
+                                                "type": "array",
+                                                "items": { "$ref": "#/components/schemas/ChatMessageItem" }
+                                            },
+                                            "hasMore": { "type": "boolean" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
+            "/admin/chat/messages": {
+                "delete": {
+                    "summary": "Clear all chat messages (admin)",
+                    "operationId": "adminClearChatMessages",
+                    "description": "清空本租户聊天室全部消息，并广播 cleared 事件让所有在线客户端立即清空消息列表。图片物理文件不在此处清理（与单条删言一致的尽力而为策略不适用——批量仅删库行）。",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Cleared",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ok": { "type": "boolean" },
+                                            "deleted": { "type": "integer", "description": "删除的消息条数" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/admin/chat/stats": {
+                "get": {
+                    "summary": "Chat message stats (admin)",
+                    "operationId": "adminChatStats",
+                    "description": "本租户聊天室消息总数。",
+                    "security": [{ "bearerAuth": [] }, { "adminAuth": [] }],
+                    "responses": {
+                        "200": {
+                            "description": "Message count",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ok": { "type": "boolean" },
+                                            "count": { "type": "integer" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "403": { "$ref": "#/components/responses/Forbidden" }
+                    }
+                }
+            },
+            "/chat/image": {
+                "post": {
+                    "summary": "Upload a chat image",
+                    "operationId": "uploadChatImage",
+                    "description": "聊天室图片上传。multipart 字段 file，≤10MB，magic bytes 校验（JPG/PNG/WebP/GIF）。存 media/chat/{uuid}.{ext}，返回 /media/chat/{file}。计入发言限速（5 张/10 秒）。图片 URL 需通过 WS 协议（{\"type\":\"img\",\"imageUrl\":\"...\"}）发送为消息。",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "multipart/form-data": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file": { "type": "string", "format": "binary", "description": "图片文件（≤10MB，JPG/PNG/WebP/GIF）" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Upload succeeded",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ok": { "type": "boolean" },
+                                            "imageUrl": { "type": "string", "example": "/media/chat/xxxx.jpg" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "429": { "$ref": "#/components/responses/RateLimited" }
+                    }
+                }
+            },
+            "/chat/video": {
+                "post": {
+                    "summary": "Upload a chat video",
+                    "operationId": "uploadChatVideo",
+                    "description": "聊天室视频上传。multipart 字段 file，≤50MB，时长 ≤5 分钟，接受 MP4/MOV/M4V/WebM/MKV/AVI（magic bytes 校验），流式写盘。非 WebM 统一转为浏览器可播的 H.264/AAC MP4（H.264+AAC/MP3 源仅 remux，不重编码；限宽 1280），存 media/chat/{uuid}.{mp4|webm}，返回 /media/chat/{file}。计入发言限速（5 条/10 秒）。视频 URL 需通过 WS 协议（{\"type\":\"video\",\"videoUrl\":\"...\"}）发送为消息。",
+                    "security": [{ "bearerAuth": [] }],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "multipart/form-data": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "file": { "type": "string", "format": "binary", "description": "视频文件（≤50MB，时长 ≤5 分钟，MP4/MOV/M4V/WebM/MKV/AVI）" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Upload succeeded",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ok": { "type": "boolean" },
+                                            "videoUrl": { "type": "string", "example": "/media/chat/xxxx.mp4" }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "400": { "$ref": "#/components/responses/BadRequest" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" },
+                        "429": { "$ref": "#/components/responses/RateLimited" }
+                    }
+                }
+            },
+            "/ws/chat": {
+                "get": {
+                    "summary": "Public chat room (WebSocket)",
+                    "operationId": "chatWebSocket",
+                    "description": "公共聊天室 WebSocket 升级端点（需登录，role ≥ 1，访客可参与）。升级为长连接，不适用普通 30s 超时。JSON 文本帧协议——客户端 → 服务端：{\"type\":\"msg\",\"content\":\"...\"}（≤500 字符）或 {\"type\":\"img\",\"imageUrl\":\"/media/chat/...\"}（先经 POST /chat/image 上传）或 {\"type\":\"video\",\"videoUrl\":\"/media/chat/...\"}（先经 POST /chat/video 上传）；服务端 → 客户端：{\"type\":\"message\",...}（msgType 0=文本/1=图片/2=视频，含 imageUrl/videoUrl）、{\"type\":\"online\",\"count\":N,\"names\":[...]} 在线变化、{\"type\":\"deleted\",\"id\":N} 管理员删言、{\"type\":\"error\",\"message\":\"...\"} 限速/校验失败。文本/图片/视频共用限速 5 条/10 秒。",
+                    "security": [{ "bearerAuth": [] }],
+                    "responses": {
+                        "101": { "description": "Switching Protocols — WebSocket upgrade" },
+                        "401": { "$ref": "#/components/responses/Unauthorized" }
+                    }
+                }
+            },
             "/share/{token}": {
                 "get": {
                     "summary": "Resolve a shared video",
@@ -2777,6 +3150,14 @@ pub fn spec() -> serde_json::Value {
                         }
                     }
                 },
+                "PayloadTooLarge": {
+                    "description": "Request body or uploaded file exceeds the allowed size",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        }
+                    }
+                },
                 "InternalError": {
                     "description": "Internal server error",
                     "content": {
@@ -2790,7 +3171,9 @@ pub fn spec() -> serde_json::Value {
                 "ErrorResponse": {
                     "type": "object",
                     "properties": {
-                        "error": { "type": "string", "description": "Human-readable error message" }
+                        "error": { "type": "string", "description": "Human-readable error message" },
+                        "code": { "type": "string", "description": "Machine-readable error code (e.g. `duplicate`, `quota_exceeded`, `offset_mismatch`, `hash_mismatch`). Clients should branch on this instead of localized messages." },
+                        "data": { "type": "object", "description": "Additional structured error data (e.g. `{ \"received\": 123 }` for `offset_mismatch`)" }
                     },
                     "required": ["error"]
                 },
@@ -2881,9 +3264,26 @@ pub fn spec() -> serde_json::Value {
                         "isAdmin": { "type": "boolean" },
                         "createdAt": { "type": "string", "description": "Account creation timestamp (YYYY-MM-DD HH:MM:SS)" },
                         "email": { "type": "string", "nullable": true, "description": "用户邮箱" },
-                        "emailVerified": { "type": "boolean", "description": "邮箱是否已验证" }
+                        "emailVerified": { "type": "boolean", "description": "邮箱是否已验证" },
+                        "avatarUrl": { "type": "string", "nullable": true, "description": "头像 URL（未设置时不下发）" },
+                        "isGuest": { "type": "boolean", "description": "访客模式：当前会话是否为匿名访客影子账号" }
                     },
-                    "required": ["id", "username", "isAdmin", "createdAt", "emailVerified"]
+                    "required": ["id", "username", "isAdmin", "createdAt", "emailVerified", "isGuest"]
+                },
+                "ChatMessageItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer" },
+                        "userId": { "type": "string", "nullable": true, "description": "发言者用户 ID（hashid；账号删除后为 null）" },
+                        "username": { "type": "string" },
+                        "isGuest": { "type": "boolean", "description": "发言者是否为访客" },
+                        "content": { "type": "string", "maxLength": 500, "description": "文本内容；图片消息为配文（可为空字符串）" },
+                        "msgType": { "type": "integer", "enum": [0, 1, 2], "description": "0=文本、1=图片、2=视频" },
+                        "imageUrl": { "type": "string", "nullable": true, "description": "图片消息的 /media/chat/ 地址（仅 msgType=1）" },
+                        "videoUrl": { "type": "string", "nullable": true, "description": "视频消息的 /media/chat/ 地址（仅 msgType=2）" },
+                        "ts": { "type": "string", "description": "RFC3339 时间戳" }
+                    },
+                    "required": ["id", "username", "isGuest", "content", "msgType", "ts"]
                 },
                 "UserProfileResponse": {
                     "type": "object",

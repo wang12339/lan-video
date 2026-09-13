@@ -305,7 +305,7 @@ describe('useServiceWorker', () => {
     })
 
     it('当新 worker 激活时应设置 updateAvailable', async () => {
-      const mockStateChangeHandler = vi.fn()
+      const _mockStateChangeHandler = vi.fn()
       const mockAddEventListener = vi.fn()
       const mockInstallingWorker = {
         addEventListener: mockAddEventListener,

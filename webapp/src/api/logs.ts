@@ -10,6 +10,7 @@ export interface LogEntry {
   duration_ms?: number
   request_id?: string
   user?: string
+  client_ip?: string
   video_id?: number
   error?: string
   action?: string

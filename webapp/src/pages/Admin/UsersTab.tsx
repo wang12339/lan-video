@@ -255,6 +255,7 @@ export default function UsersTab() {
                       <td>
                         {u.username}
                         {u.isAdmin && <span className="admin-badge">{t('admin.users.admin')}</span>}
+                        {u.isGuest && <span className="admin-badge">{t('admin.users.guest')}</span>}
                         {isSelf && <span className="admin-badge">{t('admin.users.currentAccount')}</span>}
                       </td>
                       <td className="admin-col-status">

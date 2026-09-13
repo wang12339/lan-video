@@ -1,6 +1,8 @@
 pub mod admin;
 pub mod auth;
+pub mod chat;
 pub mod comments;
+pub mod gateway;
 pub mod playback;
 pub mod playlists;
 pub mod recommendations;

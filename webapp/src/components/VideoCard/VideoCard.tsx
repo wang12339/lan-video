@@ -11,6 +11,8 @@ interface Video {
   title: string;
   thumbnail_url?: string;
   thumb?: string | null;
+  /** 高清封面（与缩略图组成 srcSet，大屏/高 dpr 自动切换） */
+  cover?: string | null;
   views: number;
   category?: string;
   duration?: number;
@@ -132,6 +134,7 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
           imageContext="card"
           eager={eager}
           showPlaceholder={false}
+          hiResSrc={video.cover || null}
           fallback={
             <div className="thumb-fallback" role="img" aria-label={video.title}>
               <span className="thumb-fallback-icon" aria-hidden="true">🎬</span>

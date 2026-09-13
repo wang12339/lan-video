@@ -119,6 +119,8 @@ impl VideoService {
         &self,
         tenant_id: i64,
         username: &str,
+        requester_id: i64,
+        requester_is_admin: bool,
         video_id: i64,
     ) -> Result<(), ServiceError> {
         // 先判存在性：已焚毁/不存在的视频必须 404（而不是被观看校验的
@@ -136,10 +138,20 @@ impl VideoService {
         if !is_watch_complete(position_ms, duration_ms) {
             return Err(ServiceError::Forbidden("需完整观看后才能焚毁".into()));
         }
-        self.burn_video_record(tenant_id, video_id).await
+        // burn_video_record 内部会再做 owner-or-admin 与片长门槛校验
+        self.burn_video_record(tenant_id, requester_id, requester_is_admin, video_id)
+            .await
     }
 
     /// 执行焚毁（无观看校验——调用方自行完成前置判定）。
+    ///
+    /// # 权限（H1 修复）
+    /// 仅允许视频上传者本人或管理员焚毁；其余一律 403。
+    /// 存量数据 `uploader_id` 为 NULL 时仅管理员可焚毁。
+    ///
+    /// # 片长门槛（H1 修复）
+    /// 服务端片长未知（<=0）的视频禁止焚毁——"完整观看"无从判定，
+    /// 否则客户端谎报进度即可烧掉任何视频（已实测复现）。
     ///
     /// - 数据库：`delete_video_cascade`（视频行 + 播放历史/点赞/收藏/评论/
     ///   标签关联，变体/弹幕/分享等由外键级联）
@@ -148,6 +160,8 @@ impl VideoService {
     pub async fn burn_video_record(
         &self,
         tenant_id: i64,
+        requester_id: i64,
+        requester_is_admin: bool,
         video_id: i64,
     ) -> Result<(), ServiceError> {
         let video = self
@@ -155,6 +169,16 @@ impl VideoService {
             .find_by_id(tenant_id, video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
+
+        if video.duration <= 0 {
+            return Err(ServiceError::BadRequest("视频片长未知，无法焚毁".into()));
+        }
+        let is_owner = video.uploader_id == Some(requester_id);
+        if !is_owner && !requester_is_admin {
+            return Err(ServiceError::Forbidden(
+                "只有视频所有者或管理员可以焚毁".into(),
+            ));
+        }
 
         // 删除前取回全部需要清理的文件路径（级联删除后变体行即不存在）
         let variant_paths = self.repo.list_variant_file_paths(video_id).await?;
@@ -199,28 +223,29 @@ impl VideoService {
 
     /// 片尾判定（服务端自动焚毁用）。
     ///
+    /// # H1 修复
+    /// 服务端片长未知（<=0）时**永不判定片尾**。此前 fallback 到
+    /// `i64::MAX` 导致判定完全依赖客户端上报的时长/进度，攻击者一条
+    /// 伪造的 history 请求即可触发自动焚毁（已实测复现）。
+    ///
     /// 服务端片长按秒存储（截断，最多低估 999ms），用 `+999` 补偿；客户端
     /// 上报的 `duration_ms` 更接近真实片长，取两者较小值，防谎报更大时长
     /// 推迟触发。判定容差 500ms——到达片尾前最后半秒内即视为看完。
-    /// 服务端与客户端片长均未知时返回 false，只能依赖显式调用焚毁接口。
     pub fn is_at_end(position_ms: i64, server_duration_secs: i64, client_duration_ms: i64) -> bool {
-        if position_ms < 0 {
+        if position_ms < 0 || server_duration_secs <= 0 {
             return false;
         }
-        let server_ms = if server_duration_secs > 0 {
-            server_duration_secs
-                .saturating_mul(1000)
-                .saturating_add(999)
-        } else {
-            i64::MAX
-        };
+        let server_ms = server_duration_secs
+            .saturating_mul(1000)
+            .saturating_add(999);
         let client_ms = if client_duration_ms > 0 {
             client_duration_ms
         } else {
-            i64::MAX
+            // 客户端未报时长：只信服务端片长
+            server_ms
         };
         let threshold = server_ms.min(client_ms);
-        threshold < i64::MAX && position_ms + 500 >= threshold
+        position_ms + 500 >= threshold
     }
 
     /// 添加外部视频

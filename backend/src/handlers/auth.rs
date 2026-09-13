@@ -1,6 +1,6 @@
 use axum::{
     extract::{Multipart, Request, State},
-    http::{HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
@@ -35,10 +35,16 @@ async fn parse_auth_request(
 }
 
 /// Build an auth response, setting the token cookie if present
-fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
+pub(crate) fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
     if let Some(ref token) = resp.token {
         let cookie_str = auth_mw::set_token_cookie(
             token,
+            crate::services::auth_service::COOKIE_MAX_AGE,
+            state.config.cookie_secure,
+        );
+        // L1 配套：登录成功时下发 csrf_token cookie（非 HttpOnly，前端
+        // JS 读取后以 X-CSRF-Token 头回传，csrf_guard 严格比对）。
+        let csrf_str = auth_mw::set_csrf_cookie(
             crate::services::auth_service::COOKIE_MAX_AGE,
             state.config.cookie_secure,
         );
@@ -47,6 +53,11 @@ fn auth_response(resp: AuthResponse, state: &AppState) -> impl IntoResponse {
             http_resp
                 .headers_mut()
                 .insert(axum::http::header::SET_COOKIE, val);
+        }
+        if let Ok(val) = HeaderValue::from_str(&csrf_str) {
+            http_resp
+                .headers_mut()
+                .append(axum::http::header::SET_COOKIE, val);
         }
         http_resp
     } else {
@@ -97,6 +108,56 @@ fn handle_auth_result(
     }
 }
 
+/// 访客模式：匿名期间上传的内容合并。
+///
+/// 登录/注册成功后，如果请求 cookie 里还带着访客影子账号的会话 token，
+/// 把该访客名下的全部内容（视频/播放历史/点赞/收藏/播放列表/评论/弹幕）
+/// 合并到刚认证的真实账号，然后删除影子账号。
+async fn merge_guest_session_if_any(
+    state: &AppState,
+    headers: &HeaderMap,
+    new_token: &str,
+    tenant_id: i64,
+) {
+    let real_user = match state.repos.user.find_user_by_token(new_token).await {
+        Ok(Some(u)) => u,
+        _ => return,
+    };
+    // 访客内容合并对管理员同样生效（管理员也可能是曾经的访客）
+    let Some(guest_token) = auth_mw::extract_token_from_cookie(headers) else {
+        return;
+    };
+    if guest_token == new_token {
+        return;
+    }
+    let guest = match state.repos.user.find_user_by_token(&guest_token).await {
+        Ok(Some(u)) => u,
+        _ => return,
+    };
+    if !guest.is_guest || guest.id == real_user.id {
+        return;
+    }
+    match state
+        .repos
+        .user
+        .merge_guest_into_user(guest.id, real_user.id, tenant_id)
+        .await
+    {
+        Ok(n) => tracing::info!(
+            guest = %guest.username,
+            user = %real_user.username,
+            merged_videos = n,
+            "guest content merged into real account"
+        ),
+        Err(e) => tracing::error!(
+            guest_id = guest.id,
+            user_id = real_user.id,
+            "guest content merge failed: {}",
+            e
+        ),
+    }
+}
+
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
@@ -117,17 +178,24 @@ pub async fn register(
         return Err(error_response(StatusCode::NOT_FOUND, "Not Found"));
     }
 
+    let headers = req.headers().clone();
     let ip = client_ip(&req);
     let auth_req = parse_auth_request(req).await?;
 
-    Ok(handle_auth_result(
-        state
-            .services
-            .auth
-            .register(&auth_req, &ip, tenant.tenant_id)
-            .await,
-        &state,
-    ))
+    let result = state
+        .services
+        .auth
+        .register(&auth_req, &ip, tenant.tenant_id)
+        .await;
+    if let Ok(ref resp) = result {
+        if resp.ok {
+            if let Some(token) = &resp.token {
+                merge_guest_session_if_any(&state, &headers, token, tenant.tenant_id).await;
+            }
+        }
+    }
+
+    Ok(handle_auth_result(result, &state))
 }
 
 pub async fn login(
@@ -135,6 +203,7 @@ pub async fn login(
     Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let headers = req.headers().clone();
     let ip = client_ip(&req);
     let auth_req = parse_auth_request(req).await?;
 
@@ -157,19 +226,45 @@ pub async fn login(
                     "suspicious login activity: repeated failures from same IP"
                 );
             }
+        } else if let Some(token) = &resp.token {
+            merge_guest_session_if_any(&state, &headers, token, tenant.tenant_id).await;
         }
     }
     Ok(handle_auth_result(result, &state))
 }
 
-pub async fn logout(
+/// POST /auth/guest — 访客模式入口
+///
+/// 为没有会话的访问者创建匿名访客影子账号并签发 7 天 token（HttpOnly
+/// cookie）。访客与登录用户同权限层（role=1），但只能看到/播放自己
+/// 上传的内容；之后注册或登录真实账号时，访客期间的内容自动合并。
+/// 幂等性由前端保证：先 `GET /auth/user`，仅在 401 时才调用本接口。
+pub async fn guest_session(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-) -> impl IntoResponse {
-    let token = auth_mw::extract_bearer_token(&headers)
-        .or_else(|| auth_mw::extract_token_from_cookie(&headers));
+    Extension(tenant): Extension<TenantContext>,
+    req: Request,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
+    let ip = client_ip(&req);
+    Ok(handle_auth_result(
+        state
+            .services
+            .auth
+            .create_guest_session(&ip, tenant.tenant_id)
+            .await,
+        &state,
+    ))
+}
 
-    state.services.auth.logout(None, token.as_deref()).await;
+pub async fn logout(State(state): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
+    let token = auth_mw::extract_bearer_token(req.headers())
+        .or_else(|| auth_mw::extract_token_from_cookie(req.headers()));
+    let ip = client_ip(&req);
+
+    state
+        .services
+        .auth
+        .logout(None, token.as_deref(), &ip)
+        .await;
 
     let mut resp = Json(AuthResponse {
         ok: true,
@@ -204,6 +299,8 @@ pub async fn user_info(
             created_at: String::new(),
             email: None,
             email_verified: false,
+            avatar_url: None,
+            is_guest: false,
         }),
     }
 }

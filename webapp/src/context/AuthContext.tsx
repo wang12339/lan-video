@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
-import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, setOnAuthRequired, AuthError, saveToken } from '../api'
+import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, enterGuestMode, setOnAuthRequired, AuthError, saveToken } from '../api'
 import type { UserInfo } from '../api/types'
 import i18n from '../i18n'
 
@@ -12,6 +12,8 @@ interface AuthContextType {
   loginWithToken: (token: string) => Promise<void>;
   register: (username: string, password: string) => Promise<string | null>;
   logout: () => Promise<boolean>;
+  /** 进入访客模式：创建匿名会话并拉取访客用户信息，成功返回 true */
+  enterGuest: () => Promise<boolean>;
   refreshUser: () => Promise<void>;
   setUser: (user: UserInfo | null) => void;
 }
@@ -61,7 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setUser])
 
   useEffect(() => {
-    // 首屏用 httpOnly cookie 恢复登录态（内存无 token 时 cookie 可能仍有效）
+    // 首屏仅恢复登录态；访客模式由访客落地页/AuthDialog 的
+    // "以访客身份进入"按钮显式触发（enterGuest）
     void refreshUser().finally(() => setLoading(false))
 
     setOnAuthRequired((msg?: string) => {
@@ -98,6 +101,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshUser()
   }, [refreshUser])
 
+  // 访客模式：创建匿名影子账号会话（token 由 HttpOnly cookie 持有），
+  // 然后拉取访客用户信息。访客与登录用户同权限层，但只能看到/播放
+  // 自己上传的内容；之后注册或登录真实账号时自动合并访客内容。
+  // 若浏览器已有有效的访客会话则直接复用，不重复创建影子账号。
+  const enterGuest = useCallback(async (): Promise<boolean> => {
+    sessionRef.current += 1
+    const session = sessionRef.current
+    try {
+      const existing = await getUserInfo()
+      if (existing.isGuest) {
+        if (sessionRef.current === session) {
+          setUser(existing)
+          setKickedMsg(null)
+          return true
+        }
+        return false
+      }
+      // 已是登录用户：不需要进入访客模式
+      return false
+    } catch {
+      // 无有效会话 → 创建新访客
+    }
+    try {
+      await enterGuestMode()
+      if (sessionRef.current !== session) return false
+      const info = await getUserInfo()
+      if (sessionRef.current !== session) return false
+      setUser(info)
+      setKickedMsg(null)
+      return true
+    } catch {
+      if (sessionRef.current === session) setUser(null)
+      return false
+    }
+  }, [setUser])
+
   const register = useCallback(async (username: string, password: string): Promise<string | null> => {
     const res = await apiRegister(username, password)
     if (res.token) {
@@ -117,8 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [setUser])
 
   const value = useMemo(() => ({
-    user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, refreshUser, setUser
-  }), [user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, refreshUser, setUser])
+    user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, enterGuest, refreshUser, setUser
+  }), [user, loading, kickedMsg, clearKickedMsg, login, loginWithToken, register, logout, enterGuest, refreshUser, setUser])
 
   return (
     <AuthContext.Provider value={value}>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LogEntry as LogEntryType } from '../../../api/logs'
-import { formatLog, TYPE_STYLES, fmtTime } from '../utils/logFormatter'
+import { formatLog, TYPE_STYLES, fmtTime, fmtTimeFull, displayUserName } from '../utils/logFormatter'
 import LogEntry from './LogEntry'
 
 interface UserData {
@@ -11,6 +11,9 @@ interface UserData {
   types: Record<string, number>
   lastActive: string
   firstActive: string
+  lastLogin: string
+  lastLogout: string
+  ip: string
   videos: number
 }
 
@@ -58,10 +61,10 @@ export default function UserTimeline({ selectedUser, userData }: UserTimelinePro
         <>
           <div className="a-profile">
             <div className="a-profile-avatar" style={{ background: TYPE_STYLES[dominantType]?.color || '#6b7280' }}>
-              {selectedUser?.[0]?.toUpperCase()}
+              {selectedUser ? displayUserName(selectedUser, t)[0]?.toUpperCase() : ''}
             </div>
             <div className="a-profile-info">
-              <h2 className="a-profile-name">{selectedUser}</h2>
+              <h2 className="a-profile-name">{selectedUser ? displayUserName(selectedUser, t) : ''}</h2>
               <div className="a-profile-stats">
                 <span>{t('admin.logs.operations', { count: userRoute.count })}</span>
                 <span>·</span>
@@ -69,6 +72,13 @@ export default function UserTimeline({ selectedUser, userData }: UserTimelinePro
                 <span>·</span>
                 <span>{t('admin.logs.lastActiveShort', { time: fmtTime(userRoute.lastActive) })}</span>
               </div>
+              {(userRoute.lastLogin || userRoute.lastLogout || userRoute.ip) && (
+                <div className="a-profile-sess">
+                  {userRoute.lastLogin && <span>{t('admin.logs.lastLogin', { time: fmtTimeFull(userRoute.lastLogin) })}</span>}
+                  {userRoute.lastLogout && <span>{t('admin.logs.lastLogout', { time: fmtTimeFull(userRoute.lastLogout) })}</span>}
+                  {userRoute.ip && <span className="a-profile-ip">{t('admin.logs.loginIp', { ip: userRoute.ip })}</span>}
+                </div>
+              )}
             </div>
           </div>
 

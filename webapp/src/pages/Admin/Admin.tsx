@@ -13,8 +13,9 @@ const TenantTab = lazy(() => import('./TenantTab'))
 const PlanTab = lazy(() => import('./PlanTab'))
 const SystemTab = lazy(() => import('./SystemTab'))
 const LogsTab = lazy(() => import('./LogsTab'))
+const ChatTab = lazy(() => import('./ChatTab'))
 
-type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'plans' | 'system' | 'logs'
+type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'plans' | 'system' | 'logs' | 'chat'
 type MediaSubTab = 'video' | 'image'
 
 const TABS: { key: Tab; icon: string }[] = [
@@ -26,6 +27,7 @@ const TABS: { key: Tab; icon: string }[] = [
   { key: 'plans', icon: '📦' },
   { key: 'system', icon: '⚙️' },
   { key: 'logs', icon: '📋' },
+  { key: 'chat', icon: '💬' },
 ]
 
 const MEDIA_SUB_TABS: { key: MediaSubTab; sourceType: string }[] = [
@@ -152,6 +154,7 @@ export default function Admin() {
               {tab === 'plans' && <PlanTab />}
               {tab === 'system' && <SystemTab />}
               {tab === 'logs' && <LogsTab />}
+              {tab === 'chat' && <ChatTab />}
             </div>
           </Suspense>
         </ErrorBoundary>

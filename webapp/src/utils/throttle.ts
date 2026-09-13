@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 
-export interface ThrottledFunction<T extends (...args: any[]) => any> {
+export interface ThrottledFunction<T extends (...args: never[]) => unknown> {
   (...args: Parameters<T>): void
   cancel: () => void
 }
 
-export function throttle<T extends (...args: any[]) => any>(
+export function throttle<T extends (...args: never[]) => unknown>(
   fn: T,
   wait: number
 ): ThrottledFunction<T> {
@@ -44,13 +44,13 @@ export function throttle<T extends (...args: any[]) => any>(
   return throttled
 }
 
-export interface DebouncedFunction<T extends (...args: any[]) => any> {
+export interface DebouncedFunction<T extends (...args: never[]) => unknown> {
   (...args: Parameters<T>): void
   cancel: () => void
   flush: () => void
 }
 
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: never[]) => unknown>(
   fn: T,
   wait: number
 ): DebouncedFunction<T> {

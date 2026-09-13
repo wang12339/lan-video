@@ -1,3 +1,4 @@
+pub mod chat_repo;
 pub mod comment_repo;
 pub mod danmaku_repo;
 pub mod plan_repo;

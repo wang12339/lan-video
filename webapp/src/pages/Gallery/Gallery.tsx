@@ -313,6 +313,24 @@ export default function Gallery() {
     }
   }, [lbOpen, closeLightbox, lbPrev, lbNext])
 
+  // 触屏左右滑动翻页（移动端没有 ←/→ 键）
+  const lbTouchStartX = useRef<number | null>(null)
+  const onLbTouchStart = (e: React.TouchEvent) => {
+    lbTouchStartX.current = e.touches[0]?.clientX ?? null
+  }
+  const onLbTouchEnd = (e: React.TouchEvent) => {
+    const startX = lbTouchStartX.current
+    lbTouchStartX.current = null
+    if (startX == null) return
+    const endX = e.changedTouches[0]?.clientX ?? null
+    if (endX == null) return
+    const dx = endX - startX
+    // 阈值 48px 且接近水平，避免与纵向滚动/点按冲突
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs((e.changedTouches[0]?.clientY ?? 0))) return
+    if (dx < 0) lbNext()
+    else lbPrev()
+  }
+
   // 索引越界（如图片列表变化）时自动关闭灯箱
   useEffect(() => {
     if (lbOpen && (lbIndex < 0 || lbIndex >= images.length)) {
@@ -519,7 +537,19 @@ export default function Gallery() {
             </div>
           </div>
 
-          <div className="lightbox-img-container" onClick={(e) => e.stopPropagation()}>
+          <div className="lightbox-topbar">
+            <span className="lightbox-title">{currentImage.title}</span>
+            <div className="lightbox-actions">
+              <button className="lightbox-close" onClick={closeLightbox} aria-label={t('gallery.close')}>✕</button>
+            </div>
+          </div>
+
+          <div
+            className="lightbox-img-container"
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={onLbTouchStart}
+            onTouchEnd={onLbTouchEnd}
+          >
             <img
               className="lightbox-img"
               src={currentImage.original || currentImage.thumb || ''}

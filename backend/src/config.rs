@@ -38,6 +38,12 @@ pub struct AppConfig {
     pub transcode_max_duration_secs: u64,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
+    pub gateway_url: String,
+    /// 服务端（code 换 token、userinfo）访问网关的地址；缺省回落到 gateway_url。
+    pub gateway_internal_url: String,
+    pub gateway_client_id: String,
+    pub gateway_client_secret: String,
+    pub gateway_redirect_uri: String,
 }
 
 impl fmt::Debug for AppConfig {
@@ -231,6 +237,20 @@ impl AppConfig {
         let ffmpeg_path = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".into());
         let ffprobe_path = std::env::var("FFPROBE_PATH").unwrap_or_else(|_| "ffprobe".into());
 
+        // Auth Gateway SSO（可选）：四个变量都配置才启用网关登录
+        let gateway_url = std::env::var("GATEWAY_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        // 服务端交换（token/userinfo）走内网直连，避免绕公网；未配置则回落 gateway_url
+        let gateway_internal_url = std::env::var("GATEWAY_INTERNAL_URL")
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
+        let gateway_client_id = std::env::var("GATEWAY_CLIENT_ID").unwrap_or_default();
+        let gateway_client_secret = std::env::var("GATEWAY_CLIENT_SECRET").unwrap_or_default();
+        let gateway_redirect_uri = std::env::var("GATEWAY_REDIRECT_URI").unwrap_or_default();
+
         AppConfig {
             database_url,
             server_port,
@@ -265,6 +285,15 @@ impl AppConfig {
             transcode_max_duration_secs,
             ffmpeg_path,
             ffprobe_path,
+            gateway_url: gateway_url.clone(),
+            gateway_internal_url: if gateway_internal_url.is_empty() {
+                gateway_url.clone()
+            } else {
+                gateway_internal_url
+            },
+            gateway_client_id,
+            gateway_client_secret,
+            gateway_redirect_uri,
         }
     }
 }
@@ -448,6 +477,11 @@ mod tests {
             transcode_max_duration_secs: 7200,
             ffmpeg_path: "ffmpeg".into(),
             ffprobe_path: "ffprobe".into(),
+            gateway_url: String::new(),
+            gateway_internal_url: String::new(),
+            gateway_client_id: String::new(),
+            gateway_client_secret: String::new(),
+            gateway_redirect_uri: String::new(),
         };
         let debug = format!("{:?}", config);
         assert!(!debug.contains("secret123"), "密码必须被脱敏");
@@ -491,6 +525,11 @@ mod tests {
             transcode_max_duration_secs: 7200,
             ffmpeg_path: "ffmpeg".into(),
             ffprobe_path: "ffprobe".into(),
+            gateway_url: String::new(),
+            gateway_internal_url: String::new(),
+            gateway_client_id: String::new(),
+            gateway_client_secret: String::new(),
+            gateway_redirect_uri: String::new(),
         };
         assert!(!config.registration_enabled());
         config.set_registration_enabled(true);

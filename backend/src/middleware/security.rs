@@ -179,6 +179,7 @@ pub fn create_cors_layer(origins: &str) -> CorsLayer {
             HeaderName::from_static("x-upload-name"),
             HeaderName::from_static("x-upload-size"),
             HeaderName::from_static("x-upload-category"),
+            HeaderName::from_static("x-upload-offset"),
         ])
         .max_age(Duration::from_secs(3600));
 

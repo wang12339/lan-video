@@ -2,6 +2,7 @@ import { lazy, Suspense, memo } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AuthProvider } from './context/AuthContext'
+import { ChatProvider } from './context/ChatContext'
 import Layout from './components/Layout/Layout'
 import ErrorBoundary from './components/ui/ErrorBoundary'
 import { RequireAuth, RequireAdmin } from './components/ProtectedRoute'
@@ -11,6 +12,7 @@ const Player = lazy(() => import('./pages/Player/Player'))
 const Gallery = lazy(() => import('./pages/Gallery/Gallery'))
 const Upload = lazy(() => import('./pages/Upload/Upload'))
 const Profile = lazy(() => import('./pages/Profile/Profile'))
+const Chat = lazy(() => import('./pages/Chat/Chat'))
 const Admin = lazy(() => import('./pages/Admin/Admin'))
 const NotFound = lazy(() => import('./pages/NotFound/NotFound'))
 
@@ -30,25 +32,28 @@ function App() {
   return (
     <BrowserRouter basename="/webapp">
       <AuthProvider>
-        <Suspense fallback={<Loading />}>
-          <ErrorBoundary>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route path="/" element={<Home />} />
-                <Route path="/gallery" element={<Gallery />} />
-                <Route path="/profile" element={<Profile />} />
-                <Route element={<RequireAuth />}>
-                  <Route path="/upload" element={<Upload />} />
+        <ChatProvider>
+          <Suspense fallback={<Loading />}>
+            <ErrorBoundary>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/gallery" element={<Gallery />} />
+                  <Route path="/profile" element={<Profile />} />
+                  <Route path="/chat" element={<Chat />} />
+                  <Route element={<RequireAuth />}>
+                    <Route path="/upload" element={<Upload />} />
+                  </Route>
+                  <Route element={<RequireAdmin />}>
+                    <Route path="/admin" element={<Admin />} />
+                  </Route>
+                  <Route path="*" element={<NotFound />} />
                 </Route>
-                <Route element={<RequireAdmin />}>
-                  <Route path="/admin" element={<Admin />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Route>
-              <Route path="/player" element={<Player />} />
-            </Routes>
-          </ErrorBoundary>
-        </Suspense>
+                <Route path="/player" element={<Player />} />
+              </Routes>
+            </ErrorBoundary>
+          </Suspense>
+        </ChatProvider>
       </AuthProvider>
     </BrowserRouter>
   )

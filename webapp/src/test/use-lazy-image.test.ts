@@ -66,9 +66,8 @@ describe('useLazyImage', () => {
 
       // 模拟图片加载
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -135,9 +134,8 @@ describe('useLazyImage', () => {
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -152,9 +150,8 @@ describe('useLazyImage', () => {
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: false, target: document.createElement("div") }])
         })
@@ -164,14 +161,13 @@ describe('useLazyImage', () => {
     })
 
     it('元素进入视口后应停止观察', () => {
-      const { result } = renderHook(() =>
+      renderHook(() =>
         useLazyImage('https://example.com/image.jpg')
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -198,7 +194,6 @@ describe('useLazyImage', () => {
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
       // 模拟 Image 构造函数
       const mockImageInstance = {
@@ -209,7 +204,7 @@ describe('useLazyImage', () => {
       const originalImage = global.Image
       global.Image = vi.fn(function() { return mockImageInstance as any }) as any
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -236,7 +231,6 @@ describe('useLazyImage', () => {
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
       // 模拟 Image 构造函数
       const mockImageInstance = {
@@ -247,7 +241,7 @@ describe('useLazyImage', () => {
       const originalImage = global.Image
       global.Image = vi.fn(function() { return mockImageInstance as any }) as any
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -276,7 +270,6 @@ describe('useLazyImage', () => {
       )
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
       const mockImageInstance = {
         onload: null as (() => void) | null,
@@ -286,7 +279,7 @@ describe('useLazyImage', () => {
       const originalImage = global.Image
       global.Image = vi.fn(function() { return mockImageInstance as any }) as any
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -343,9 +336,8 @@ describe('useLazyLoad', () => {
       const { result } = renderHook(() => useLazyLoad())
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -358,9 +350,8 @@ describe('useLazyLoad', () => {
       const { result } = renderHook(() => useLazyLoad())
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: false, target: document.createElement("div") }])
         })
@@ -370,12 +361,11 @@ describe('useLazyLoad', () => {
     })
 
     it('元素进入视口后应停止观察', () => {
-      const { result } = renderHook(() => useLazyLoad())
+      renderHook(() => useLazyLoad())
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })
@@ -396,9 +386,8 @@ describe('useLazyLoad', () => {
       const { result } = renderHook(() => useLazyLoad())
 
       const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
-      const mockElement = result.current.ref.current
 
-      if (true) {
+      {
         act(() => {
           observerCallback([{ isIntersecting: true, target: document.createElement("div") }])
         })

@@ -407,14 +407,34 @@ export async function searchSuggest(
  * }
  * ```
  */
-export async function getUploadStatus(hash: string): Promise<{ received: number }> {
+export interface UploadStatus {
+  /** 服务端已接收字节数 */
+  received: number
+  /** 同一上传者是否已有完全相同的内容（可零传输跳过） */
+  exists?: boolean
+  /** exists=true 时对应视频 ID */
+  existing_id?: number
+}
+
+/**
+ * 上传预检：查询断点位置、是否重复、配额是否充足。
+ *
+ * @param hash - 文件 SHA-256（同时作为上传 key）
+ * @param size - 文件总大小；提供时服务端在传输前做配额预检（超限 507）
+ */
+export async function getUploadStatus(hash: string, size?: number): Promise<UploadStatus> {
   // skipCache：上传进度随时在变，不能命中 30s 响应缓存
   // silent：断点查询失败不弹全局 Toast（页面自行回退到从头上传）
-  return request<{ received: number }>(
-    `/admin/videos/upload-status?hash=${encodeURIComponent(hash)}`,
+  const params = new URLSearchParams({ hash })
+  if (size !== undefined && size > 0) params.set('size', String(size))
+  return request<UploadStatus>(
+    `/admin/videos/upload-status?${params.toString()}`,
     { auth: true, skipCache: true, silent: true }
   );
 }
+
+/** 分片上传超时：大分片在慢网络下需要远长于全局 15s 的时间。 */
+export const CHUNK_UPLOAD_TIMEOUT_MS = 180_000
 
 /**
  * 清理 HTTP Header 值中的换行符和首尾空格
@@ -436,11 +456,13 @@ function sanitizeHeaderValue(value: string): string {
  * - silent: 分片失败由上传页按文件展示 errorMsg，不弹 Toast
  * - noInvalidate: 分片请求是高频写，不能每个分片都清空 /videos 缓存
  *
- * @param hash - 文件的 SHA-256 哈希值，用于唯一标识文件
+ * @param hash - 文件的 SHA-256 哈希值，同时作为上传 key
  * @param fileName - 原始文件名，会经过安全清理
  * @param totalSize - 文件总大小（字节）
  * @param category - 视频分类
  * @param chunk - 文件分片数据（Blob 对象）
+ * @param offset - 本分片起始偏移（服务端据此校验并保证重试幂等）；
+ *   空 body 且 offset=totalSize 时用于触发 finalize 恢复
  * @returns 包含已接收字节数和可选视频 ID 的对象
  * @throws {RequestError} 当权限不足、参数无效或网络请求失败时抛出（但 silent 模式不会弹 Toast）
  *
@@ -448,21 +470,17 @@ function sanitizeHeaderValue(value: string): string {
  * ```typescript
  * const file = event.target.files[0];
  * const hash = await calculateFileHash(file);
- * const chunkSize = 5 * 1024 * 1024; // 5MB 分片
- * const category = 'tech';
+ * const chunkSize = 16 * 1024 * 1024;
  *
- * // 查询已上传进度
- * const { received } = await getUploadStatus(hash);
+ * // 预检：断点位置 / 是否重复 / 配额
+ * const { received, exists } = await getUploadStatus(hash, file.size);
  *
- * // 从断点继续上传
- * for (let offset = received; offset < file.size; offset += chunkSize) {
+ * // 从断点继续上传（offset 由服务端 received 决定）
+ * for (let offset = received; offset < file.size; ) {
  *   const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
- *   const result = await uploadResumeChunk(hash, file.name, file.size, category, chunk);
- *
- *   if (result.id) {
- *     console.log(`上传完成，视频 ID: ${result.id}`);
- *     break;
- *   }
+ *   const result = await uploadResumeChunk(hash, file.name, file.size, 'tech', chunk, offset);
+ *   if (result.id) break;
+ *   offset = result.received;
  * }
  * ```
  */
@@ -471,22 +489,28 @@ export async function uploadResumeChunk(
   fileName: string,
   totalSize: number,
   category: string,
-  chunk: Blob
-): Promise<{ received: number; id?: string }> {
-   const headers: Record<string, string> = {
+  chunk: Blob,
+  offset?: number
+): Promise<{ received: number; id?: number }> {
+  const headers: Record<string, string> = {
     'x-upload-hash': hash,
     'x-upload-name': sanitizeHeaderValue(fileName),
     'x-upload-size': String(totalSize),
     'x-upload-category': sanitizeHeaderValue(category),
   };
+  if (offset !== undefined) headers['x-upload-offset'] = String(offset)
   // Blob 直传复用 request()：统一超时、后端中文错误本地化（保留中文原文）、
   // 401 触发全局登出。silent：分片失败由上传页按文件展示 errorMsg，不弹 Toast；
   // noInvalidate：分片请求是高频写，不能每个分片都清空 /videos 缓存。
-  return request<{ received: number; id?: string }>('/admin/videos/upload-resume', {
+  // retries: 0 —— 重试由上传页统一按偏移协议处理，避免 client 层重试
+  // 与 worker 重试叠加造成同一分片多次 POST。
+  return request<{ received: number; id?: number }>('/admin/videos/upload-resume', {
     method: 'POST',
     body: chunk,
     headers,
     silent: true,
     noInvalidate: true,
+    retries: 0,
+    timeout: CHUNK_UPLOAD_TIMEOUT_MS,
   });
 }

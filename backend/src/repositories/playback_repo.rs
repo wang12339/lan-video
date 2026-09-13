@@ -313,6 +313,18 @@ impl PlaybackRepository {
         username: &str,
         video_id: i64,
     ) -> Result<bool, sqlx::Error> {
+        // M1 修复：视频不存在时 FK 违反会变成 500。先校验存在性，
+        // 不存在时静默返回 false（幂等：收藏不存在的视频无效果）。
+        let video_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM videos WHERE id = $1 AND tenant_id = $2)",
+        )
+        .bind(video_id)
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !video_exists {
+            return Ok(false);
+        }
         let (favorited,): (bool,) = sqlx::query_as(
             "WITH del AS (
                 DELETE FROM user_favorites WHERE username = $1 AND video_id = $2 AND tenant_id = $3 RETURNING 1

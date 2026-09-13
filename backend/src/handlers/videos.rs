@@ -12,11 +12,10 @@ use crate::models::video::{
     PagedVideoResponse, SearchQuery, SearchResponse, SearchResultItem, VideoItem, VideoQuery,
     VideoVariantResponse,
 };
-use crate::services::media_service::sweeper;
 use crate::state::AppState;
 use crate::util::error::ServiceError;
 use crate::util::hashid;
-use crate::util::pagination::PaginationParams;
+use crate::util::pagination::{PaginationParams, DEFAULT_PAGE_SIZE, MAX_PAGE, MAX_PAGE_SIZE};
 use crate::util::response::{
     error_response, internal_error_log, CachedResponse, ErrorResponse, SafeJson,
 };
@@ -30,18 +29,18 @@ pub async fn list_videos(
     Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<VideoQuery>,
 ) -> Result<CachedResponse<PagedVideoResponse>, (StatusCode, Json<ErrorResponse>)> {
-    sweeper::ensure_upload_lock_cleanup(&state);
-
-    let pagination = PaginationParams::new(params.page, params.size);
-    let page = pagination.page;
-    let size = pagination.page_size;
+    // /videos 分页是 0 基契约：前端 initialPageParam=0，repo 直接用
+    // offset = page * size。这里不能用 1 基的 PaginationParams——它把
+    // page=0 clamp 成 1，会让首页跳过最新一页（历史 bug，0 基前端下
+    // 首屏永远从第 21 条开始）。
+    let page = params.page.unwrap_or(0).clamp(0, MAX_PAGE);
+    let size = params
+        .size
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE);
     let query = params.query.as_deref().unwrap_or("");
     let source_type = params.source_type.as_deref().unwrap_or("");
     let category = params.category.as_deref().unwrap_or("");
-    let uploader_id = params
-        .uploader_id
-        .as_deref()
-        .and_then(hashid::decode_id_or_numeric);
     let sort = params.sort.as_deref();
 
     if query.len() > MAX_SEARCH_QUERY_LEN {
@@ -52,6 +51,17 @@ pub async fn list_videos(
     }
 
     let tenant_id = auth_user.tenant_id;
+    // 访客模式/私有化：列表只展示自己上传的内容。非管理员忽略请求中的
+    // uploader_id 参数，强制按本人过滤（防止 IDOR 窥探他人列表）；
+    // 管理员保留全站视图（管理面板依赖）并允许按 uploader 筛选。
+    let uploader_id = if auth_user.is_admin {
+        params
+            .uploader_id
+            .as_deref()
+            .and_then(hashid::decode_id_or_numeric)
+    } else {
+        Some(auth_user.id)
+    };
     let cache_key = format!(
         "lv:{}:{}:{}:{}:{}:{}:{}:{}",
         tenant_id,
@@ -115,6 +125,7 @@ pub async fn list_videos(
 pub async fn get_video(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<VideoItem>, (StatusCode, Json<ErrorResponse>)> {
     let id = hashid::decode_id_or_numeric(&id)
@@ -123,6 +134,8 @@ pub async fn get_video(
     // 热路径：详情页每次刷新都会请求；60s 缓存吸收重复查询。
     // 失效由 `AppState::invalidate_caches` 统一处理（更新/删除/上传时全量失效）。
     if let Some(cached) = state.video_detail_cache.get(&cache_key) {
+        // 缓存命中也要过归属检查（非管理员只能看自己的视频）
+        require_video_owner(&auth_user, cached.uploader_id)?;
         return Ok(Json(cached));
     }
     let video = state
@@ -132,19 +145,43 @@ pub async fn get_video(
         .await
         .map_err(|e| internal_error_log("get_video", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
+    require_video_owner(&auth_user, video.uploader_id)?;
     state.video_detail_cache.insert(cache_key, video.clone());
 
     Ok(Json(video))
+}
+
+/// 访客模式/私有化：视频详情仅上传者本人（或管理员）可见。
+/// 他人视频一律 404 —— 不暴露"存在但无权"的信息。
+fn require_video_owner(
+    auth_user: &AuthUser,
+    uploader_id: Option<i64>,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if auth_user.is_admin || uploader_id == Some(auth_user.id) {
+        Ok(())
+    } else {
+        Err(error_response(StatusCode::NOT_FOUND, "视频不存在"))
+    }
 }
 
 /// GET /videos/{id}/variants — available transcoded resolutions for playback
 pub async fn get_video_variants(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<VideoVariantResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let id = hashid::decode_id_or_numeric(&id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
+    // 变体 URL 会暴露转码文件名，同样受归属检查约束
+    let video = state
+        .repos
+        .video
+        .find_by_id(tenant.tenant_id, id)
+        .await
+        .map_err(|e| internal_error_log("get_video_variants", &e))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
+    require_video_owner(&auth_user, video.uploader_id)?;
     let variants = state
         .repos
         .video
@@ -282,7 +319,13 @@ pub async fn burn_video(
     state
         .services
         .video
-        .burn_after_watch(auth_user.tenant_id, &auth_user.username, id)
+        .burn_after_watch(
+            auth_user.tenant_id,
+            &auth_user.username,
+            auth_user.id,
+            auth_user.is_admin,
+            id,
+        )
         .await
         .map_err(|e| match e {
             // 用户可见的校验失败（400/403/404）原样透传；其余记日志转 500
@@ -354,6 +397,7 @@ pub async fn increment_views(
 pub async fn search_videos(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     let pagination = PaginationParams::new(params.page, params.size);
@@ -376,10 +420,12 @@ pub async fn search_videos(
         }));
     }
 
+    // 访客模式/私有化：搜索仅命中自己上传的视频（管理员搜全站）
+    let owner_id = (!auth_user.is_admin).then_some(auth_user.id);
     let (results, total) = state
         .services
         .search
-        .full_text_search(tenant.tenant_id, &params.q, page - 1, size)
+        .full_text_search(tenant.tenant_id, owner_id, &params.q, page - 1, size)
         .await
         .map_err(|e| internal_error_log("search_videos", &e))?;
 
@@ -407,6 +453,7 @@ pub async fn search_videos(
 pub async fn search_suggest(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<crate::middleware::tenant::TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<Vec<String>>, (StatusCode, Json<ErrorResponse>)> {
     if params.q.len() > MAX_SEARCH_QUERY_LEN {
@@ -422,10 +469,11 @@ pub async fn search_suggest(
         return Ok(Json(Vec::new()));
     }
 
+    let owner_id = (!auth_user.is_admin).then_some(auth_user.id);
     let suggestions = state
         .services
         .search
-        .search_suggest(tenant.tenant_id, &params.q, 10)
+        .search_suggest(tenant.tenant_id, owner_id, &params.q, 10)
         .await
         .map_err(|e| internal_error_log("search_suggest", &e))?;
 

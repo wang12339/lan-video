@@ -143,7 +143,9 @@ pub fn validate_file_type(path: &std::path::Path, ext: &str) -> Result<(), Strin
         }
         "mov" => mime_type == "video/quicktime",
         "avi" => mime_type == "video/x-msvideo",
-        "mkv" => mime_type == "video/x-matroska",
+        // infer 对 EBML 容器无法区分 Matroska(.mkv) 与 WebM(.webm)，一律
+        // 报告 video/webm；两者都接受（.mkv 会被转码成 mp4）。
+        "mkv" => mime_type == "video/x-matroska" || mime_type == "video/webm",
         "webm" => mime_type == "video/webm",
         "flv" => mime_type == "video/x-flv",
         "wmv" => mime_type == "video/x-ms-wmv",
@@ -710,6 +712,23 @@ mod tests {
         assert_eq!(safe_media_path("http://evil/x", &dir), None);
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_validate_file_type_mkv_accepts_webm_mime() {
+        // EBML 头：infer 对 .mkv 会误报 video/webm，校验必须同时接受两种 MIME
+        let ebml = [
+            0x1A, 0x45, 0xDF, 0xA3, 0x93, 0x42, 0x82, 0x88, b'm', b'a', b't', b'r', b'o', b's',
+            b'k', b'a',
+        ];
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("atmos_ebml_{}.mkv", std::process::id()));
+        std::fs::write(&path, ebml).unwrap();
+        assert!(
+            validate_file_type(&path, "mkv").is_ok(),
+            "EBML/matroska 应通过 .mkv 校验"
+        );
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

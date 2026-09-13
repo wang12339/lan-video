@@ -421,6 +421,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
+  /* iPhone 刘海/灵动岛：顶栏按钮避让安全区 */
+  padding-top: calc(16px + env(safe-area-inset-top));
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
   z-index: 99999;
 }
@@ -513,6 +515,8 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
+  /* iPhone 底部手势条：操作按钮避让安全区 */
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
   background: linear-gradient(to top, rgba(0, 0, 0, 0.6), transparent);
   z-index: 99999;
 }

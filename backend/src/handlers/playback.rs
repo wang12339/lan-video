@@ -101,6 +101,26 @@ pub async fn update_playback_history(
             "播放位置不能超过视频时长",
         ));
     }
+    // H1 修复：上报进度以服务端片长为准。有服务端片长时，超过它的上报
+    // 直接拒绝（此前 99999999ms 照单全收，是"伪进度→焚毁"攻击链的一环）；
+    // 服务端片长未知（<=0）时不做此校验，但 is_at_end 会永不判片尾。
+    let server_duration_ms = state
+        .services
+        .video
+        .get_video(auth_user.tenant_id, payload.video_id)
+        .await
+        .ok()
+        .flatten()
+        .filter(|v| v.duration > 0)
+        .map(|v| v.duration.saturating_mul(1000));
+    if let Some(server_ms) = server_duration_ms {
+        if payload.duration_ms > server_ms + 1000 || payload.position_ms > server_ms + 1000 {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "播放进度超出视频实际时长",
+            ));
+        }
+    }
     // 片尾判定以服务端片长为准（防客户端谎报时长度绕过焚毁判定）。
     // 到达片尾时强制落库（绕过节流，片尾写每用户每视频仅一次），
     // 并由服务端直接焚毁——不依赖前端是否调用焚毁接口。
@@ -134,7 +154,12 @@ pub async fn update_playback_history(
         match state
             .services
             .video
-            .burn_video_record(auth_user.tenant_id, payload.video_id)
+            .burn_video_record(
+                auth_user.tenant_id,
+                auth_user.id,
+                auth_user.is_admin,
+                payload.video_id,
+            )
             .await
         {
             Ok(_) => {
@@ -180,15 +205,21 @@ pub async fn start_playback_session(
     SafeJson(payload): SafeJson<SessionRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     validate_session_request(&payload)?;
-    // 会话只对“存在且属于当前租户”的视频授予。未注册/已删除/跨租户
-    // 视频一律不建会话 —— 跨租户访问的合法通道只有分享链接(cookie)。
+    // 会话只对“存在、属于当前租户、且归当前用户所有”的视频授予。
+    // 访客模式/私有化：只能播放自己上传的视频（管理员豁免）。
+    // 未注册/已删除/跨租户/他人视频一律不建会话 —— 跨用户访问的
+    // 合法通道只有分享链接(cookie)。
     match state
         .repos
         .video
         .find_by_id(auth_user.tenant_id, payload.video_id)
         .await
     {
-        Ok(Some(_)) => {}
+        Ok(Some(v)) => {
+            if !auth_user.is_admin && v.uploader_id != Some(auth_user.id) {
+                return Err(error_response(StatusCode::NOT_FOUND, "视频不存在"));
+            }
+        }
         Ok(None) => {
             return Err(error_response(StatusCode::NOT_FOUND, "视频不存在"));
         }

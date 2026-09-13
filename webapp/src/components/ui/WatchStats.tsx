@@ -84,14 +84,14 @@ export function recordWatchTime(videoId: string, title: string, seconds: number)
 
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    } catch (e) {
+} catch (_e) {
       // QuotaExceededError: 丢弃最旧 200 条重试
-      if (e instanceof DOMException && e.name === 'QuotaExceededError' && data.records.length > 200) {
+      if (_e instanceof DOMException && _e.name === 'QuotaExceededError' && data.records.length > 200) {
         data.records = data.records.slice(-800)
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch {}
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch (_e) { void 0; }
       }
     }
-  } catch {}
+  } catch { void 0; }
 }
 
 // ─── Aggregation Utilities ────────────────────────────────────────────────────

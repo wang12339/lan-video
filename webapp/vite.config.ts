@@ -13,6 +13,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  // 哈希 Worker 内动态 import hash-wasm 需要 ES module worker（IIFE 不支持
+  // code-splitting）；现代浏览器均支持 { type: 'module' } worker。
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
@@ -36,8 +41,8 @@ export default defineConfig({
           if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) {
             return 'i18n'
           }
-          if (id.includes('node_modules/hls.js') || id.includes('node_modules/video.js')) {
-            return 'media-vendor'
+          if (id.includes('node_modules/hls.js')) {
+            return 'hls-vendor'
           }
         },
       },
@@ -64,6 +69,9 @@ export default defineConfig({
       '/share': 'http://localhost:8082',
       '/playlists': 'http://localhost:8082',
       '/comments': 'http://localhost:8082',
+      // 公共聊天室：REST + WebSocket（ws 代理需 ws:true）
+      '/chat': 'http://localhost:8082',
+      '/ws': { target: 'ws://localhost:8082', ws: true },
     },
   },
   test: {

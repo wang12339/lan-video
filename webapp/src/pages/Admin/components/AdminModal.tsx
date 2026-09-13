@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useModalEscape } from './useModalEscape'
+import { useScrollLock } from '../../../hooks/useScrollLock'
 import './AdminModal.css'
 
 interface AdminModalProps {
@@ -24,6 +25,8 @@ export default function AdminModal({
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useModalEscape(onClose)
+  // 弹窗打开期间锁背景滚动（移动端防穿透）
+  useScrollLock(true)
 
   useEffect(() => {
     const el = dialogRef.current

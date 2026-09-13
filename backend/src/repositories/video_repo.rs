@@ -535,14 +535,19 @@ impl VideoRepository {
     pub async fn find_video_by_file_hash(
         &self,
         tenant_id: i64,
+        uploader_id: i64,
         hash: &str,
     ) -> Result<Option<VideoRow>, sqlx::Error> {
+        // 私有模型（访客模式）：重复判定只看同一上传者。若按租户级判定，
+        // 用户会撞上"看不见的别人的文件"而莫名 409；且共享同一行会让
+        // 阅后即焚/删除误删他人的内容。
         sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {} FROM videos WHERE file_hash = $1 AND tenant_id = $2",
+            "SELECT {} FROM videos WHERE file_hash = $1 AND tenant_id = $2 AND uploader_id = $3",
             VIDEO_COLUMNS
         ))
         .bind(hash)
         .bind(tenant_id)
+        .bind(uploader_id)
         .fetch_optional(&self.pool)
         .await
     }

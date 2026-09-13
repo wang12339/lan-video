@@ -7,6 +7,7 @@ import { verifyEmail } from '../../api/auth'
 import { request, APIError } from '../../api/client'
 import type { AuthResponse } from '../../api/types'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import { useScrollLock } from '../../hooks/useScrollLock'
 import './AuthDialog.css'
 
 interface AuthDialogProps {
@@ -54,7 +55,7 @@ function isPasswordStrongEnough(pw: string): boolean {
 
 export default function AuthDialog({ onClose, closable = true }: AuthDialogProps) {
   const { t } = useTranslation()
-  const { login, loginWithToken, register, kickedMsg, clearKickedMsg } = useAuth()
+  const { login, loginWithToken, register, enterGuest, kickedMsg, clearKickedMsg } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const resetTokenFromUrl = searchParams.get('reset_token')
   const verifyTokenFromUrl = searchParams.get('verify_token')
@@ -141,6 +142,7 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const [guestEntering, setGuestEntering] = useState(false)
   const [verifyState, setVerifyState] = useState<'verifying' | 'ok' | 'failed'>(() =>
     mode === 'verify' ? 'verifying' : 'ok'
   )
@@ -182,7 +184,7 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   const values = { username, email, password, token: resetToken }
 
   const sanitizeUsername = (v: string) => v.replace(CONTROL_RE, '').slice(0, USERNAME_MAX)
-  const sanitizeToken = (v: string) => v.replace(/[^\w\-]/g, '').slice(0, MAX_TOKEN_LENGTH)
+  const sanitizeToken = (v: string) => v.replace(/[^\w-]/g, '').slice(0, MAX_TOKEN_LENGTH)
 
   const handleFieldChange = (field: FieldName, value: string, setter: (v: string) => void) => {
     setter(value)
@@ -252,30 +254,24 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
   }
 
   useEffect(() => {
-    // 锁定背景滚动，关闭时恢复原值。
-    // 仅锁 body 不够：安卓 WebView/夸克等浏览器 touchmove 会穿透到
-    // documentElement/整页，表现为"弹窗跟着页面一起滚动"，这里一并锁住。
-    const prevOverflow = document.body.style.overflow
-    const prevHtmlOverflow = document.documentElement.style.overflow
-    document.body.style.overflow = 'hidden'
-    document.documentElement.style.overflow = 'hidden'
-
-    // overlay 自身之外 touch 一律拦截（iOS Safari 橡皮筋也会穿透）
+    // 锁背景滚动（共享 useScrollLock：同锁 body/documentElement，移动端防穿透）
+    // + 弹窗外的 touchmove 一律拦截（iOS Safari 橡皮筋也会穿透；
+    // passive:false 才能真正 preventDefault）。
+    // 注：高度刻意不依赖 dvh（安卓工具栏弹出时 dvh 跳动会顶飞弹窗）。
     const stopTouch = (e: TouchEvent) => {
       const t = e.target as Node | null
       if (t && dialogRef.current?.contains(t)) return
       e.preventDefault()
     }
-    // passive:false 才能真正 preventDefault
     document.addEventListener('touchmove', stopTouch, { passive: false })
 
     return () => {
-      document.body.style.overflow = prevOverflow
-      document.documentElement.style.overflow = prevHtmlOverflow
       document.removeEventListener('touchmove', stopTouch)
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current)
     }
   }, [])
+
+  useScrollLock(true)
 
   // 焦点陷阱
   useFocusTrap(dialogRef, true)
@@ -560,6 +556,20 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
           <div className="auth-links">
             <button type="button" className="auth-link" onClick={() => switchMode('forgot')}>
               {t('auth.forgotLink')}
+            </button>
+            <button
+              type="button"
+              className="auth-link"
+              disabled={guestEntering}
+              onClick={async () => {
+                setGuestEntering(true)
+                const ok = await enterGuest()
+                setGuestEntering(false)
+                if (ok) onClose?.()
+                else setError(t('home.guestEnterFailed'))
+              }}
+            >
+              {guestEntering ? t('home.guestEntering') : t('auth.guestEnter')}
             </button>
           </div>
         )}

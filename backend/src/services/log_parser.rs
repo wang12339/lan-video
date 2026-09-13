@@ -76,7 +76,7 @@ pub fn parse_log_file(path: &Path, needed: usize) -> Vec<LogEntry> {
     entries
 }
 
-/// Parse a single JSON log line into a LogEntry, applying static-resource filtering.
+/// Parse a single JSON log line into a LogEntry.
 fn parse_log_line(line: &str) -> Option<LogEntry> {
     let parsed: serde_json::Value = serde_json::from_str(line).ok()?;
 
@@ -94,15 +94,6 @@ fn parse_log_line(line: &str) -> Option<LogEntry> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-
-    // Filter out static resource requests
-    let path = fields
-        .and_then(|f| f.get("path"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if path.starts_with("/webapp/") || path.starts_with("/media/") || path == "/health" {
-        return None;
-    }
 
     let timestamp = parsed
         .get("timestamp")
@@ -145,6 +136,12 @@ fn parse_log_line(line: &str) -> Option<LogEntry> {
         request_id,
         user: fields
             .and_then(|f| f.get("user"))
+            .or_else(|| fields.and_then(|f| f.get("username")))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        client_ip: fields
+            .and_then(|f| f.get("client_ip"))
+            .or_else(|| fields.and_then(|f| f.get("ip")))
             .and_then(|v| v.as_str())
             .map(String::from),
         video_id: fields

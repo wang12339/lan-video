@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::info;
 use uuid::Uuid;
@@ -10,9 +10,11 @@ use crate::config::AppConfig;
 use crate::repositories::video_repo::VideoRepository;
 use crate::util::error::ServiceError;
 
-pub mod sweeper;
+pub mod session;
 pub mod upload;
 mod validate;
+
+pub use session::{UploadAppendError, UploadAppendOutcome};
 
 use validate::{extract_duration, sweep_upload_temps_blocking};
 pub use validate::{
@@ -40,11 +42,24 @@ fn thumbnail_semaphore() -> &'static tokio::sync::Semaphore {
 pub struct MediaService {
     repo: VideoRepository,
     config: AppConfig,
+    /// 分片续传会话状态（按 tenant+uploader+hash 隔离）：
+    /// 保存增量哈希器与已接收字节数，避免 finalize 时对整文件二次全量读取。
+    pub(super) upload_slots:
+        Arc<dashmap::DashMap<String, Arc<tokio::sync::Mutex<session::UploadSlot>>>>,
+    /// 限制并发分片追加/finalize 操作（磁盘写入 + fsync）。
+    pub(super) upload_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl MediaService {
     pub fn new(repo: VideoRepository, config: AppConfig) -> Self {
-        let svc = Self { repo, config };
+        let svc = Self {
+            repo,
+            config,
+            upload_slots: Arc::new(dashmap::DashMap::new()),
+            upload_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                session::MAX_CONCURRENT_UPLOAD_OPS,
+            )),
+        };
         svc.start_upload_temp_sweeper();
         svc
     }
@@ -72,6 +87,7 @@ impl MediaService {
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     interval.tick().await;
+                    svc.cleanup_upload_slots();
                     match svc.sweep_stale_upload_temps().await {
                         Ok(0) => tracing::debug!("upload temp sweep: nothing to clean"),
                         Ok(n) => {
@@ -92,13 +108,25 @@ impl MediaService {
     /// 刷新 mtime，因此不会误删。幂等，可重复执行。返回删除的文件数。
     pub async fn sweep_stale_upload_temps(&self) -> Result<usize, ServiceError> {
         let root = self.config.media_root.clone();
-        tokio::task::spawn_blocking(move || sweep_upload_temps_blocking(&root, UPLOAD_TEMP_TTL))
-            .await
-            .map_err(|e| ServiceError::Internal(format!("临时文件清理任务失败: {}", e)))?
-            .map_err(ServiceError::Internal)
+        tokio::task::spawn_blocking(move || {
+            let mut removed = sweep_upload_temps_blocking(&root, UPLOAD_TEMP_TTL)?;
+            // 聊天媒体目录（chat/）的中断上传临时文件同样兜底清理
+            let chat_dir = root.join("chat");
+            if chat_dir.is_dir() {
+                if let Ok(n) = sweep_upload_temps_blocking(&chat_dir, UPLOAD_TEMP_TTL) {
+                    removed += n;
+                }
+            }
+            Ok::<usize, String>(removed)
+        })
+        .await
+        .map_err(|e| ServiceError::Internal(format!("临时文件清理任务失败: {}", e)))?
+        .map_err(ServiceError::Internal)
     }
 
-    /// 流式上传：从临时文件读取，计算 SHA-256，移动到最终位置
+    /// 流式上传：从临时文件读取，计算 SHA-256，移动到最终位置。
+    ///
+    /// 任何失败都会清理临时文件（multipart 整文件上传等调用方沿用此语义）。
     pub async fn upload_video_file(
         &self,
         tenant_id: i64,
@@ -107,6 +135,62 @@ impl MediaService {
         category: &str,
         uploader_id: i64,
         precomputed: Option<(i64, String)>,
+    ) -> Result<i64, ServiceError> {
+        self.upload_video_file_inner(
+            tenant_id,
+            file_name,
+            temp_path,
+            category,
+            uploader_id,
+            precomputed,
+            false,
+        )
+        .await
+    }
+
+    /// finalize 专用入口：瞬时错误（Internal：DB/磁盘抖动）时保留临时文件与
+    /// 哈希状态，允许客户端用空 body + offset=total 重试 finalize，而不是整个
+    /// 文件重传。永久错误（参数/重复/配额/类型校验）仍会清理临时文件。
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn upload_video_file_for_finalize(
+        &self,
+        tenant_id: i64,
+        file_name: &str,
+        temp_path: &std::path::Path,
+        category: &str,
+        uploader_id: i64,
+        precomputed: Option<(i64, String)>,
+    ) -> Result<i64, ServiceError> {
+        self.upload_video_file_inner(
+            tenant_id,
+            file_name,
+            temp_path,
+            category,
+            uploader_id,
+            precomputed,
+            true,
+        )
+        .await
+    }
+
+    /// 上传失败时的临时文件清理：仅在 `keep` 为 false 时删除。
+    /// 瞬时错误保留临时文件，由 24h 清扫任务兜底。
+    async fn cleanup_upload_temp(path: &Path, keep: bool) {
+        if !keep {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_video_file_inner(
+        &self,
+        tenant_id: i64,
+        file_name: &str,
+        temp_path: &std::path::Path,
+        category: &str,
+        uploader_id: i64,
+        precomputed: Option<(i64, String)>,
+        keep_temp_on_internal_error: bool,
     ) -> Result<i64, ServiceError> {
         // SECURITY (L-03): 上传入口（multipart 字段 / x-upload-category 头）此前
         // 无 category 校验。在读取文件前快速失败——50GB 文件不应为错误分类
@@ -153,8 +237,9 @@ impl MediaService {
             let used = match self.repo.get_storage_used(uploader_id).await {
                 Ok(u) => u,
                 Err(e) => {
-                    // DB failure: clean up the temp file before propagating.
-                    let _ = tokio::fs::remove_file(temp_path).await;
+                    // DB failure: clean up the temp file before propagating,
+                    // unless the caller wants to retry finalize.
+                    Self::cleanup_upload_temp(temp_path, keep_temp_on_internal_error).await;
                     return Err(ServiceError::Internal(e.to_string()));
                 }
             };
@@ -164,15 +249,19 @@ impl MediaService {
             }
         }
 
-        // Check for duplicates using server-computed hash
-        match self.repo.find_video_by_file_hash(tenant_id, &hash).await {
+        // Check for duplicates using server-computed hash（按上传者隔离）
+        match self
+            .repo
+            .find_video_by_file_hash(tenant_id, uploader_id, &hash)
+            .await
+        {
             Ok(Some(_)) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
                 return Err(ServiceError::Duplicate("文件已存在".into()));
             }
             Ok(None) => {}
             Err(e) => {
-                let _ = tokio::fs::remove_file(temp_path).await;
+                Self::cleanup_upload_temp(temp_path, keep_temp_on_internal_error).await;
                 return Err(ServiceError::Internal(e.to_string()));
             }
         }
@@ -230,13 +319,13 @@ impl MediaService {
         {
             Ok(f) => f,
             Err(e) => {
-                let _ = tokio::fs::remove_file(&temp_path).await;
+                Self::cleanup_upload_temp(&temp_path, keep_temp_on_internal_error).await;
                 return Err(ServiceError::Internal(format!("打开临时文件失败: {}", e)));
             }
         };
         if let Err(e) = sync_file.sync_all().await {
             drop(sync_file);
-            let _ = tokio::fs::remove_file(&temp_path).await;
+            Self::cleanup_upload_temp(&temp_path, keep_temp_on_internal_error).await;
             return Err(ServiceError::Internal(format!("同步临时文件失败: {}", e)));
         }
         drop(sync_file);
@@ -261,8 +350,9 @@ impl MediaService {
         let dest_path = self.config.media_root.join(&dest_file_name);
         if let Err(e) = tokio::fs::rename(&temp_path, &dest_path).await {
             // rename failed — the upload still lives at the temp path; clean
-            // it up so we don't leak the temp file.
-            let _ = tokio::fs::remove_file(&temp_path).await;
+            // it up (unless the caller wants to retry finalize) so we don't
+            // leak the temp file.
+            Self::cleanup_upload_temp(&temp_path, keep_temp_on_internal_error).await;
             return Err(ServiceError::Internal(format!("移动文件失败: {}", e)));
         }
 
@@ -355,10 +445,14 @@ impl MediaService {
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
         let video = video.ok_or_else(|| ServiceError::Internal("not found".to_string()))?;
 
-        // Only generate for local video files
-        if !video.source_type.starts_with("local_video") {
+        // Only generate for local videos and local images
+        if !video.source_type.starts_with("local_video")
+            && !video.source_type.starts_with("local_image")
+        {
             return Ok(false);
         }
+
+        let is_image = video.source_type.starts_with("local_image");
 
         // Skip if cover already exists on disk
         if let Some(cover_url) = &video.cover_url {
@@ -385,6 +479,21 @@ impl MediaService {
                                 return Ok(false); // Both exist, nothing to do
                             }
                         }
+                    }
+                }
+            }
+        } else if is_image && video.thumb_url.is_some() {
+            // 图片没有封面帧概念：只要网格缩略图已存在就无事可做
+            if let Some(thumb_url) = &video.thumb_url {
+                if let Some(thumb_path) = safe_media_path(thumb_url, &self.config.media_root) {
+                    let thumb_exists = tokio::task::spawn_blocking({
+                        let tp = thumb_path.clone();
+                        move || tp.exists()
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if thumb_exists {
+                        return Ok(false);
                     }
                 }
             }
@@ -422,6 +531,60 @@ impl MediaService {
                 ))
             }
         };
+
+        // ── 图片分支：stream_url 就是原图本身 ──
+        // 只生成网格缩略图（最长边≤640、保持宽高比、只缩不放），
+        // 不做封面帧提取。移动端网格因此不再加载全尺寸原图。
+        if is_image {
+            let thumb_file_name = format!("thumb_{}.jpg", video_id);
+            let thumb_path = self.config.media_root.join(&thumb_file_name);
+            let thumb_path_str = thumb_path.to_string_lossy().to_string();
+            let image_path_str = video_path.to_string_lossy().to_string();
+
+            let output = tokio::time::timeout(
+                Duration::from_secs(THUMBNAIL_FFMPEG_TIMEOUT_SECS),
+                tokio::process::Command::new("ffmpeg")
+                    .kill_on_drop(true)
+                    .arg("-y")
+                    .arg("-i")
+                    .arg(&image_path_str)
+                    .arg("-vframes")
+                    .arg("1")
+                    .arg("-vf")
+                    // 缩到宽 640 内（保持宽高比，-2 保证偶数），小图不放大
+                    .arg("scale=min(640\\,iw):-2")
+                    .arg("-q:v")
+                    .arg("5")
+                    .arg(&thumb_path_str)
+                    .output(),
+            )
+            .await
+            .map_err(|_| {
+                ServiceError::Internal(format!(
+                    "ffmpeg thumbnail generation timed out after {}s",
+                    THUMBNAIL_FFMPEG_TIMEOUT_SECS
+                ))
+            })?
+            .map_err(|e| ServiceError::Internal(format!("ffmpeg not found: {}", e)))?;
+
+            if output.status.success() {
+                let thumb_url = format!("/media/{}", thumb_file_name);
+                self.repo
+                    .update_thumb_url(video_id, &thumb_url)
+                    .await
+                    .map_err(|e| ServiceError::Internal(e.to_string()))?;
+                info!(
+                    "Generated image thumbnail for video {}: {}",
+                    video_id, thumb_url
+                );
+                return Ok(true);
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ServiceError::Internal(format!(
+                "ffmpeg image thumbnail failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
 
         // Extract frame at 1 second using ffmpeg
         let cover_file_name = format!("cover_{}.jpg", video_id);
@@ -477,7 +640,7 @@ impl MediaService {
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-        // Generate a smaller thumbnail (320x180) for grid use
+        // Generate a smaller thumbnail (640x360，适配 @2x/@3x 网格) for grid use
         let thumb_file_name = format!("thumb_{}.jpg", video_id);
         let thumb_path = self.config.media_root.join(&thumb_file_name);
         let thumb_path_str = thumb_path.to_string_lossy().to_string();
@@ -490,7 +653,7 @@ impl MediaService {
                 .arg("-i")
                 .arg(&cover_clone)
                 .arg("-vf")
-                .arg("scale=320:180")
+                .arg("scale=640:360")
                 .arg("-q:v")
                 .arg("5")
                 .arg(&thumb_path_str)

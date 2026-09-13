@@ -46,6 +46,7 @@ impl RecommendationService {
         &self,
         tenant_id: i64,
         username: &str,
+        owner_id: Option<i64>,
         exclude_video_id: i64,
         limit: i64,
     ) -> Result<Vec<VideoRecommendation>, ServiceError> {
@@ -62,12 +63,14 @@ impl RecommendationService {
             INNER JOIN playback_history ph ON v.id = ph.video_id
             WHERE ph.username = $1 AND ph.video_id != $2 AND v.category IS NOT NULL
               AND ph.tenant_id = $3
+              AND ($4::bigint IS NULL OR v.uploader_id = $4)
             LIMIT 10
             "#,
         )
         .bind(username)
         .bind(exclude_video_id)
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取观看历史失败: {}", e)))?;
@@ -75,7 +78,9 @@ impl RecommendationService {
         let watched_categories: Vec<String> = watched_categories.into_iter().flatten().collect();
 
         if watched_categories.is_empty() {
-            let (items, _) = self.get_trending_videos(tenant_id, 0, limit).await?;
+            let (items, _) = self
+                .get_trending_videos(tenant_id, owner_id, 0, limit)
+                .await?;
             return Ok(items);
         }
 
@@ -105,6 +110,7 @@ impl RecommendationService {
             FROM videos v
             WHERE v.id != $1
               AND v.tenant_id = $5
+              AND ($6::bigint IS NULL OR v.uploader_id = $6)
               AND v.category = ANY($2)
               AND v.source_type = 'local_video'
               AND NOT EXISTS (
@@ -120,6 +126,7 @@ impl RecommendationService {
         .bind(username)
         .bind(limit)
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
@@ -127,7 +134,9 @@ impl RecommendationService {
         // Cold/edge case: user has watched everything in their categories.
         // Fall back to trending so the feed is never empty.
         if preferred_rows.is_empty() {
-            let (items, _) = self.get_trending_videos(tenant_id, 0, limit).await?;
+            let (items, _) = self
+                .get_trending_videos(tenant_id, owner_id, 0, limit)
+                .await?;
             return Ok(items);
         }
 
@@ -146,6 +155,7 @@ impl RecommendationService {
                 FROM videos v
                 WHERE v.id != $1
                   AND v.tenant_id = $6
+                  AND ($7::bigint IS NULL OR v.uploader_id = $7)
                   AND NOT (v.category = ANY($2))
                   AND NOT (v.id = ANY($3))
                   AND v.source_type = 'local_video'
@@ -163,6 +173,7 @@ impl RecommendationService {
             .bind(username)
             .bind(remaining)
             .bind(tenant_id)
+            .bind(owner_id)
             .fetch_all(pool)
             .await
             .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
@@ -200,6 +211,7 @@ impl RecommendationService {
     pub async fn get_similar_videos(
         &self,
         tenant_id: i64,
+        owner_id: Option<i64>,
         video_id: i64,
         limit: i64,
     ) -> Result<Vec<VideoRecommendation>, ServiceError> {
@@ -222,7 +234,8 @@ impl RecommendationService {
             r#"
             SELECT id, title, category, thumb_url
             FROM videos
-            WHERE id != $1 AND tenant_id = $4 AND ($2::varchar IS NULL OR category = $2)
+            WHERE id != $1 AND tenant_id = $4 AND ($5::bigint IS NULL OR uploader_id = $5)
+              AND ($2::varchar IS NULL OR category = $2)
             ORDER BY views DESC
             LIMIT $3
             "#,
@@ -231,6 +244,7 @@ impl RecommendationService {
         .bind(&category)
         .bind(limit)
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取相似视频失败: {}", e)))?;
@@ -253,6 +267,7 @@ impl RecommendationService {
     pub async fn get_trending_videos(
         &self,
         tenant_id: i64,
+        owner_id: Option<i64>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<VideoRecommendation>, i64), ServiceError> {
@@ -260,9 +275,10 @@ impl RecommendationService {
         let pool = self.video_repo.pool();
 
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM videos WHERE tenant_id = $1 AND trending_score > 0 AND source_type = 'local_video'",
+            "SELECT COUNT(*) FROM videos WHERE tenant_id = $1 AND ($2::bigint IS NULL OR uploader_id = $2) AND trending_score > 0 AND source_type = 'local_video'",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_one(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取热门视频总数失败: {}", e)))?;
@@ -272,6 +288,7 @@ impl RecommendationService {
             SELECT id, title, category, thumb_url, trending_score
             FROM videos
             WHERE tenant_id = $3
+              AND ($4::bigint IS NULL OR uploader_id = $4)
               AND trending_score > 0
               AND source_type = 'local_video'
             ORDER BY trending_score DESC
@@ -281,6 +298,7 @@ impl RecommendationService {
         .bind(limit)
         .bind(offset)
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取热门视频失败: {}", e)))?;
@@ -303,6 +321,7 @@ impl RecommendationService {
     pub async fn get_recent_videos(
         &self,
         tenant_id: i64,
+        owner_id: Option<i64>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<VideoRecommendation>, i64), ServiceError> {
@@ -310,9 +329,10 @@ impl RecommendationService {
         let pool = self.video_repo.pool();
 
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM videos WHERE tenant_id = $1 AND source_type = 'local_video'",
+            "SELECT COUNT(*) FROM videos WHERE tenant_id = $1 AND ($2::bigint IS NULL OR uploader_id = $2) AND source_type = 'local_video'",
         )
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_one(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取最新视频总数失败: {}", e)))?;
@@ -321,7 +341,7 @@ impl RecommendationService {
             r#"
             SELECT id, title, category, thumb_url
             FROM videos
-            WHERE tenant_id = $3 AND source_type = 'local_video'
+            WHERE tenant_id = $3 AND ($4::bigint IS NULL OR uploader_id = $4) AND source_type = 'local_video'
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
             "#,
@@ -329,6 +349,7 @@ impl RecommendationService {
         .bind(limit)
         .bind(offset)
         .bind(tenant_id)
+        .bind(owner_id)
         .fetch_all(pool)
         .await
         .map_err(|e| ServiceError::internal(format!("获取最新视频失败: {}", e)))?;

@@ -857,16 +857,29 @@ async fn test_csrf_guard_blocks_cookie_authenticated_mutations() {
         "cookie mutation without CSRF header must be blocked"
     );
 
-    // With the X-Requested-With header it is allowed
+    // With matching double-submit (csrf cookie + header) it is allowed
+    // （builder.header 是追加语义：token 与 csrf_token 必须在同一个 Cookie 头里，
+    //  extract_csrf_from_cookie 只解析第一个 Cookie 头）
     let req = Request::builder()
         .method(Method::POST)
         .uri("/auth/logout")
-        .header(header::COOKIE, format!("token={}", token))
-        .header("x-requested-with", "XMLHttpRequest")
+        .header(header::COOKIE, format!("token={}; csrf_token=abc", token))
+        .header("x-csrf-token", "abc")
         .body(Body::empty())
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+
+    // Mismatched double-submit is rejected
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/logout")
+        .header(header::COOKIE, format!("token={}; csrf_token=abc", token))
+        .header("x-csrf-token", "different")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
@@ -895,6 +908,7 @@ async fn test_videos_list_pagination_bounds() {
     let app = build_test_app().await;
 
     // Negative page / zero size are clamped instead of erroring
+    // （/videos 是 0 基分页：负 page clamp 到 0）
     let (status, body) = send_json(
         &app,
         Method::GET,
@@ -904,7 +918,7 @@ async fn test_videos_list_pagination_bounds() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["page"], json!(1), "body: {}", body);
+    assert_eq!(body["page"], json!(0), "body: {}", body);
     assert_eq!(body["size"], json!(1));
     assert!(body["total"].is_number());
 
@@ -979,8 +993,9 @@ async fn test_video_detail_and_variants() {
         return;
     };
     let state = test_app_state().await;
-    let (username, _user_id, token) = create_viewer_with_token(&state, "detail_ok").await;
-    let video_id = create_test_video(&state, "detail_ok").await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "detail_ok").await;
+    // 访客模式/私有化：视频归属上传者，详情/变体仅所有者可见
+    let video_id = create_test_video_owned_by(&state, "detail_ok", user_id).await;
     let app = build_test_app().await;
 
     let (status, body) = send_json(
@@ -1175,7 +1190,8 @@ async fn test_video_search_finds_created_video() {
         return;
     };
     let state = test_app_state().await;
-    let (username, _user_id, token) = create_viewer_with_token(&state, "search_hit").await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "search_hit").await;
+    // 访客模式/私有化：搜索只命中自己上传的视频
     let unique = unique_username("searchhit");
     let title = format!("Searchable Title {}", unique);
     let video_id = state
@@ -1188,7 +1204,7 @@ async fn test_video_search_finds_created_video() {
             Some("searchtest"),
             &format!("https://example.com/{}.mp4", unique),
             None,
-            None,
+            Some(user_id),
         )
         .await
         .expect("create video");
@@ -1221,8 +1237,9 @@ async fn test_increment_views_endpoint() {
         return;
     };
     let state = test_app_state().await;
-    let (username, _user_id, token) = create_viewer_with_token(&state, "views").await;
-    let video_id = create_test_video(&state, "views").await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "views").await;
+    // 访客模式/私有化：详情仅所有者可见，views 断言需读自己的视频
+    let video_id = create_test_video_owned_by(&state, "views", user_id).await;
     let app = build_test_app().await;
 
     let (status, body) = send_json(
@@ -1367,8 +1384,9 @@ async fn test_playback_session_endpoints() {
         return;
     };
     let state = test_app_state().await;
-    let (username, _user_id, token) = create_viewer_with_token(&state, "session").await;
-    let video_id = create_test_video(&state, "session").await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "session").await;
+    // 访客模式/私有化：只能对自己上传的视频建播放会话
+    let video_id = create_test_video_owned_by(&state, "session", user_id).await;
     let app = build_test_app().await;
 
     // video_id <= 0 → 400
@@ -2664,6 +2682,7 @@ async fn test_admin_add_external_video_via_http() {
     assert_eq!(status, StatusCode::CREATED, "body: {}", body);
     let video_id = json_id(&body["id"]);
 
+    // 访客模式/私有化：非所有者不可见他人视频（404），上传者本人可见
     let (status, body) = send_json(
         &app,
         Method::GET,
@@ -2672,7 +2691,17 @@ async fn test_admin_add_external_video_via_http() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NOT_FOUND, "body: {}", body);
+
+    let (status, body) = send_json(
+        &app,
+        Method::GET,
+        &format!("/videos/{}", video_id),
+        Some(&admin_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {}", body);
     assert_eq!(body["title"], json!(title));
 
     cleanup_test_video(state.repos.video.pool(), video_id).await;

@@ -58,6 +58,27 @@ export async function register(username: string, password: string): Promise<Auth
 }
 
 /**
+ * 进入访客模式（匿名会话）
+ *
+ * 调用 POST /auth/guest 创建匿名访客影子账号，token 由后端以 HttpOnly
+ * cookie 下发。访客与登录用户同权限层，但只能看到/播放自己上传的内容；
+ * 以后注册或登录真实账号时，访客期间上传的内容会自动合并。
+ *
+ * 幂等性由调用方保证：先 getUserInfo()，仅在 401 时才调用本接口。
+ * @throws {APIError} IP 限速（429）或服务端错误时抛出
+ */
+export async function enterGuestMode(): Promise<AuthResponse> {
+  const res = handleAuthResponse(
+    await request<AuthResponse>('/auth/guest', {
+      method: 'POST',
+      body: {},
+      auth: false,
+    })
+  );
+  return res;
+}
+
+/**
  * 用户登出
  * 清除本地 token 和会话缓存，即使服务端请求失败也会执行本地清理。
  * 返回服务端登出是否真正成功——失败（如老会话缺 csrf cookie 被 403）时

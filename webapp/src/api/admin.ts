@@ -14,6 +14,8 @@ export interface AdminUser {
   approved: boolean;
   createdAt: string;
   hasActiveToken: boolean;
+  /** 访客影子账号（访客模式），待真实账号认证后自动合并删除 */
+  isGuest?: boolean;
 }
 
 export interface AdminVideo {

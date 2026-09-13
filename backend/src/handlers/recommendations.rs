@@ -92,10 +92,12 @@ pub async fn get_recommendations(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // 访客模式/私有化：推荐只来自自己上传的视频
+    let owner_id = Some(auth_user.id);
     let recommendations = state
         .services
         .recommendation
-        .get_recommendations(auth_user.tenant_id, &auth_user.username, 0, 20)
+        .get_recommendations(auth_user.tenant_id, &auth_user.username, owner_id, 0, 20)
         .await
         .map_err(|e| e.into_tuple())?;
 
@@ -116,17 +118,20 @@ pub async fn get_recommendations(
 pub async fn get_similar_videos(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(video_id): Path<String>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = hashid::decode_id_or_numeric(&video_id)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频ID"))?;
 
-    let cache_key = format!("similar:{}:{}", tenant.tenant_id, video_id);
+    // 访客模式/私有化：相似推荐同样只来自自己的视频；缓存键带 owner
+    let owner_id = Some(auth_user.id);
+    let cache_key = format!("similar:{}:{}:{}", tenant.tenant_id, auth_user.id, video_id);
     let (recommendations, _total) = get_cached_recommendations(&state, &cache_key, || async {
         let items = state
             .services
             .recommendation
-            .get_similar_videos(tenant.tenant_id, video_id, 10)
+            .get_similar_videos(tenant.tenant_id, owner_id, video_id, 10)
             .await?;
         let count = items.len() as i64;
         Ok((items, count))
@@ -150,15 +155,21 @@ pub async fn get_similar_videos(
 pub async fn get_trending_videos(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<PageParams>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (offset, limit) = params.offset_limit();
-    let cache_key = format!("trending:{}:{}:{}", tenant.tenant_id, offset, limit);
+    // 访客模式/私有化：热门榜只统计自己上传的视频
+    let owner_id = Some(auth_user.id);
+    let cache_key = format!(
+        "trending:{}:{}:{}:{}",
+        tenant.tenant_id, auth_user.id, offset, limit
+    );
     let (recommendations, total) = get_cached_recommendations(&state, &cache_key, || {
         state
             .services
             .recommendation
-            .get_trending_videos(tenant.tenant_id, offset, limit)
+            .get_trending_videos(tenant.tenant_id, owner_id, offset, limit)
     })
     .await?;
 
@@ -179,15 +190,21 @@ pub async fn get_trending_videos(
 pub async fn get_recent_videos(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<TenantContext>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<PageParams>,
 ) -> Result<Json<RecommendationResponse>, (StatusCode, Json<ErrorResponse>)> {
     let (offset, limit) = params.offset_limit();
-    let cache_key = format!("recent:{}:{}:{}", tenant.tenant_id, offset, limit);
+    // 访客模式/私有化：最新上传只看自己的
+    let owner_id = Some(auth_user.id);
+    let cache_key = format!(
+        "recent:{}:{}:{}:{}",
+        tenant.tenant_id, auth_user.id, offset, limit
+    );
     let (recommendations, total) = get_cached_recommendations(&state, &cache_key, || {
         state
             .services
             .recommendation
-            .get_recent_videos(tenant.tenant_id, offset, limit)
+            .get_recent_videos(tenant.tenant_id, owner_id, offset, limit)
     })
     .await?;
 

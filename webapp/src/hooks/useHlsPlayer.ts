@@ -46,7 +46,9 @@ let hlsLoadPromise: Promise<typeof Hls> | null = null
 async function loadHls(): Promise<typeof Hls> {
   if (hlsLoadPromise) return hlsLoadPromise
 
-  hlsLoadPromise = import('hls.js')
+  // 用 light 构建：比完整版少 EME( DRM)/字幕/备用音轨等特性，
+  // 体积明显更小（移动网络首播更快的开始播放）。类型与完整版一致。
+  hlsLoadPromise = import('hls.js/light')
     .then((m) => m.default as typeof Hls)
     .catch((err) => {
       // Reset so the next attempt can retry.

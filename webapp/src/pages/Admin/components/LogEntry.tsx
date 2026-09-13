@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LogEntry as LogEntryType } from '../../../api/logs'
-import { TYPE_STYLES, TYPE_ICONS } from '../utils/logFormatter'
+import { TYPE_STYLES, TYPE_ICONS, displayUserName } from '../utils/logFormatter'
 
 interface LogEntryProps {
   entry: LogEntryType
@@ -28,6 +28,24 @@ function LogEntry({ entry, formatted, nodeKey, isExpanded, onToggle }: LogEntryP
       </div>
       {isExpanded && (
         <div className="a-node-details">
+          {entry.level && (
+            <div className="a-node-detail">
+              <span className="a-detail-key">{t('admin.logs.level')}</span>
+              <span className="a-detail-value">{entry.level}</span>
+            </div>
+          )}
+          {entry.user && (
+            <div className="a-node-detail">
+              <span className="a-detail-key">{t('admin.logs.user')}</span>
+              <span className="a-detail-value">{displayUserName(entry.user, t)}</span>
+            </div>
+          )}
+          {entry.message && (
+            <div className="a-node-detail">
+              <span className="a-detail-key">{t('admin.logs.message')}</span>
+              <span className="a-detail-value">{entry.message}</span>
+            </div>
+          )}
           {entry.path && (
             <div className="a-node-detail">
               <span className="a-detail-key">{t('admin.logs.path')}</span>

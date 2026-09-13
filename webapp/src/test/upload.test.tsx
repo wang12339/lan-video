@@ -27,7 +27,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 // ── Imports after mock setup ───────────────────────────────────────────────────
 
-import { checkSession } from '../api'
+import { APIError, checkSession } from '../api'
 import { getUploadStatus, uploadResumeChunk } from '../api/videos'
 
 const mockedCheckSession = vi.mocked(checkSession)
@@ -421,7 +421,30 @@ describe('Upload 组件', () => {
       })
 
       await waitFor(() => {
-        expect(screen.getByText(/上传成功/)).toBeInTheDocument()
+        expect(screen.getByText('✅ 上传成功')).toBeInTheDocument()
+      })
+    })
+
+    it('上传完成后文件行应显示成功与查看按钮（不得停留在计算哈希）', async () => {
+      mockedUploadResumeChunk.mockResolvedValue({ received: 1024, id: 'vid-1' })
+
+      renderUpload()
+      const input = getFileInput()
+      const file = makeFile('test.mp4', 1024, 'video/mp4')
+
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } })
+      })
+
+      const startBtn = screen.getByRole('button', { name: /上传 1 个文件/i })
+      await act(async () => {
+        fireEvent.click(startBtn)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText('✅ 上传成功')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
+        expect(screen.queryByText('计算哈希...')).not.toBeInTheDocument()
       })
     })
 
@@ -1156,6 +1179,92 @@ describe('Upload 组件', () => {
       // 分类下拉框应禁用
       const catSelect = screen.getByRole('combobox', { name: /test.mp4.*分类/i })
       expect(catSelect).toBeDisabled()
+    })
+  })
+
+  // ── 7. 续传协议 ──────────────────────────────────────────────────────────────
+
+  describe('续传协议', () => {
+    it('预检命中重复（exists）时应直接完成且不传输任何分片', async () => {
+      mockedGetUploadStatus.mockResolvedValue({ received: 0, exists: true, existing_id: 42 })
+
+      renderUpload()
+      const input = getFileInput()
+      const file = makeFile('test.mp4', 1024, 'video/mp4')
+
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } })
+      })
+
+      const startBtn = screen.getByRole('button', { name: /上传 1 个文件/i })
+      await act(async () => {
+        fireEvent.click(startBtn)
+      })
+
+      await waitFor(() => {
+        expect(screen.getAllByText(/上传成功/).length).toBeGreaterThan(0)
+      })
+      expect(mockedUploadResumeChunk).not.toHaveBeenCalled()
+      expect(mockedGetUploadStatus).toHaveBeenCalledWith(expect.any(String), 1024)
+    })
+
+    it('预检配额超限（quota_exceeded）时应直接失败且不传输分片', async () => {
+      mockedGetUploadStatus.mockRejectedValue(
+        new APIError('存储配额已用尽', 507, 'quota_exceeded'),
+      )
+
+      renderUpload()
+      const input = getFileInput()
+      const file = makeFile('test.mp4', 1024, 'video/mp4')
+
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } })
+      })
+
+      const startBtn = screen.getByRole('button', { name: /上传 1 个文件/i })
+      await act(async () => {
+        fireEvent.click(startBtn)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText(/存储配额已用尽/)).toBeInTheDocument()
+      })
+      expect(mockedUploadResumeChunk).not.toHaveBeenCalled()
+    })
+
+    it('offset_mismatch 时应按服务端偏移重新切片并最终完成', async () => {
+      mockedGetUploadStatus.mockResolvedValue({ received: 128, exists: false })
+
+      // 第一次调用返回偏移不一致（服务端在 0），第二次成功
+      mockedUploadResumeChunk
+        .mockRejectedValueOnce(
+          new APIError('上传偏移不一致', 409, 'offset_mismatch', { received: 0 }),
+        )
+        .mockResolvedValueOnce({ received: 1024, id: 7 })
+
+      renderUpload()
+      const input = getFileInput()
+      const file = makeFile('test.mp4', 1024, 'video/mp4')
+
+      await act(async () => {
+        fireEvent.change(input, { target: { files: [file] } })
+      })
+
+      const startBtn = screen.getByRole('button', { name: /上传 1 个文件/i })
+      await act(async () => {
+        fireEvent.click(startBtn)
+      })
+
+      await waitFor(() => {
+        expect(screen.getAllByText(/上传成功/).length).toBeGreaterThan(0)
+      })
+      // 第一次以预检偏移 128 发起，第二次以服务端纠正后的 0 重发
+      expect(mockedUploadResumeChunk).toHaveBeenNthCalledWith(
+        1, expect.any(String), 'test.mp4', 1024, 'all', expect.anything(), 128,
+      )
+      expect(mockedUploadResumeChunk).toHaveBeenNthCalledWith(
+        2, expect.any(String), 'test.mp4', 1024, 'all', expect.anything(), 0,
+      )
     })
   })
 })

@@ -17,6 +17,7 @@ export default function Upload() {
     dragOver, uploading, addFiles,
     startUpload, cancelUpload,
     handleDrop, handleDragEnter, handleDragLeave,
+    resumeNotice, dismissResumeNotice,
   } = useUploadManager()
 
   const removeFile = useCallback((idx: number) => {
@@ -49,6 +50,15 @@ export default function Upload() {
         <h1>{t('upload.title')}</h1>
         <p>{i18n.t('upload.formatHint')}</p>
       </div>
+
+      {resumeNotice > 0 && (
+        <div className="upload-resume-notice" role="status">
+          <span>{t('upload.resumeNotice', { count: resumeNotice })}</span>
+          <button type="button" onClick={dismissResumeNotice}>
+            {t('upload.resumeNoticeDismiss')}
+          </button>
+        </div>
+      )}
 
       <DropZone
         dragOver={dragOver}

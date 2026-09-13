@@ -10,6 +10,13 @@ use std::fmt::Display;
 #[derive(Serialize, Debug)]
 pub struct ErrorResponse {
     pub error: String,
+    /// 机器可读的错误码（如 `duplicate` / `quota_exceeded` / `offset_mismatch`）。
+    /// 前端据此分支处理，避免依赖本地化文案匹配。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// 附加结构化数据（如 `{ "received": 123 }`，供断点续传偏移纠正使用）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// Helper to produce a consistent JSON error body across all handlers.
@@ -18,7 +25,47 @@ pub fn error_response(
     status: StatusCode,
     msg: impl Into<String>,
 ) -> (StatusCode, Json<ErrorResponse>) {
-    (status, Json(ErrorResponse { error: msg.into() }))
+    (
+        status,
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: None,
+            data: None,
+        }),
+    )
+}
+
+/// 带机器可读 `code` 的错误响应。
+pub fn error_response_code(
+    status: StatusCode,
+    code: &'static str,
+    msg: impl Into<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: Some(code.to_string()),
+            data: None,
+        }),
+    )
+}
+
+/// 带 `code` 与结构化 `data` 的错误响应（断点续传偏移纠正等场景）。
+pub fn error_response_data(
+    status: StatusCode,
+    code: &'static str,
+    msg: impl Into<String>,
+    data: serde_json::Value,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: msg.into(),
+            code: Some(code.to_string()),
+            data: Some(data),
+        }),
+    )
 }
 
 /// Convenience: build a 400 Bad Request response

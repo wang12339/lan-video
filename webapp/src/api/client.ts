@@ -250,10 +250,16 @@ export function setOnError(cb: (error: APIError) => void) { onErrorCb = cb }
 // 错误类型
 export class APIError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** 后端返回的机器可读错误码（如 duplicate / quota_exceeded / offset_mismatch） */
+  code?: string;
+  /** 后端返回的结构化错误数据（如 offset_mismatch 的 { received }） */
+  data?: unknown;
+  constructor(message: string, status: number, code?: string, data?: unknown) {
     super(message);
     this.name = 'APIError';
     this.status = status;
+    this.code = code;
+    this.data = data;
   }
 }
 
@@ -452,6 +458,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
           const dataObj = data as Record<string, unknown>;
           const rawMsg = dataObj && typeof dataObj.error === 'string' ? dataObj.error : undefined;
           const msg = resolveErrorMessage(res.status, rawMsg);
+          const code =
+            dataObj && typeof dataObj.code === 'string' ? dataObj.code : undefined;
+          const errData = dataObj ? dataObj.data : undefined;
 
           if (res.status === 429) {
             const retryAfter = res.headers?.get?.('Retry-After');
@@ -471,7 +480,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
           }
 
           if (!silent) logError({ message: msg, url, status: res.status });
-          const apiErr = new APIError(msg, res.status);
+          const apiErr = new APIError(msg, res.status, code, errData);
           if (!silent && onErrorCb) onErrorCb(apiErr);
           throw apiErr;
         }

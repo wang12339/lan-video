@@ -2,12 +2,13 @@ use dashmap::DashMap;
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
 use crate::metrics::Metrics;
 use crate::middleware::rate_limit::RateLimiter;
+use crate::models::chat::ChatEvent;
 use crate::models::video::{PagedVideoResponse, VideoItem};
+use crate::repositories::chat_repo::ChatRepository;
 use crate::repositories::comment_repo::CommentRepository;
 use crate::repositories::danmaku_repo::DanmakuRepository;
 use crate::repositories::plan_repo::PlanRepository;
@@ -136,6 +137,85 @@ pub struct RepoLayer {
     pub tag: TagRepository,
     pub tenant: TenantRepository,
     pub plan: PlanRepository,
+    pub chat: ChatRepository,
+}
+
+/// 公共聊天室：每租户一个房间。
+///
+/// - `tx`：tokio broadcast，向本房间所有在线连接广播事件（容量 256，
+///   慢消费者会收到 `Lagged` 由连接任务自行处理——聊天允许丢实时事件，
+///   历史以 DB 为准）
+/// - `users`：在线成员表（user_id → username），用于在线人数/名单广播
+#[derive(Default)]
+pub struct ChatHub {
+    rooms: DashMap<i64, ChatRoom>,
+}
+
+pub struct ChatRoom {
+    tx: tokio::sync::broadcast::Sender<Arc<ChatEvent>>,
+    users: DashMap<i64, String>,
+}
+
+const CHAT_BROADCAST_CAPACITY: usize = 256;
+/// 在线名单广播上限，防止大量访客名刷爆消息帧
+const CHAT_ONLINE_NAMES_MAX: usize = 50;
+
+impl ChatHub {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 加入房间：登记成员并返回该房间的接收器（含加入瞬间的广播订阅）。
+    pub fn join(
+        &self,
+        tenant_id: i64,
+        user_id: i64,
+        username: &str,
+    ) -> tokio::sync::broadcast::Receiver<Arc<ChatEvent>> {
+        let room = self.room(tenant_id);
+        // 必须先订阅再登记广播：否则加入者会错过自己的 join 在线广播，
+        // 单人在线时前端永远显示 0 人
+        let rx = room.tx.subscribe();
+        room.users.insert(user_id, username.to_string());
+        Self::broadcast_online(&room);
+        rx
+    }
+
+    /// 离开房间：移除成员并广播名单变化。幂等（未在房内时仅静默返回）。
+    /// 房间即使空了也不主动销毁：空房间仅占一个 broadcast sender，
+    /// 保留可避免"最后一人退出瞬间新连接订阅不到频道"的竞态。
+    pub fn leave(&self, tenant_id: i64, user_id: i64) {
+        if let Some(room) = self.rooms.get(&tenant_id) {
+            if room.users.remove(&user_id).is_some() {
+                Self::broadcast_online(&room);
+            }
+        }
+    }
+
+    /// 向房间广播事件。
+    pub fn broadcast(&self, tenant_id: i64, event: ChatEvent) {
+        let room = self.room(tenant_id);
+        // 无接收者时 send 返回 Err——纯属正常（没人在线），忽略
+        let _ = room.tx.send(Arc::new(event));
+    }
+
+    fn room(&self, tenant_id: i64) -> dashmap::mapref::one::RefMut<'_, i64, ChatRoom> {
+        self.rooms.entry(tenant_id).or_insert_with(|| ChatRoom {
+            tx: tokio::sync::broadcast::channel(CHAT_BROADCAST_CAPACITY).0,
+            users: DashMap::new(),
+        })
+    }
+
+    fn broadcast_online(room: &ChatRoom) {
+        let names: Vec<String> = room
+            .users
+            .iter()
+            .take(CHAT_ONLINE_NAMES_MAX)
+            .map(|u| u.value().clone())
+            .collect();
+        let count = room.users.len();
+        let _ = room.tx.send(Arc::new(ChatEvent::Online { count, names }));
+    }
 }
 
 #[derive(Clone)]
@@ -167,7 +247,8 @@ pub struct AppState {
     pub recommendation_cache: RecommendationCache,
     pub video_detail_cache: VideoDetailCache,
     pub playback_sessions: Arc<PlaybackSessionTracker>,
-    pub upload_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    /// 公共聊天室：每租户一个房间（在线成员 + 广播通道）
+    pub chat_hub: Arc<ChatHub>,
     pub metrics: Metrics,
     pub redis: Option<redis::aio::ConnectionManager>,
     pub transcoder: Transcoder,

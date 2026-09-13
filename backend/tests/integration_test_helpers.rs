@@ -116,6 +116,11 @@ pub fn test_config() -> AppConfig {
         transcode_max_duration_secs: 7200,
         ffmpeg_path: "ffmpeg".into(),
         ffprobe_path: "ffprobe".into(),
+        gateway_url: String::new(),
+        gateway_internal_url: String::new(),
+        gateway_client_id: String::new(),
+        gateway_client_secret: String::new(),
+        gateway_redirect_uri: String::new(),
     }
 }
 
@@ -124,9 +129,39 @@ pub async fn test_app_state() -> Arc<AppState> {
     test_app_state_with_config(test_config()).await
 }
 
+/// 清扫上一轮测试二进制泄漏的测试账号。
+///
+/// `unique_username` 生成的名字格式固定为 `前缀_PID_序号`（如 `adm_loop_56999_9`），
+/// 每个测试二进制是独立进程，部分用例失败/提前返回时不会调用
+/// `cleanup_test_user`，账号就残留在共享开发库里。此清扫在每个测试
+/// 二进制的首次 `test_app_state` 时执行一次（OnceLock 去重），删除所有
+/// 匹配该格式的账号（真实注册名如 `admin`、`kuaile` 不含双数字后缀段，
+/// 不会误伤）。本进程内本轮新产生的账号不受影响（下一轮才清）。
+async fn sweep_leaked_test_users(pool: &sqlx::PgPool) {
+    use std::sync::OnceLock;
+    static DONE: OnceLock<()> = OnceLock::new();
+    if DONE.set(()).is_err() {
+        return;
+    }
+    let result = sqlx::query("DELETE FROM users WHERE username ~ '^[A-Za-z0-9_]+_[0-9]+_[0-9]+$'")
+        .execute(pool)
+        .await;
+    match result {
+        Ok(res) if res.rows_affected() > 0 => {
+            eprintln!(
+                "sweep_leaked_test_users: removed {} leftover test users",
+                res.rows_affected()
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("sweep_leaked_test_users failed (non-fatal): {e}"),
+    }
+}
+
 /// Create a full AppState backed by a real database pool with a custom config.
 pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let pool = test_pool().await;
+    sweep_leaked_test_users(&pool).await;
 
     let user_repo = UserRepository::new(pool.clone());
     let video_repo = VideoRepository::new(pool.clone());
@@ -188,6 +223,7 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
             playback: playback_repo,
             playlist: playlist_repo,
             comment: comment_repo,
+            chat: atmos_video_backend::repositories::chat_repo::ChatRepository::new(pool.clone()),
             danmaku: danmaku_repo,
             share: share_repo,
             tag: tag_repo,
@@ -226,7 +262,7 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
         playback_sessions: std::sync::Arc::new(
             atmos_video_backend::state::PlaybackSessionTracker::new(),
         ),
-        upload_locks: std::sync::Arc::new(dashmap::DashMap::new()),
+        chat_hub: std::sync::Arc::new(atmos_video_backend::state::ChatHub::new()),
         metrics: Metrics::new(),
         redis: None,
         transcoder,

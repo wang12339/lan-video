@@ -11,6 +11,17 @@ vi.mock('../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }))
 
+vi.mock('../context/ChatContext', () => ({
+  useChatRoom: () => ({
+    status: 'init',
+    unread: 0,
+    clearUnread: vi.fn(),
+    subscribe: () => () => {},
+    client: null,
+    online: { count: 0, names: [] },
+  }),
+}))
+
 vi.mock('../utils/track', () => ({
   trackClick: vi.fn(),
 }))

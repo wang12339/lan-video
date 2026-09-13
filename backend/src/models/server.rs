@@ -22,14 +22,14 @@ pub struct CheckStatus {
     pub response_time_ms: Option<u64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct SystemInfo {
     pub uptime_secs: u64,
     pub disk_usage: DiskUsage,
     pub memory_usage: Option<MemoryUsage>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct DiskUsage {
     pub total_bytes: u64,
     pub used_bytes: u64,

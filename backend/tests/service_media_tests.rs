@@ -1441,6 +1441,11 @@ async fn upload_video_flow_with_database() {
         transcode_max_duration_secs: 7200,
         ffmpeg_path: "ffmpeg".into(),
         ffprobe_path: "ffprobe".into(),
+        gateway_url: String::new(),
+        gateway_internal_url: String::new(),
+        gateway_client_id: String::new(),
+        gateway_client_secret: String::new(),
+        gateway_redirect_uri: String::new(),
     };
     let svc = MediaService::new(repo.clone(), config);
 

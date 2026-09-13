@@ -869,7 +869,8 @@ async fn test_logout() {
         .expect("create token");
 
     // Logout
-    svc.logout(Some(username.as_str()), Some(&token)).await;
+    svc.logout(Some(username.as_str()), Some(&token), "127.0.0.1")
+        .await;
 
     // Token should no longer work — find_user_by_token should return None
     let found = state
@@ -894,9 +895,9 @@ async fn test_logout_without_token_is_noop() {
     let svc = auth_service(&state);
 
     // Logging out without any token must not panic or error
-    svc.logout(None, None).await;
+    svc.logout(None, None, "127.0.0.1").await;
     // Logging out with a garbage token is also a no-op
-    svc.logout(Some("ghost_user"), Some("not-a-real-token"))
+    svc.logout(Some("ghost_user"), Some("not-a-real-token"), "127.0.0.1")
         .await;
 }
 

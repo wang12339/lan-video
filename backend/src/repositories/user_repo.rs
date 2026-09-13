@@ -49,6 +49,9 @@ pub struct UserRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub email: Option<String>,
     pub email_verified: bool,
+    /// 访客影子账号标记（迁移 052）。访客账号无密码、不可登录，
+    /// 注册/登录真实账号时其内容会被合并并删除本行。
+    pub is_guest: bool,
     /// Tenant this user (or, on token queries, the token) belongs to.
     /// On token lookups it mirrors `auth_tokens.tenant_id` (H-01 binding).
     pub tenant_id: i64,
@@ -65,6 +68,7 @@ pub struct UserWithStatus {
     pub avatar_url: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub has_active_token: bool,
+    pub is_guest: bool,
 }
 
 #[derive(Clone)]
@@ -92,10 +96,13 @@ impl UserRepository {
     /// by tenant). The result is a sequential scan of the filtered rows;
     /// fine-grained tenant isolation keeps the working set small per tenant.
     pub async fn count_users(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .fetch_one(&self.pool)
-            .await?;
+        // 访客影子账号不计入"注册用户数"：register 的首用户判定（首用户
+        // 自动管理员）与展示统计都只应看真实账号。
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND NOT is_guest")
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(count)
     }
 
@@ -116,7 +123,7 @@ impl UserRepository {
     ) -> Result<i64, sqlx::Error> {
         let approved = role >= 3;
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (tenant_id, username, password_hash, approved, role) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+            "INSERT INTO users (tenant_id, username, password_hash, approved, role, is_guest) VALUES ($1, $2, $3, $4, $5, false) RETURNING id"
         )
         .bind(tenant_id)
         .bind(username)
@@ -126,6 +133,125 @@ impl UserRepository {
         .fetch_one(&self.pool)
         .await?;
         Ok(id)
+    }
+
+    /// 创建访客影子账号并直接返回其 id 与用户名。
+    ///
+    /// 访客账号特点：
+    /// - 用户名 `guest_<16 位随机字母数字>`（全局唯一，碰撞概率可忽略；
+    ///   唯一约束兜底，冲突时上层重试）
+    /// - `password_hash = ''`（空串，Argon2 verify 必然失败 → 永远无法
+    ///   通过密码登录）
+    /// - `approved = true`（访客无需管理员审批即可使用）
+    /// - `role = 1`（与普通 viewer 相同的权限层）
+    pub async fn create_guest_user(&self, tenant_id: i64) -> Result<(i64, String), sqlx::Error> {
+        use rand::distributions::Alphanumeric;
+        use rand::Rng;
+        let suffix: String = rand::rngs::OsRng
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let username = format!("guest_{suffix}");
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO users (tenant_id, username, password_hash, approved, role, is_guest) VALUES ($1, $2, '', true, 1, true) RETURNING id",
+        )
+        .bind(tenant_id)
+        .bind(&username)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok((id, username))
+    }
+
+    /// 把访客影子账号的内容合并到真实账号名下，随后删除影子账号。
+    ///
+    /// 涉及的归属字段（见各迁移的表定义）：
+    /// - `videos.uploader_id`（FK ON DELETE SET NULL → 必须先改归属再删行）
+    /// - `playback_history.username` / `user_likes.username` /
+    ///   `user_favorites.username`（按用户名关联）
+    /// - `playlists.user_id` / `comments.user_id` / `danmaku.user_id`
+    ///   （FK ON DELETE CASCADE → 同样必须先改归属）
+    ///
+    /// 合并成功后删除 `auth_tokens`（撤销访客会话）与用户行本身。
+    /// 返回合并的视频条数（用于日志/响应）。
+    pub async fn merge_guest_into_user(
+        &self,
+        guest_id: i64,
+        target_user_id: i64,
+        tenant_id: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // 影子账号与目标账号各自的用户名（playback/likes/favorites 按用户名关联）
+        let (guest_username, target_username): (String, String) = sqlx::query_as(
+            "SELECT (SELECT username FROM users WHERE id = $1), (SELECT username FROM users WHERE id = $2)",
+        )
+        .bind(guest_id)
+        .bind(target_user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if guest_username == target_username {
+            // 同一账号（理论不可达）：什么都不做，直接提交空事务。
+            tx.commit().await?;
+            return Ok(0);
+        }
+
+        let video_rows = sqlx::query(
+            "UPDATE videos SET uploader_id = $2 WHERE uploader_id = $1 AND tenant_id = $3",
+        )
+        .bind(guest_id)
+        .bind(target_user_id)
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+        // 播放历史/点赞/收藏按 (username, video_id) 关联；直接改用户名。
+        // UNIQUE(username, video_id) 冲突在真实场景中不可达（访客与真实
+        // 账号此前互不可见对方内容），万一发生则整个合并回滚并报错。
+        for table in ["playback_history", "user_likes", "user_favorites"] {
+            sqlx::query(&format!(
+                "UPDATE {table} SET username = $2 WHERE username = $1"
+            ))
+            .bind(&guest_username)
+            .bind(&target_username)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for table in ["playlists", "comments", "danmaku"] {
+            sqlx::query(&format!(
+                "UPDATE {table} SET user_id = $2 WHERE user_id = $1"
+            ))
+            .bind(guest_id)
+            .bind(target_user_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // 头像迁移：目标账号没有头像时继承访客的头像
+        //（文件仍在 /media/avatars/{guest_id}.{ext}，URL 直接可用）
+        sqlx::query(
+            "UPDATE users SET avatar_url = (SELECT avatar_url FROM users WHERE id = $1) \
+             WHERE id = $2 AND avatar_url IS NULL",
+        )
+        .bind(guest_id)
+        .bind(target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // 撤销访客会话后删除影子账号行
+        sqlx::query("DELETE FROM auth_tokens WHERE user_id = $1")
+            .bind(guest_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id = $1 AND is_guest")
+            .bind(guest_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(video_rows)
     }
 
     /// Look up a user by `(tenant_id, username)`.
@@ -142,7 +268,7 @@ impl UserRepository {
     ) -> Result<Option<UserRow>, sqlx::Error> {
         let user = log_slow_query("user_repo::find_by_username", || async {
             sqlx::query_as::<_, UserRow>(
-                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, tenant_id FROM users WHERE tenant_id = $1 AND username = $2"
+                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, tenant_id FROM users WHERE tenant_id = $1 AND username = $2"
             )
             .bind(tenant_id)
             .bind(username)
@@ -215,7 +341,7 @@ impl UserRepository {
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let user = log_slow_query("user_repo::find_user_by_token", || async {
             sqlx::query_as::<_, UserRow>(
-                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, t.tenant_id
+                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, u.is_guest, t.tenant_id
                    FROM auth_tokens t
                    JOIN users u ON t.user_id = u.id
                    WHERE t.token_hash = $1 AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked"#,
@@ -253,9 +379,9 @@ impl UserRepository {
         }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-        let row = sqlx::query_as::<_, (i64, i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool)>(
+        let row = sqlx::query_as::<_, (i64, i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool, bool)>(
             r#"SELECT u.id, t.tenant_id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at,
-                      u.email, u.email_verified,
+                      u.email, u.email_verified, u.is_guest,
                       t.revoked, t.expires_at > CURRENT_TIMESTAMP AS valid
                FROM auth_tokens t
                JOIN users u ON t.user_id = u.id
@@ -276,6 +402,7 @@ impl UserRepository {
                 created_at,
                 email,
                 email_verified,
+                is_guest,
                 revoked,
                 valid,
             )| {
@@ -290,6 +417,7 @@ impl UserRepository {
                         created_at,
                         email,
                         email_verified,
+                        is_guest,
                         tenant_id,
                     },
                     revoked,
@@ -376,7 +504,7 @@ impl UserRepository {
     pub async fn list_users(&self, tenant_id: i64) -> Result<Vec<UserWithStatus>, sqlx::Error> {
         let users = log_slow_query("user_repo::list_users", || async {
             sqlx::query_as::<_, UserWithStatus>(
-                r#"SELECT u.id, u.username, u.approved, u.role >= 3 AS is_admin, u.role, u.avatar_url, u.created_at,
+                r#"SELECT u.id, u.username, u.approved, u.role >= 3 AS is_admin, u.role, u.avatar_url, u.created_at, u.is_guest,
                           EXISTS(SELECT 1 FROM auth_tokens t WHERE t.user_id = u.id AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked) AS has_active_token
                    FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at DESC"#,
             )
@@ -657,7 +785,7 @@ impl UserRepository {
     /// becomes a hot path).
     pub async fn find_by_email(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
         sqlx::query_as::<_, UserRow>(
-            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, tenant_id FROM users WHERE email = $1"
+            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, tenant_id FROM users WHERE email = $1"
         )
         .bind(email)
         .fetch_optional(&self.pool)
