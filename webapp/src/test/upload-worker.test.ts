@@ -13,7 +13,7 @@ vi.mock('../pages/Upload/hooks/useFileHash', async (importOriginal) => {
 })
 
 import { getUploadStatus, uploadResumeChunk } from '../api/videos'
-import { computeContentHash, CHUNK_SIZE } from '../pages/Upload/hooks/useFileHash'
+import { computeContentHash, CHUNK_SIZE, MIN_CHUNK_SIZE } from '../pages/Upload/hooks/useFileHash'
 import { uploadSingleFile } from '../pages/Upload/hooks/uploadSingleWorker'
 
 const mockedGetUploadStatus = vi.mocked(getUploadStatus)
@@ -120,18 +120,32 @@ describe('uploadSingleFile 协议行为', () => {
     expect(item.videoId).toBe(5)
   })
 
-  it('多分片上传每片携带正确偏移', async () => {
+  it('多分片上传每片偏移严格衔接且首片从最小分片起步', async () => {
     const size = CHUNK_SIZE + 100
     mockedGetUploadStatus.mockResolvedValue({ received: 0, exists: false })
-    mockedUploadResumeChunk
-      .mockResolvedValueOnce({ received: CHUNK_SIZE })
-      .mockResolvedValueOnce({ received: size, id: 11 })
+    // 按传入 offset/chunk 回显 received；最后一片返回 id
+    mockedUploadResumeChunk.mockImplementation(
+      async (_hash, _name, totalSize, _category, chunk, offset) => {
+        const received = (offset ?? 0) + chunk.size
+        return received >= totalSize ? { received, id: 11 } : { received }
+      },
+    )
 
     const { ok, item } = await run(makeItem(size))
 
     expect(ok).toBe(true)
     expect(item.videoId).toBe(11)
-    expect(mockedUploadResumeChunk.mock.calls[0]![5]).toBe(0)
-    expect(mockedUploadResumeChunk.mock.calls[1]![5]).toBe(CHUNK_SIZE)
+    const calls = mockedUploadResumeChunk.mock.calls
+    // 首片 = 最小分片（慢网下快速可见进度）
+    expect(calls[0]![5]).toBe(0)
+    expect((calls[0]![4] as Blob).size).toBe(MIN_CHUNK_SIZE)
+    // 每个分片的 offset 必须等于前序分片累计字节数
+    let expectedOffset = 0
+    for (const call of calls) {
+      expect(call[5]).toBe(expectedOffset)
+      expect(call[4]).toBeInstanceOf(Blob)
+      expectedOffset += (call[4] as Blob).size
+    }
+    expect(expectedOffset).toBe(size)
   })
 })

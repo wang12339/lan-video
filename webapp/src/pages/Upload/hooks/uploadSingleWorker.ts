@@ -4,7 +4,7 @@ import { getUploadStatus, uploadResumeChunk } from '../../../api/videos'
 import i18n from '../../../i18n'
 import {
   UploadItem, CancelledError, computeContentHash,
-  CHUNK_SIZE, MIN_CHUNK_SIZE, MAX_CHUNK_SIZE,
+  MIN_CHUNK_SIZE, MAX_CHUNK_SIZE,
   MAX_CHUNK_RETRIES, RETRY_BASE_DELAY_MS,
   SLOW_CHUNK_MS, FAST_CHUNK_MS,
 } from './useFileHash'
@@ -110,7 +110,11 @@ export async function uploadSingleFile(
 
   // 按 offset 驱动的分片循环（不再按分片序号推进）：服务端返回的 received
   // 是唯一权威偏移，超时重试/偏移漂移都能安全收敛。分片大小自适应。
-  let chunkSize = Math.max(MIN_CHUNK_SIZE, Math.min(CHUNK_SIZE, item.file.size))
+  //
+  // 首片刻意从最小分片起步：慢网下 16MB 首片要 1-2 分钟才更新进度，用户会误以为
+  // 卡死而刷新页面（浏览器中断请求 → 服务端记录 400）。小首片让进度快速可见，
+  // 同时首片超时风险最低；快网下后续分片会按耗时翻倍放大，吞吐不受影响。
+  let chunkSize = Math.min(MIN_CHUNK_SIZE, item.file.size)
   let consecutiveMismatches = 0
 
   while (offset < item.file.size) {

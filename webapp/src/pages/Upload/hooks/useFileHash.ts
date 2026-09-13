@@ -2,7 +2,7 @@ import { Sha256 } from '../utils/chunkUpload'
 
 /** 默认分片大小（服务端 body 上限 32MB，留出余量）。 */
 export const CHUNK_SIZE = 16 * 1024 * 1024
-/** 自适应分片下限：慢网络下缩到这个大小避免请求超时。 */
+/** 自适应分片下限，也是首片大小：慢网下首片即可见进度并降低超时风险。 */
 export const MIN_CHUNK_SIZE = 2 * 1024 * 1024
 /** 自适应分片上限（= 默认值）。 */
 export const MAX_CHUNK_SIZE = CHUNK_SIZE
