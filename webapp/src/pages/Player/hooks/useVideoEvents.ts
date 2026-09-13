@@ -139,9 +139,9 @@ export function useVideoEvents(
     }
   }, [videoRef, restoreRef, pendingSeekRef])
 
-  const onWaiting = useCallback(() => { callbacksRef.current.setShowLoading(true); metrics.recordStallStart() }, [])
-  const onCanPlay = useCallback(() => { callbacksRef.current.setShowLoading(false); callbacksRef.current.setVideoError(''); retryCountRef.current = 0; metrics.recordStallEnd() }, [])
-  const onPlaying = useCallback(() => { callbacksRef.current.setShowLoading(false); callbacksRef.current.setVideoError(''); retryCountRef.current = 0; metrics.recordFirstFrame(); metrics.recordStallEnd() }, [])
+  const onWaiting = useCallback(() => { callbacksRef.current.setShowLoading(true); metrics.recordStallStart() }, [metrics])
+  const onCanPlay = useCallback(() => { callbacksRef.current.setShowLoading(false); callbacksRef.current.setVideoError(''); retryCountRef.current = 0; metrics.recordStallEnd() }, [metrics])
+  const onPlaying = useCallback(() => { callbacksRef.current.setShowLoading(false); callbacksRef.current.setVideoError(''); retryCountRef.current = 0; metrics.recordFirstFrame(); metrics.recordStallEnd() }, [metrics])
   const onError = useCallback(() => {
     callbacksRef.current.setShowLoading(false)
     const v = videoRef.current

@@ -39,14 +39,6 @@ const FILTER_LABELS: Record<TimeFilter, string> = {
 
 const WATCH_STATS_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
 
-function isPrivacyEnabled(): boolean {
-  try {
-    return localStorage.getItem('atmos_privacy_mode') === 'true'
-  } catch {
-    return false
-  }
-}
-
 function getWatchData(): WatchData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -64,34 +56,6 @@ function getWatchData(): WatchData {
   } catch {
     return { records: [], totalMinutes: 0, totalVideos: 0 }
   }
-}
-
-export function recordWatchTime(videoId: string, title: string, seconds: number): void {
-  try {
-    if (isPrivacyEnabled()) return
-    const data = getWatchData()
-    const minutes = Math.floor(seconds / 60)
-    if (minutes <= 0) return
-
-    data.records.push({ videoId, title, minutes, timestamp: Date.now() })
-    data.totalMinutes += minutes
-    data.totalVideos += 1
-
-    // Keep last 1000 records
-    if (data.records.length > 1000) {
-      data.records = data.records.slice(-1000)
-    }
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-} catch (_e) {
-      // QuotaExceededError: 丢弃最旧 200 条重试
-      if (_e instanceof DOMException && _e.name === 'QuotaExceededError' && data.records.length > 200) {
-        data.records = data.records.slice(-800)
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) } catch (_e) { void 0; }
-      }
-    }
-  } catch { void 0; }
 }
 
 // ─── Aggregation Utilities ────────────────────────────────────────────────────

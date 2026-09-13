@@ -101,9 +101,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [scheduleDismiss])
 
   useEffect(() => {
+    // Map 引用固定不变，捕获后在 cleanup 中清空仍是同一个 Map（取最新内容）
+    const timers = timersRef.current
     return () => {
-      timersRef.current.forEach(timer => clearTimeout(timer))
-      timersRef.current.clear()
+      timers.forEach(timer => clearTimeout(timer))
+      timers.clear()
     }
   }, [])
 

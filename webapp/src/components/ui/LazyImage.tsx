@@ -8,7 +8,7 @@ let _webpSupported: boolean | null = null
  * 检测浏览器是否支持 WebP 格式
  * 使用特征检测而非 UA 嗅探
  */
-export function isWebPSupported(): boolean {
+function isWebPSupported(): boolean {
   if (_webpSupported !== null) return _webpSupported
 
   // 在 SSR 或 canvas 不可用时回退

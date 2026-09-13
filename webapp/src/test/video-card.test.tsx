@@ -7,7 +7,13 @@ import VideoCard, { VideoCardSkeleton } from '../components/VideoCard/VideoCard'
 // Mock LazyImage 为简单 img，避免 jsdom 中 IntersectionObserver / new Image() 问题
 vi.mock('../components/ui/LazyImage', () => ({
   __esModule: true,
-  default: function MockLazyImage({ src, alt, className, fallback, eager }: any) {
+  default: function MockLazyImage({ src, alt, className, fallback, eager }: {
+    src?: string | null
+    alt?: string
+    className?: string
+    fallback?: React.ReactNode
+    eager?: boolean
+  }) {
     if (!src && fallback) return fallback
     return <img src={src || ''} alt={alt} className={`${className || ''} loaded`} loading={eager ? 'eager' : 'lazy'} />
   },
@@ -26,7 +32,7 @@ function makeVideo(overrides: Partial<{ id: string; title: string; thumbnail_url
 function renderCard(video: ReturnType<typeof makeVideo>, props: Partial<React.ComponentProps<typeof VideoCard>> = {}) {
   return render(
     <MemoryRouter>
-      <VideoCard video={video as any} {...props} />
+      <VideoCard video={video as unknown as React.ComponentProps<typeof VideoCard>['video']} {...props} />
     </MemoryRouter>
   )
 }
@@ -49,7 +55,7 @@ describe('VideoCard', () => {
   })
 
   it('shows an emoji fallback when there is no thumbnail', () => {
-    const { container } = renderCard(makeVideo({ thumbnail_url: '' as any, thumb: null }))
+    const { container } = renderCard(makeVideo({ thumbnail_url: '', thumb: null }))
     expect(container.querySelector('.thumb-wrap')).not.toBeNull()
     const fallback = container.querySelector('.thumb-fallback')
     expect(fallback).not.toBeNull()

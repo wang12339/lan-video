@@ -73,7 +73,7 @@ export default function ConfirmDialog({
     }, 200)
   }, [loading])
 
-  const handleConfirm = async () => {
+  const handleConfirm = useCallback(async () => {
     if (loading) return
     setLoading(true)
     try {
@@ -84,7 +84,7 @@ export default function ConfirmDialog({
     } finally {
       setLoading(false)
     }
-  }
+  }, [loading, handleClose])
 
   const handleExtraClick = async (index: number, btn: CustomButton) => {
     if (btn.disabled || extraLoading[index]) return
@@ -130,7 +130,7 @@ export default function ConfirmDialog({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, loading, handleClose])
+  }, [open, loading, handleClose, handleConfirm])
 
   // 焦点陷阱 + 移动端锁背景滚动（防穿透）
   useFocusTrap(dialogRef, open, { autoFocus: false })

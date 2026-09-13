@@ -37,7 +37,7 @@ vi.mock('../api/playlists', () => ({
 
 vi.mock('../components/Toast/Toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
-  ToastProvider: ({ children }: any) => children,
+  ToastProvider: ({ children }: { children?: React.ReactNode }) => children,
 }))
 
 vi.mock('../api/client', () => ({

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { trackClick } from '../../../utils/track'
 
 export function usePlayerMetrics(
@@ -135,7 +135,9 @@ export function usePlayerMetrics(
     trackClick('性能_画质切换', `${pending.from}→${pending.to}:${success ? '成功' : '失败'}(${ms}ms)`)
   }, [])
 
-  return {
+  // 所有方法均为 useCallback 稳定引用；memo 化返回对象让消费方可以安全地把它
+  // 放进 hook 依赖数组，而不会因每次渲染的新对象导致回调反复重建。
+  return useMemo(() => ({
     recordFirstFrame,
     recordStallStart,
     recordStallEnd,
@@ -146,5 +148,16 @@ export function usePlayerMetrics(
     getMemoryPressure,
     recordQualitySwitchStart,
     recordQualitySwitchResult,
-  }
+  }), [
+    recordFirstFrame,
+    recordStallStart,
+    recordStallEnd,
+    recordError,
+    recordGesture,
+    recordCompletion,
+    getConnectionInfo,
+    getMemoryPressure,
+    recordQualitySwitchStart,
+    recordQualitySwitchResult,
+  ])
 }

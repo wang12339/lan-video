@@ -16,8 +16,8 @@ vi.mock('../api/utils', () => ({
   formatDuration: (secs: number, fallback: string) => secs > 0 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : fallback,
   formatViews: (views: number) => views.toLocaleString(),
   formatCount: (views: number) => views.toLocaleString(),
-  mapVideo: (v: any) => v,
-  mapImage: (v: any) => v,
+  mapVideo: (v: unknown) => v,
+  mapImage: (v: unknown) => v,
   getCatColor: () => '#3b82f6',
 }))
 

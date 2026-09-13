@@ -234,7 +234,7 @@ export function usePlayerControls(
     setCurrentQuality(quality)
     setShowQualityMenu(false)
     resetHideTimer()
-  }, [videoRef, currentQuality, resetHideTimer])
+  }, [videoRef, currentQuality, resetHideTimer, metrics])
 
   const retryLoad = useCallback((video: MappedVideo | null, variants: VideoVariant[]) => {
     const v = videoRef.current

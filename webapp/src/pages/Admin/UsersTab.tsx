@@ -69,7 +69,7 @@ export default function UsersTab() {
     })
   }
 
-  const handleResetPw = async () => {
+  const handleResetPw = useCallback(async () => {
     if (!pwUserId || pwValue.length < 6) {
       setPwOk(false)
       setPwMsg(t('admin.users.passwordMinLength'))
@@ -91,7 +91,7 @@ export default function UsersTab() {
       setPwOk(false)
       setPwMsg(t('admin.users.requestFailed'))
     } finally { setPwSaving(false) }
-  }
+  }, [pwUserId, pwValue, t])
 
   const handlePwKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !pwSaving) {
@@ -99,7 +99,7 @@ export default function UsersTab() {
       handleResetPw()
     }
     if (e.key === 'Escape') setPwUserId(null)
-  }, [pwSaving])
+  }, [pwSaving, handleResetPw])
 
   const handleToggleAdmin = (u: AdminUser) => {
     if (u.id === currentUser?.id) {

@@ -7,15 +7,23 @@ const mockObserve = vi.fn()
 const mockUnobserve = vi.fn()
 const mockDisconnect = vi.fn()
 
+/** 取第 index 次 IntersectionObserver 构造时传入的回调。 */
+function observerCallbackAt(index: number): IntersectionObserverCallback {
+  const observer = global.IntersectionObserver as unknown as {
+    mock: { calls: IntersectionObserverCallback[][] }
+  }
+  return observer.mock.calls[index]![0]!
+}
+
 beforeEach(() => {
-  global.IntersectionObserver = vi.fn().mockImplementation(function(callback: any) {
+  global.IntersectionObserver = vi.fn().mockImplementation(function (callback: IntersectionObserverCallback) {
     return {
       observe: mockObserve,
       unobserve: mockUnobserve,
       disconnect: mockDisconnect,
       callback
-    } as any
-  })
+    } as unknown as IntersectionObserver
+  }) as unknown as typeof IntersectionObserver
   // Mock Image to synchronously trigger onload for tests
   class MockImage {
     onload: (() => void) | null = null
@@ -28,7 +36,7 @@ beforeEach(() => {
     }
     get src() { return this._src }
   }
-  ;(global as any).Image = MockImage
+  ;(globalThis as unknown as { Image: unknown }).Image = MockImage
 })
 
 afterEach(() => {
@@ -65,7 +73,7 @@ describe('useLazyImage', () => {
       )
 
       // 模拟图片加载
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -133,7 +141,7 @@ describe('useLazyImage', () => {
         useLazyImage('https://example.com/image.jpg')
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -149,7 +157,7 @@ describe('useLazyImage', () => {
         useLazyImage('https://example.com/image.jpg')
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -165,7 +173,7 @@ describe('useLazyImage', () => {
         useLazyImage('https://example.com/image.jpg')
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -193,7 +201,7 @@ describe('useLazyImage', () => {
         useLazyImage('https://example.com/image.jpg')
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       // 模拟 Image 构造函数
       const mockImageInstance = {
@@ -202,7 +210,7 @@ describe('useLazyImage', () => {
         src: ''
       }
       const originalImage = global.Image
-      global.Image = vi.fn(function() { return mockImageInstance as any }) as any
+      global.Image = vi.fn(function () { return mockImageInstance as unknown as HTMLImageElement }) as unknown as typeof Image
 
       {
         act(() => {
@@ -230,7 +238,7 @@ describe('useLazyImage', () => {
         useLazyImage('https://example.com/image.jpg')
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       // 模拟 Image 构造函数
       const mockImageInstance = {
@@ -239,7 +247,7 @@ describe('useLazyImage', () => {
         src: ''
       }
       const originalImage = global.Image
-      global.Image = vi.fn(function() { return mockImageInstance as any }) as any
+      global.Image = vi.fn(function () { return mockImageInstance as unknown as HTMLImageElement }) as unknown as typeof Image
 
       {
         act(() => {
@@ -269,7 +277,7 @@ describe('useLazyImage', () => {
         useLazyImage(originalSrc, { placeholder })
       )
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       const mockImageInstance = {
         onload: null as (() => void) | null,
@@ -277,7 +285,7 @@ describe('useLazyImage', () => {
         src: ''
       }
       const originalImage = global.Image
-      global.Image = vi.fn(function() { return mockImageInstance as any }) as any
+      global.Image = vi.fn(function () { return mockImageInstance as unknown as HTMLImageElement }) as unknown as typeof Image
 
       {
         act(() => {
@@ -335,7 +343,7 @@ describe('useLazyLoad', () => {
     it('元素进入视口时应设置 isVisible 为 true', () => {
       const { result } = renderHook(() => useLazyLoad())
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -349,7 +357,7 @@ describe('useLazyLoad', () => {
     it('元素未进入视口时不应设置 isVisible', () => {
       const { result } = renderHook(() => useLazyLoad())
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -363,7 +371,7 @@ describe('useLazyLoad', () => {
     it('元素进入视口后应停止观察', () => {
       renderHook(() => useLazyLoad())
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {
@@ -385,7 +393,7 @@ describe('useLazyLoad', () => {
     it('当 isVisible 为 true 后应保持 true', () => {
       const { result } = renderHook(() => useLazyLoad())
 
-      const observerCallback = (global.IntersectionObserver as any).mock.calls[0][0]
+      const observerCallback = observerCallbackAt(0)
 
       {
         act(() => {

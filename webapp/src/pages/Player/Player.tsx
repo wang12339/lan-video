@@ -297,7 +297,7 @@ const Player = memo(function Player() {
   const cleanedTitle = useMemo(() => {
     if (!video) return ''
     return video.title.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || video.title
-  }, [video?.title])
+  }, [video])
 
   const relatedGrid = useMemo(() => {
     if (related.length === 0) return null

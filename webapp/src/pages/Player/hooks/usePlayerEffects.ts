@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { throttle } from '../../../utils/throttle'
 import { MOUSE_MOVE_THROTTLE_MS, VOLUME_CHANGE_THROTTLE_MS } from '../constants'
 import { useVideoSource } from './useVideoSource'
@@ -73,15 +73,25 @@ export function usePlayerEffects(params: PlayerEffectsParams) {
     }
   }, [saveProgress, saveProgressKeepalive, stopSession, videoRef])
 
+  // 卸载时需读取 ref 的最新值（清 timer / 上报进度）。通过稳定回调间接访问，
+  // 既保留“取最新值”的语义，也避免 exhaustive-deps 对 cleanup 内 ref.current 的误报。
+  const flushProgressOnUnmount = useCallback(() => {
+    try { saveProgressRef.current() } catch { /* noop */ }
+  }, [saveProgressRef])
+
+  const clearPlayerTimers = useCallback(() => {
+    if (shortcutTimerRef.current) clearTimeout(shortcutTimerRef.current)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+  }, [shortcutTimerRef, hideTimerRef])
+
   useEffect(() => {
     return () => {
-      try { saveProgressRef.current() } catch { /* noop */ }
+      flushProgressOnUnmount()
       try { stopSession() } catch { /* noop */ }
-      if (shortcutTimerRef.current) clearTimeout(shortcutTimerRef.current)
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+      clearPlayerTimers()
       try { cleanupPreload() } catch { /* noop */ }
     }
-  }, [stopSession, cleanupPreload, saveProgressRef, shortcutTimerRef, hideTimerRef])
+  }, [stopSession, cleanupPreload, flushProgressOnUnmount, clearPlayerTimers])
 
   useEffect(() => {
     throttledMouseMoveRef.current = throttle((_e: unknown) => {
@@ -98,5 +108,5 @@ export function usePlayerEffects(params: PlayerEffectsParams) {
       throttledMouseMoveRef.current = null
       throttledVolumeChangeRef.current = null
     }
-  }, [resetHideTimer, videoRef, lastVolumeRef])
+  }, [resetHideTimer, videoRef, lastVolumeRef, throttledMouseMoveRef, throttledVolumeChangeRef])
 }
