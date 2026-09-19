@@ -496,6 +496,7 @@
       "statusActive": "Active",
       "statusPending": "Pending",
       "statusAll": "All",
+      "viewAllPending": "View all ({{count}})",
       "approve": "Approve",
       "reject": "Reject",
       "resetPassword": "Reset Password",

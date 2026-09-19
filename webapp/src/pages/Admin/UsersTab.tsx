@@ -201,7 +201,19 @@ export default function UsersTab() {
           {pendingUsers.length > 0 ? `，${t('admin.users.pending', { count: pendingUsers.length })}` : ''}
         </span>
         <div className="admin-search">
-          <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder={t('admin.users.searchPlaceholder')} aria-label={t('admin.users.searchPlaceholder')} />
+          <input
+            type="search"
+            value={searchInput}
+            onChange={e => {
+              const value = e.target.value
+              setSearchInput(value)
+              // 搜索默认覆盖全部审批状态：从"已通过"自动切到"全部"，
+              // 避免搜待审批用户时显示"无匹配"（切换在状态选择器中可见）
+              if (value.trim() && statusFilter === 'active') setStatusFilter('all')
+            }}
+            placeholder={t('admin.users.searchPlaceholder')}
+            aria-label={t('admin.users.searchPlaceholder')}
+          />
         </div>
         <select className="admin-btn" value={roleFilter} onChange={e => setRoleFilter(e.target.value as RoleFilter)} aria-label={t('admin.users.roleFilter')}>
           <option value="all">{t('admin.users.allRoles')}</option>
@@ -233,6 +245,20 @@ export default function UsersTab() {
                 </div>
               </div>
             ))}
+            {(pendingData?.total ?? 0) > pendingUsers.length && (
+              <div className="admin-pending-more">
+                <button
+                  className="admin-btn"
+                  onClick={() => {
+                    setSearchInput('')
+                    setStatusFilter('pending')
+                    setPage(0)
+                  }}
+                >
+                  {t('admin.users.viewAllPending', { count: pendingData?.total ?? 0 })}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -265,11 +291,27 @@ export default function UsersTab() {
                         {isSelf && <span className="admin-badge">{t('admin.users.currentAccount')}</span>}
                       </td>
                       <td className="admin-col-status">
-                        <span className={`admin-status-dot ${u.hasActiveToken ? 'online' : ''}`} />
-                        {u.hasActiveToken ? t('admin.users.online') : t('admin.users.offline')}
+                        {!u.approved ? (
+                          <span className="admin-badge admin-badge-pending">{t('admin.users.statusPending')}</span>
+                        ) : (
+                          <>
+                            <span className={`admin-status-dot ${u.hasActiveToken ? 'online' : ''}`} />
+                            {u.hasActiveToken ? t('admin.users.online') : t('admin.users.offline')}
+                          </>
+                        )}
                       </td>
                       <td className="admin-col-date">{u.createdAt ? new Date(u.createdAt).toLocaleDateString('zh-CN') : '--'}</td>
                       <td className="admin-col-actions">
+                        {!u.approved && (
+                          <>
+                            <button className="admin-icon-btn admin-icon-btn-primary" title={t('admin.users.approve')} aria-label={`${t('admin.users.approve')}：${u.username}`} onClick={() => handleApprove(u, true)}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+                            </button>
+                            <button className="admin-icon-btn admin-icon-btn-danger" title={t('admin.users.reject')} aria-label={`${t('admin.users.reject')}：${u.username}`} onClick={() => handleApprove(u, false)}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          </>
+                        )}
                         <button className="admin-icon-btn" title={t('admin.users.resetPassword')} aria-label={`${t('admin.users.resetPassword')}：${u.username}`} onClick={() => { setPwUserId(u.id); setPwValue(''); setPwMsg('') }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                         </button>

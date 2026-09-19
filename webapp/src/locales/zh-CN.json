@@ -496,6 +496,7 @@
       "statusActive": "已通过",
       "statusPending": "待审批",
       "statusAll": "全部",
+      "viewAllPending": "查看全部（{{count}}）",
       "approve": "通过",
       "reject": "拒绝",
       "resetPassword": "重置密码",

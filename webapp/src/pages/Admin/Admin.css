@@ -1216,3 +1216,21 @@
     transition: none !important;
   }
 }
+
+/* 待审批状态徽标与通过按钮（用户表格内联操作） */
+.admin-badge-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  margin-left: 0;
+}
+
+.admin-icon-btn-primary:hover {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+}
+
+.admin-pending-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 4px;
+}
