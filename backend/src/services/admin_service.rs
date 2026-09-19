@@ -42,6 +42,21 @@ impl AdminService {
         Ok(users)
     }
 
+    /// 分页 + 搜索/筛选的用户列表（管理端）。
+    pub async fn list_users_paged(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        role: Option<&str>,
+        page: i64,
+        size: i64,
+    ) -> Result<(Vec<UserWithStatus>, i64), ServiceError> {
+        Ok(self
+            .user_repo
+            .list_users_paged(search, status, role, page, size)
+            .await?)
+    }
+
     /// 待审批注册用户数（管理导航徽标轮询用）。
     pub async fn count_pending_users(&self) -> Result<i64, ServiceError> {
         Ok(self.user_repo.count_pending_users().await?)

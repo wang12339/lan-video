@@ -74,6 +74,8 @@ export default defineConfig({
       '/videos': 'http://localhost:8082',
       '/auth': 'http://localhost:8082',
       '/admin': 'http://localhost:8082',
+      '/track': 'http://localhost:8082',
+      '/client-errors': 'http://localhost:8082',
       '/playback': 'http://localhost:8082',
       '/media': 'http://localhost:8082',
       '/health': 'http://localhost:8082',

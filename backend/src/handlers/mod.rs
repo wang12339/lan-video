@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod chat;
+pub mod client_errors;
 pub mod comments;
 pub mod gateway;
 pub mod playback;

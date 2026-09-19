@@ -107,3 +107,20 @@ pub struct AdminResetPasswordRequest {
 pub struct ApproveRequest {
     pub approved: bool,
 }
+
+// ── admin_users ──
+
+/// GET /admin/users 查询参数：服务端搜索/筛选/分页
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct AdminUsersQuery {
+    /// 用户名或邮箱模糊搜索
+    pub search: Option<String>,
+    /// 审批状态：active（已通过，默认）| pending（待审批）| all（全部）
+    pub status: Option<String>,
+    /// 角色：all（默认）| admin | user
+    pub role: Option<String>,
+    /// 页码（0 基）
+    pub page: Option<i64>,
+    /// 每页条数（默认 20，最大 200）
+    pub size: Option<i64>,
+}

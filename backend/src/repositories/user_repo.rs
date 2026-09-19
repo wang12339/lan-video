@@ -546,6 +546,85 @@ impl UserRepository {
         Ok(users)
     }
 
+    /// 服务端分页 + 搜索/筛选的用户列表（管理端用）。
+    ///
+    /// - `search`：用户名或邮箱 ILIKE 模糊匹配（`%`/`_` 已转义）
+    /// - `status`：`active`（已通过）/ `pending`（待审批）/ 其它值不过滤
+    /// - `role`：`admin`（role >= 3）/ `user`（role < 3）/ 其它值不过滤
+    ///
+    /// 返回 `(当前页用户, 符合条件的总数)`。
+    pub async fn list_users_paged(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        role: Option<&str>,
+        page: i64,
+        size: i64,
+    ) -> Result<(Vec<UserWithStatus>, i64), sqlx::Error> {
+        let mut count_builder = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM users u WHERE 1=1");
+        Self::push_user_filters(&mut count_builder, search, status, role);
+        let total: i64 = count_builder
+            .build_query_scalar()
+            .fetch_one(&self.pool)
+            .await?;
+
+        let offset = page.saturating_mul(size);
+        let mut builder = sqlx::QueryBuilder::new(
+            r#"SELECT u.id, u.username, u.approved, u.role >= 3 AS is_admin, u.role, u.avatar_url, u.created_at, u.is_guest,
+                      EXISTS(SELECT 1 FROM auth_tokens t WHERE t.user_id = u.id AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked) AS has_active_token
+               FROM users u WHERE 1=1"#,
+        );
+        Self::push_user_filters(&mut builder, search, status, role);
+        builder.push(" ORDER BY u.created_at DESC LIMIT ");
+        builder.push_bind(size);
+        builder.push(" OFFSET ");
+        builder.push_bind(offset);
+
+        let users = builder
+            .build_query_as::<UserWithStatus>()
+            .fetch_all(&self.pool)
+            .await?;
+        Ok((users, total))
+    }
+
+    fn push_user_filters(
+        builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+        search: Option<&str>,
+        status: Option<&str>,
+        role: Option<&str>,
+    ) {
+        if let Some(s) = search {
+            let escaped = s
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let pattern = format!("%{escaped}%");
+            builder.push(" AND (u.username ILIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR u.email ILIKE ");
+            builder.push_bind(pattern);
+            builder.push(")");
+        }
+        match status {
+            Some("active") => {
+                builder.push(" AND u.approved = TRUE");
+            }
+            Some("pending") => {
+                builder.push(" AND u.approved = FALSE");
+            }
+            _ => {}
+        }
+        match role {
+            Some("admin") => {
+                builder.push(" AND u.role >= 3");
+            }
+            Some("user") => {
+                builder.push(" AND u.role < 3");
+            }
+            _ => {}
+        }
+    }
+
     /// Permanently delete a user and all their tokens.
     ///
     /// **SQL**: Two statements in sequence:

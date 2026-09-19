@@ -22,7 +22,29 @@ fn sanitize_log_field(s: &str) -> String {
     out
 }
 
-/// POST /admin/track — 记录用户操作
+/// 共享埋点写入：按用户限速 + 字段清洗 + tracing。
+///
+/// 每用户 120 次/60s，超限静默丢弃（返回 204，避免前端重试风暴）。
+async fn record_track(state: &AppState, auth_user: &AuthUser, req: &TrackRequest) -> StatusCode {
+    if state
+        .rate_limiter
+        .check_with(&format!("track:{}", auth_user.id), 120, 60, 0)
+        .await
+        .is_err()
+    {
+        return StatusCode::NO_CONTENT;
+    }
+    tracing::info!(
+        user = %auth_user.username,
+        action = %sanitize_log_field(&req.action),
+        target = %sanitize_log_field(req.target.as_deref().unwrap_or("")),
+        page = %sanitize_log_field(req.page.as_deref().unwrap_or("")),
+        "用户操作"
+    );
+    StatusCode::NO_CONTENT
+}
+
+/// POST /admin/track — 记录用户操作（历史路径，保留兼容旧客户端）
 #[utoipa::path(
     post,
     path = "/admin/track",
@@ -37,18 +59,33 @@ fn sanitize_log_field(s: &str) -> String {
     )
 )]
 pub async fn track_action(
-    _state: State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<TrackRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    tracing::info!(
-        user = %auth_user.username,
-        action = %sanitize_log_field(&req.action),
-        target = %sanitize_log_field(req.target.as_deref().unwrap_or("")),
-        page = %sanitize_log_field(req.page.as_deref().unwrap_or("")),
-        "用户操作"
-    );
-    Ok(StatusCode::NO_CONTENT)
+    Ok(record_track(&state, &auth_user, &req).await)
+}
+
+/// POST /track — 记录用户操作（普通用户埋点路径，避免 /admin 命名空间混淆）
+#[utoipa::path(
+    post,
+    path = "/track",
+    tag = "user",
+    description = "记录用户操作日志（页面、动作、目标），仅返回 204；按用户限速",
+    security(("bearerAuth" = [])),
+    request_body = TrackRequest,
+    responses(
+        (status = 204, description = "Action recorded"),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
+pub async fn track_action_public(
+    State(state): State<Arc<AppState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    SafeJson(req): SafeJson<TrackRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    Ok(record_track(&state, &auth_user, &req).await)
 }
 
 /// GET /admin/stats — 数据统计面板

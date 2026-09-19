@@ -56,11 +56,21 @@ function sanitizeUrl(href: string): string {
   }
 }
 
-/** 读取可选上报端点；未配置时返回 undefined（不发起任何网络请求） */
+/**
+ * 读取上报端点：
+ * - 未配置：默认同源 `/client-errors`（后端已提供，写入服务端日志）
+ * - `off` / `none` / 空串：显式关闭上报
+ * - 其它值：按自定义 URL 上报
+ */
 function getErrorReportUrl(): string | undefined {
   const env = import.meta.env as Record<string, string | undefined>
   const url = env.VITE_ERROR_REPORT_URL
-  return typeof url === 'string' && url.trim() !== '' ? url.trim() : undefined
+  if (typeof url === 'string') {
+    const trimmed = url.trim()
+    if (trimmed === '' || trimmed === 'off' || trimmed === 'none') return undefined
+    return trimmed
+  }
+  return '/client-errors'
 }
 
 async function reportError(error: Error, errorInfo: React.ErrorInfo, category: ErrorCategory) {

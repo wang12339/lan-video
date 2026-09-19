@@ -8,7 +8,7 @@ interface TrackData {
 
 export function track(data: TrackData): Promise<void> {
   if (!getToken()) return Promise.resolve()
-  return request('/admin/track', {
+  return request('/track', {
     method: 'POST',
     body: data,
     auth: true,

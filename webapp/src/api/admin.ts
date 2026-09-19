@@ -54,8 +54,35 @@ export type VideoListResponse = Omit<PaginatedVideoListResponse, 'items'> & {
 
 // ── 用户管理 ──
 
-export async function listUsers(): Promise<AdminUser[]> {
-  return request<AdminUser[]>('/admin/users');
+/** GET /admin/users 查询参数（服务端搜索/筛选/分页） */
+export interface AdminUsersQuery {
+  /** 用户名或邮箱模糊搜索 */
+  search?: string;
+  /** 审批状态：active（已通过，默认）| pending | all */
+  status?: 'active' | 'pending' | 'all';
+  /** 角色筛选 */
+  role?: 'all' | 'admin' | 'user';
+  /** 页码（0 基） */
+  page?: number;
+  /** 每页条数（默认 20，最大 200） */
+  size?: number;
+}
+
+export interface AdminUsersPage {
+  items: AdminUser[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export async function listUsers(params: AdminUsersQuery = {}): Promise<AdminUsersPage> {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set('search', params.search);
+  if (params.status) qs.set('status', params.status);
+  if (params.role && params.role !== 'all') qs.set('role', params.role);
+  qs.set('page', String(Math.max(0, params.page ?? 0)));
+  qs.set('size', String(params.size ?? 20));
+  return request<AdminUsersPage>(`/admin/users?${qs}`);
 }
 
 export async function deleteUser(id: string): Promise<void> {

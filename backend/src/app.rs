@@ -437,6 +437,8 @@ pub async fn build_router(config: AppConfig) -> Router {
                 post(handlers::auth::send_verification_email),
             )
             .route("/admin/track", post(handlers::admin::track_action))
+            // 普通用户埋点路径（与 /admin/track 同一处理器，仅命名空间更清晰）
+            .route("/track", post(handlers::admin::track_action_public))
             .route(
                 "/recommendations",
                 get(handlers::recommendations::get_recommendations),
@@ -739,6 +741,11 @@ pub async fn build_router(config: AppConfig) -> Router {
             // Login and register must be accessible without auth
             .route("/auth/register", post(handlers::auth::register))
             .route("/auth/login", post(handlers::auth::login))
+            // 前端崩溃上报：sendBeacon 无法带鉴权头，故公开 + IP 限速
+            .route(
+                "/client-errors",
+                post(handlers::client_errors::report_client_error),
+            )
             // 访客模式：无会话访问者创建匿名影子账号（IP 限速在服务层）
             .route("/auth/guest", post(handlers::auth::guest_session))
             // Auth Gateway SSO（GATEWAY_* 未配置时返回 404）

@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useAuth } from '../../context/AuthContext'
 import { listUsers, deleteUser, resetUserPassword, toggleUserAdmin, approveUser, kickUser, PENDING_USERS_CHANGED_EVENT } from '../../api/admin'
-import type { AdminUser } from '../../api/admin'
+import type { AdminUser, AdminUsersPage } from '../../api/admin'
 import { useDebouncedValue } from '../../utils/throttle'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useAlertDialog } from '../../hooks/useAlertDialog'
@@ -14,16 +14,18 @@ const PAGE_SIZE = 8
 const SEARCH_DEBOUNCE_MS = 300
 
 type RoleFilter = 'all' | 'admin' | 'user'
+type StatusFilter = 'active' | 'pending' | 'all'
 
 export default function UsersTab() {
   const { t } = useTranslation()
   const { user: currentUser } = useAuth()
   const queryClient = useQueryClient()
 
-  // 搜索 / 角色筛选 / 分页
+  // 搜索 / 角色 / 审批状态 / 分页（全部由服务端处理）
   const [searchInput, setSearchInput] = useState('')
   const debouncedSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS)
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
   const [page, setPage] = useState(0)
 
   // Password reset
@@ -38,18 +40,41 @@ export default function UsersTab() {
   const { alertMsg, showAlert, closeAlert } = useAlertDialog()
 
   // ──────────────────────────────────────────────────────────────
-  // React Query: 获取用户列表
-  // NOTE: 后端 GET /admin/users 不支持 search/page 参数，当前为全量加载 + 前端过滤。
-  //       若后续后端支持 ?search=&page=&size=，可将参数传入 listUsers() 实现真正的服务端搜索。
+  // React Query: 用户列表（服务端搜索/筛选/分页）
   // ──────────────────────────────────────────────────────────────
-  const { data: users = [], isLoading, error, refetch } = useQuery<AdminUser[]>({
-    queryKey: ['admin-users'],
-    queryFn: listUsers,
+  const { data, isLoading, error, refetch } = useQuery<AdminUsersPage>({
+    queryKey: ['admin-users', 'list', debouncedSearch, roleFilter, statusFilter, page],
+    queryFn: () =>
+      listUsers({
+        search: debouncedSearch.trim() || undefined,
+        status: statusFilter,
+        role: roleFilter,
+        page,
+        size: PAGE_SIZE,
+      }),
+    staleTime: 30_000,
+    // 翻页/筛选时保留上一页数据，避免整表闪烁
+    placeholderData: keepPreviousData,
+  })
+  const users = data?.items ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  // 待审批列表独立查询（不受表格筛选/分页影响）
+  const { data: pendingData } = useQuery<AdminUsersPage>({
+    queryKey: ['admin-users', 'pending'],
+    queryFn: () => listUsers({ status: 'pending', page: 0, size: 100 }),
     staleTime: 30_000,
   })
+  const pendingUsers = (pendingData?.items ?? []).filter(u => !u.isAdmin)
 
   // 筛选条件变化时回到第一页
-  useEffect(() => { setPage(0) }, [debouncedSearch, roleFilter])
+  useEffect(() => { setPage(0) }, [debouncedSearch, roleFilter, statusFilter])
+
+  // 删除/筛选后页码越界自动修正
+  useEffect(() => {
+    setPage(p => Math.min(p, totalPages - 1))
+  }, [totalPages])
 
   const handleDelete = (u: AdminUser) => {
     if (u.isAdmin) {
@@ -158,33 +183,7 @@ export default function UsersTab() {
     })
   }
 
-  // 防抖后的搜索关键词用于过滤，避免每次按键都重新计算
-  const pendingUsers = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase()
-    return users.filter(u => !u.approved && !u.isAdmin && (!q || u.username.toLowerCase().includes(q)))
-  }, [users, debouncedSearch])
-
-  const filteredUsers = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase()
-    return users.filter(u => {
-      if (u.approved || u.isAdmin) {
-        if (roleFilter === 'admin' && !u.isAdmin) return false
-        if (roleFilter === 'user' && u.isAdmin) return false
-        return !q || u.username.toLowerCase().includes(q)
-      }
-      return false
-    })
-  }, [users, roleFilter, debouncedSearch])
-
-  // 删除/筛选后页码越界自动修正
-  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE))
-  useEffect(() => {
-    setPage(p => Math.min(p, totalPages - 1))
-  }, [totalPages])
-
-  const pageUsers = useMemo(() => filteredUsers.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [filteredUsers, page])
-
-  if (isLoading) return <SkeletonLoader type="card" lines={5} />
+  if (isLoading && !data) return <SkeletonLoader type="card" lines={5} />
   if (error) {
     return (
       <div className="admin-error">
@@ -198,16 +197,21 @@ export default function UsersTab() {
     <div className="admin-tab-content">
       <div className="admin-toolbar">
         <span className="admin-toolbar-info">
-          {t('admin.users.total', { count: users.length })}
+          {t('admin.users.total', { count: total })}
           {pendingUsers.length > 0 ? `，${t('admin.users.pending', { count: pendingUsers.length })}` : ''}
         </span>
         <div className="admin-search">
-          <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder={t('admin.users.username')} aria-label={t('admin.users.username')} />
+          <input type="search" value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder={t('admin.users.searchPlaceholder')} aria-label={t('admin.users.searchPlaceholder')} />
         </div>
         <select className="admin-btn" value={roleFilter} onChange={e => setRoleFilter(e.target.value as RoleFilter)} aria-label={t('admin.users.roleFilter')}>
           <option value="all">{t('admin.users.allRoles')}</option>
           <option value="admin">{t('admin.users.admin')}</option>
           <option value="user">{t('admin.users.regularUser')}</option>
+        </select>
+        <select className="admin-btn" value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)} aria-label={t('admin.users.statusFilter')}>
+          <option value="active">{t('admin.users.statusActive')}</option>
+          <option value="pending">{t('admin.users.statusPending')}</option>
+          <option value="all">{t('admin.users.statusAll')}</option>
         </select>
         <button className="admin-btn" onClick={() => refetch()}>{t('admin.users.refresh')}</button>
       </div>
@@ -233,7 +237,7 @@ export default function UsersTab() {
         </div>
       )}
 
-      {pageUsers.length === 0 ? (
+      {users.length === 0 ? (
         <div className="admin-empty">{t('admin.users.noMatch')}</div>
       ) : (
         <>
@@ -249,7 +253,7 @@ export default function UsersTab() {
                 </tr>
               </thead>
               <tbody>
-                {pageUsers.map(u => {
+                {users.map(u => {
                   const isSelf = u.id === currentUser?.id
                   return (
                     <tr key={u.id}>
@@ -296,7 +300,7 @@ export default function UsersTab() {
           {totalPages > 1 && (
             <div className="admin-pagination">
               <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>{t('admin.media.prevPage')}</button>
-              <span>{t('admin.users.pageInfo', { page: page + 1, total: totalPages, count: filteredUsers.length })}</span>
+              <span>{t('admin.users.pageInfo', { page: page + 1, total: totalPages, count: total })}</span>
               <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>{t('admin.media.nextPage')}</button>
             </div>
           )}

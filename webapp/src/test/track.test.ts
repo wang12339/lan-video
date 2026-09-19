@@ -28,7 +28,7 @@ describe('track', () => {
   it('sends request with auth and silent when logged in', async () => {
     mockedGetToken.mockReturnValue('tok123')
     await track({ action: '点击', target: 'x' })
-    expect(mockedRequest).toHaveBeenCalledWith('/admin/track', {
+    expect(mockedRequest).toHaveBeenCalledWith('/track', {
       method: 'POST',
       body: { action: '点击', target: 'x', page: undefined },
       auth: true,

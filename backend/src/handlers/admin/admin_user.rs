@@ -1,12 +1,12 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Extension, Json,
 };
 use std::sync::Arc;
 
 use crate::middleware::auth::{invalidate_media_auth_user, AuthUser};
-use crate::models::admin::{AdminResetPasswordRequest, ApproveRequest};
+use crate::models::admin::{AdminResetPasswordRequest, AdminUsersQuery, ApproveRequest};
 use crate::models::video::OkResponse;
 use crate::state::AppState;
 use crate::util::response::{error_response, ErrorResponse, SafeJson};
@@ -29,8 +29,15 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
     path = "/admin/users",
     tag = "admin",
     summary = "List users",
-    description = "返回用户列表（含审批状态、角色、活跃令牌等）",
+    description = "返回用户列表（含审批状态、角色、活跃令牌等），支持服务端搜索/筛选/分页",
     security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("search" = Option<String>, Query, description = "用户名或邮箱模糊搜索"),
+        ("status" = Option<String>, Query, description = "审批状态：active（已通过，默认）| pending | all"),
+        ("role" = Option<String>, Query, description = "角色：all（默认）| admin | user"),
+        ("page" = Option<i64>, Query, description = "页码（0 基，默认 0）"),
+        ("size" = Option<i64>, Query, description = "每页条数（默认 20，最大 200）")
+    ),
     responses(
         (status = 200, description = "User list", body = serde_json::Value),
         (status = 401, description = "Unauthorized"),
@@ -39,17 +46,39 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
 )]
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
-) -> Result<
-    Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
-    (StatusCode, Json<ErrorResponse>),
-> {
-    let users = state
+    Query(params): Query<AdminUsersQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let page = params.page.unwrap_or(0).clamp(0, 1_000_000);
+    let size = params.size.unwrap_or(20).clamp(1, 200);
+    let search = params
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    // 默认只看已通过用户（待审批在独立区块展示）；status=all 时不过滤
+    let status = match params.status.as_deref() {
+        Some("pending") => Some("pending"),
+        Some("all") => None,
+        _ => Some("active"),
+    };
+    let role = match params.role.as_deref() {
+        Some("admin") => Some("admin"),
+        Some("user") => Some("user"),
+        _ => None,
+    };
+
+    let (items, total) = state
         .services
         .admin
-        .list_users()
+        .list_users_paged(search, status, role, page, size)
         .await
         .map_err(map_admin_err)?;
-    Ok(Json(users))
+    Ok(Json(serde_json::json!({
+        "items": items,
+        "total": total,
+        "page": page,
+        "size": size,
+    })))
 }
 
 /// GET /admin/users/pending/count — 待审批注册用户数。
