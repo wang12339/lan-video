@@ -26,42 +26,42 @@ pub async fn track_action(
 /// GET /admin/stats — 数据统计面板
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let by_type = state
         .repos
         .video
-        .count_by_type(auth_user.tenant_id)
+        .count_by_type()
         .await
         .map_err(|e| internal_error_log("count_by_type", &e))?;
     let by_category = state
         .repos
         .video
-        .count_by_category(auth_user.tenant_id)
+        .count_by_category()
         .await
         .map_err(|e| internal_error_log("count_by_category", &e))?;
     let total_views = state
         .repos
         .video
-        .total_views(auth_user.tenant_id)
+        .total_views()
         .await
         .map_err(|e| internal_error_log("total_views", &e))?;
     let total_duration = state
         .repos
         .video
-        .total_duration_secs(auth_user.tenant_id)
+        .total_duration_secs()
         .await
         .map_err(|e| internal_error_log("total_duration", &e))?;
     let user_count = state
         .repos
         .user
-        .count_users(auth_user.tenant_id)
+        .count_users()
         .await
         .map_err(|e| internal_error_log("count_users", &e))?;
     let pending_count = state
         .repos
         .user
-        .count_pending_users(auth_user.tenant_id)
+        .count_pending_users()
         .await
         .map_err(|e| internal_error_log("count_pending", &e))?;
 

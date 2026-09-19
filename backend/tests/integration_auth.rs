@@ -27,7 +27,6 @@ const STRONG_PASSWORD: &str = "Str0ng!Pass1";
 fn auth_service(state: &atmos_video_backend::state::AppState) -> AuthService {
     AuthService::new(
         state.repos.user.clone(),
-        state.repos.tenant.clone(),
         state.services.playback.clone(),
         state.rate_limiter.clone(),
         state.ip_rate_limiter.clone(),
@@ -44,7 +43,6 @@ async fn register_user(svc: &AuthService, username: &str, password: &str) {
                 password: password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register should not error");
@@ -60,7 +58,7 @@ async fn approve_user(state: &atmos_video_backend::state::AppState, username: &s
     let user = state
         .repos
         .user
-        .find_by_username(1, username)
+        .find_by_username(username)
         .await
         .expect("find user")
         .expect("user should exist");
@@ -73,10 +71,21 @@ async fn approve_user(state: &atmos_video_backend::state::AppState, username: &s
     user.id
 }
 
+/// 全局注册开关的读写需要串行化：测试并行运行时，某个用例的清理写 false
+/// 可能恰好落在另一个用例 set_enabled(true) 与 build_router 读取之间，
+/// 导致 register 意外返回 404。
+static REGISTRATION_FLAG_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+fn registration_flag_lock() -> &'static tokio::sync::Mutex<()> {
+    REGISTRATION_FLAG_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// Helper: build the full HTTP router with registration enabled in the DB,
 /// returning the app plus a pool for direct repo access in assertions.
 async fn build_http_app() -> (Router, sqlx::PgPool) {
     let pool = test_pool().await;
+    let _guard = registration_flag_lock().lock().await;
     RegistrationRepository::new(pool.clone())
         .set_enabled(true)
         .await
@@ -86,6 +95,15 @@ async fn build_http_app() -> (Router, sqlx::PgPool) {
         .await
         .layer(MockConnectInfo(addr));
     (app, pool)
+}
+
+/// 恢复注册开关为关闭，与 build_http_app 共用同一把锁，避免竞态。
+async fn restore_registration_disabled(pool: &sqlx::PgPool) {
+    let _guard = registration_flag_lock().lock().await;
+    RegistrationRepository::new(pool.clone())
+        .set_enabled(false)
+        .await
+        .expect("restore registration flag");
 }
 
 async fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
@@ -130,7 +148,6 @@ async fn test_register_login_get_user() {
                 password: password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register should not error");
@@ -144,7 +161,7 @@ async fn test_register_login_get_user() {
 
     // Get user info directly (simulating admin lookup)
     let user_info = svc
-        .user_info(&username, false, 1)
+        .user_info(&username, false)
         .await
         .expect("user_info should not error");
 
@@ -175,7 +192,6 @@ async fn test_register_username_length_boundaries() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -191,7 +207,6 @@ async fn test_register_username_length_boundaries() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -206,7 +221,6 @@ async fn test_register_username_length_boundaries() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -227,7 +241,6 @@ async fn test_register_username_length_boundaries() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -252,7 +265,6 @@ async fn test_register_empty_username_or_password() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -266,7 +278,6 @@ async fn test_register_empty_username_or_password() {
                 password: "".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -291,7 +302,6 @@ async fn test_register_password_length_boundaries() {
                 password: "Abcdef1".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -307,7 +317,6 @@ async fn test_register_password_length_boundaries() {
                 password: "Abcdef1!".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -322,7 +331,6 @@ async fn test_register_password_length_boundaries() {
                 password: "A".repeat(129),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -339,7 +347,6 @@ async fn test_register_password_length_boundaries() {
                 password: std::mem::take(&mut long),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -369,7 +376,6 @@ async fn test_register_weak_password_rejected() {
                     password: weak.to_string(),
                 },
                 "127.0.0.1",
-                1,
             )
             .await
             .expect("register");
@@ -399,7 +405,6 @@ async fn test_register_username_control_chars_rejected() {
                     password: STRONG_PASSWORD.into(),
                 },
                 "127.0.0.1",
-                1,
             )
             .await
             .expect("register");
@@ -427,7 +432,6 @@ async fn test_register_username_trimmed() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -437,7 +441,7 @@ async fn test_register_username_trimmed() {
     );
 
     // Stored username must be trimmed
-    let info = svc.user_info(&username, false, 1).await.expect("user_info");
+    let info = svc.user_info(&username, false).await.expect("user_info");
     assert_eq!(info.username, username);
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
@@ -463,7 +467,6 @@ async fn test_register_password_whitespace_preserved() {
                 password: spaced.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -479,7 +482,6 @@ async fn test_register_password_whitespace_preserved() {
                 password: spaced.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -496,7 +498,6 @@ async fn test_register_password_whitespace_preserved() {
                 password: "SpacedPass1!".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -528,8 +529,8 @@ async fn test_register_concurrent_same_username_race() {
         password: STRONG_PASSWORD.into(),
     };
     let (r1, r2) = tokio::join!(
-        svc.register(&req_a, "127.0.0.1", 1),
-        svc.register(&req_b, "127.0.0.1", 1),
+        svc.register(&req_a, "127.0.0.1"),
+        svc.register(&req_b, "127.0.0.1"),
     );
 
     let r1 = r1.expect("register");
@@ -567,7 +568,6 @@ async fn test_login_unapproved_user_rejected() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -598,7 +598,6 @@ async fn test_login_approved_user_succeeds() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -640,7 +639,6 @@ async fn test_login_username_trimmed() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -671,7 +669,6 @@ async fn test_login_single_session_enforced() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -687,7 +684,6 @@ async fn test_login_single_session_enforced() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -739,7 +735,7 @@ async fn test_login_admin_multiple_sessions_allowed() {
     state
         .repos
         .user
-        .create_user(1, &username, &hash, 3)
+        .create_user(&username, &hash, 3)
         .await
         .expect("create admin");
 
@@ -750,7 +746,6 @@ async fn test_login_admin_multiple_sessions_allowed() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -764,7 +759,6 @@ async fn test_login_admin_multiple_sessions_allowed() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -795,7 +789,6 @@ async fn test_login_enumeration_response_consistency() {
                 password: "TotallyWrong!9".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -809,7 +802,6 @@ async fn test_login_enumeration_response_consistency() {
                 password: "TotallyWrong!9".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -842,7 +834,6 @@ async fn test_logout() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -857,7 +848,7 @@ async fn test_logout() {
     let user = state
         .repos
         .user
-        .find_by_username(1, &username)
+        .find_by_username(&username)
         .await
         .expect("find user")
         .expect("user should exist");
@@ -1059,7 +1050,7 @@ async fn test_user_info_nonexistent_user() {
     let svc = auth_service(&state);
     let ghost = unique_username("ghost_info");
 
-    let info = svc.user_info(&ghost, false, 1).await.expect("user_info");
+    let info = svc.user_info(&ghost, false).await.expect("user_info");
     assert_eq!(info.id, 0, "nonexistent user should have id 0");
     assert_eq!(info.username, ghost);
     assert!(!info.email_verified);
@@ -1079,7 +1070,7 @@ async fn test_user_info_after_email_update() {
     register_user(&svc, &username, STRONG_PASSWORD).await;
     let user_id = approve_user(&state, &username).await;
 
-    let before = svc.user_info(&username, false, 1).await.expect("user_info");
+    let before = svc.user_info(&username, false).await.expect("user_info");
     assert!(before.email.is_none(), "no email before update");
 
     state
@@ -1089,7 +1080,7 @@ async fn test_user_info_after_email_update() {
         .await
         .expect("update email");
 
-    let after = svc.user_info(&username, false, 1).await.expect("user_info");
+    let after = svc.user_info(&username, false).await.expect("user_info");
     assert_eq!(after.email.as_deref(), Some("info@example.com"));
     assert!(
         !after.email_verified,
@@ -1205,7 +1196,7 @@ async fn test_email_verification_flow_single_use() {
         .verify_email(user_id)
         .await
         .expect("verify");
-    let info = svc.user_info(&username, false, 1).await.expect("user_info");
+    let info = svc.user_info(&username, false).await.expect("user_info");
     assert!(info.email_verified);
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
@@ -1286,7 +1277,7 @@ async fn test_update_avatar_persisted() {
     let user = state
         .repos
         .user
-        .find_by_username(1, &username)
+        .find_by_username(&username)
         .await
         .expect("find")
         .expect("user");
@@ -1309,66 +1300,6 @@ async fn test_update_avatar_persisted() {
 // ── Role boundaries ──
 
 #[tokio::test]
-async fn test_first_user_becomes_admin_with_env_flag() {
-    let Some(_) = database_url() else {
-        eprintln!("DATABASE_URL not set, skipping");
-        return;
-    };
-
-    // Create a dedicated tenant that has no users yet, so count == 0.
-    let pool = test_pool().await;
-    let slug = format!("t_tenant_{}_{}", std::process::id(), unique_username("u"));
-    let (tenant_id,): (i64,) =
-        sqlx::query_as("INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id")
-            .bind(&slug)
-            .bind(&slug)
-            .fetch_one(&pool)
-            .await
-            .expect("create temp tenant");
-
-    let mut config = test_config();
-    config.allow_first_user_admin = true;
-    let state = test_app_state_with_config(config).await;
-    let svc = auth_service(&state);
-    let username = unique_username("first_admin");
-
-    let reg = svc
-        .register(
-            &AuthRequest {
-                username: username.clone(),
-                password: STRONG_PASSWORD.into(),
-            },
-            "127.0.0.1",
-            tenant_id,
-        )
-        .await
-        .expect("register");
-
-    assert!(reg.ok, "first user registration should succeed");
-    assert!(
-        reg.token.is_some(),
-        "opt-in first user should get an admin token"
-    );
-
-    let user = state
-        .repos
-        .user
-        .find_by_username(tenant_id, &username)
-        .await
-        .expect("find")
-        .expect("user");
-    assert!(user.role >= 3, "first user should be promoted to admin");
-    assert!(user.approved, "admin is auto-approved");
-
-    cleanup_test_user(&pool, &username).await;
-    sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup temp tenant");
-}
-
-#[tokio::test]
 async fn test_role_boundaries_viewer_vs_admin() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
@@ -1386,7 +1317,7 @@ async fn test_role_boundaries_viewer_vs_admin() {
     let viewer_row = state
         .repos
         .user
-        .find_by_username(1, &viewer)
+        .find_by_username(&viewer)
         .await
         .expect("find")
         .expect("viewer");
@@ -1398,13 +1329,13 @@ async fn test_role_boundaries_viewer_vs_admin() {
     state
         .repos
         .user
-        .create_user(1, &admin, &hash, 3)
+        .create_user(&admin, &hash, 3)
         .await
         .expect("create admin");
     let admin_row = state
         .repos
         .user
-        .find_by_username(1, &admin)
+        .find_by_username(&admin)
         .await
         .expect("find")
         .expect("admin");
@@ -1522,7 +1453,6 @@ async fn test_password_reset_full_flow() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -1536,7 +1466,6 @@ async fn test_password_reset_full_flow() {
                 password: new_password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -1840,10 +1769,7 @@ async fn test_http_register_login_logout_flow() {
         "token must be dead after logout"
     );
 
-    RegistrationRepository::new(pool.clone())
-        .set_enabled(false)
-        .await
-        .expect("restore registration flag");
+    restore_registration_disabled(&pool).await;
     cleanup_test_user(&pool, &username).await;
 }
 
@@ -1928,10 +1854,7 @@ async fn test_http_forgot_password_response_consistency() {
         "forgot-password should mint a reset token for a registered email"
     );
 
-    RegistrationRepository::new(pool.clone())
-        .set_enabled(false)
-        .await
-        .expect("restore registration flag");
+    restore_registration_disabled(&pool).await;
     cleanup_test_user(&pool, &username).await;
 }
 
@@ -1967,10 +1890,7 @@ async fn test_http_reset_password_invalid_token_rejected() {
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    RegistrationRepository::new(pool)
-        .set_enabled(false)
-        .await
-        .expect("restore registration flag");
+    restore_registration_disabled(&pool).await;
 }
 
 #[tokio::test]
@@ -2043,10 +1963,7 @@ async fn test_http_admin_endpoint_requires_admin() {
     .await;
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
-    RegistrationRepository::new(pool.clone())
-        .set_enabled(false)
-        .await
-        .expect("restore registration flag");
+    restore_registration_disabled(&pool).await;
     cleanup_test_user(&pool, &username).await;
 }
 
@@ -2114,10 +2031,7 @@ async fn test_http_malformed_tokens_rejected() {
     .await;
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
-    RegistrationRepository::new(pool)
-        .set_enabled(false)
-        .await
-        .expect("restore registration flag");
+    restore_registration_disabled(&pool).await;
 }
 
 // ── Invalid credentials ──
@@ -2142,7 +2056,6 @@ async fn test_login_wrong_password() {
                 password: password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -2156,7 +2069,6 @@ async fn test_login_wrong_password() {
                 password: "wrongpassword".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -2191,7 +2103,6 @@ async fn test_login_nonexistent_user() {
                 password: "whatever123".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login");
@@ -2220,7 +2131,6 @@ async fn test_register_short_password() {
                 password: "ab".into(), // too short
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -2249,7 +2159,6 @@ async fn test_register_duplicate_username() {
                 password: password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -2263,7 +2172,6 @@ async fn test_register_duplicate_username() {
                 password: password.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -2295,7 +2203,6 @@ async fn test_rate_limiting_on_login() {
                 password: STRONG_PASSWORD.into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("register");
@@ -2311,7 +2218,6 @@ async fn test_rate_limiting_on_login() {
                     password: "wrongpassword".into(),
                 },
                 "127.0.0.1",
-                1,
             )
             .await;
 
@@ -2337,93 +2243,6 @@ async fn test_rate_limiting_on_login() {
     }
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
-}
-
-/// 待审批计数：注册普通用户 +1，审批后回落；供管理端导航徽标轮询。
-///
-/// 使用独立临时租户，避免与并行运行的其他用例的注册/审批相互干扰。
-#[tokio::test]
-async fn test_pending_user_count_tracks_registrations() {
-    let Some(_) = database_url() else {
-        eprintln!("DATABASE_URL not set, skipping");
-        return;
-    };
-    let pool = test_pool().await;
-    let slug = format!("t_pending_{}_{}", std::process::id(), unique_username("u"));
-    let (tenant_id,): (i64,) =
-        sqlx::query_as("INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id")
-            .bind(&slug)
-            .bind(&slug)
-            .fetch_one(&pool)
-            .await
-            .expect("create temp tenant");
-
-    let state = test_app_state().await;
-    let svc = auth_service(&state);
-    let admin =
-        atmos_video_backend::services::admin_service::AdminService::new(state.repos.user.clone());
-
-    assert_eq!(
-        admin
-            .count_pending_users(tenant_id)
-            .await
-            .expect("count before"),
-        0,
-        "新租户应无待审批用户"
-    );
-
-    let username = unique_username("pending_cnt");
-    let reg = svc
-        .register(
-            &AuthRequest {
-                username: username.clone(),
-                password: STRONG_PASSWORD.into(),
-            },
-            "127.0.0.1",
-            tenant_id,
-        )
-        .await
-        .expect("register should not error");
-    assert!(reg.ok, "registration should succeed");
-    assert!(reg.token.is_none(), "待审批用户不应返回 token");
-
-    assert_eq!(
-        admin
-            .count_pending_users(tenant_id)
-            .await
-            .expect("count after"),
-        1,
-        "未审批注册应使待审批计数 +1"
-    );
-
-    let user = state
-        .repos
-        .user
-        .find_by_username(tenant_id, &username)
-        .await
-        .expect("find user")
-        .expect("user should exist");
-    state
-        .repos
-        .user
-        .approve_user(user.id, true)
-        .await
-        .expect("approve");
-
-    assert_eq!(
-        admin
-            .count_pending_users(tenant_id)
-            .await
-            .expect("count approved"),
-        0,
-        "审批通过后计数应回落"
-    );
-
-    cleanup_test_user(&pool, &username).await;
-    let _ = sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(&pool)
-        .await;
 }
 
 /// 管理员邮箱列表：只包含 role>=3 且邮箱非空的管理员（待审批通知收件人来源）。
@@ -2458,7 +2277,7 @@ async fn test_list_admin_emails_filters_admin_and_email() {
     let emails = state
         .repos
         .user
-        .list_admin_emails(1)
+        .list_admin_emails()
         .await
         .expect("list admin emails");
     assert!(emails.contains(&admin_email), "管理员邮箱应被包含");

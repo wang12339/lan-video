@@ -52,14 +52,12 @@ pub struct ShareLink {
     pub created_at: chrono::NaiveDateTime,
 }
 
-/// Ownership / tenant context of a video, used to authorize share creation
-/// (H-02): a share link may only be created by the video's uploader or an
-/// admin, and only within the video's own tenant.
+/// Ownership context of a video, used to authorize share creation (H-02):
+/// a share link may only be created by the video's uploader or an admin.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct VideoOwnership {
     #[sqlx(default)]
     pub uploader_id: Option<i64>,
-    pub tenant_id: i64,
 }
 
 #[derive(Clone)]
@@ -72,7 +70,7 @@ impl ShareRepository {
         Self { pool }
     }
 
-    /// Look up a video's uploader and tenant for share authorization.
+    /// Look up a video's uploader for share authorization.
     /// Returns `None` when the video does not exist — the caller must keep
     /// the existing 404 semantics and never reveal the video to callers who
     /// are not allowed to share it (H-02).
@@ -80,40 +78,35 @@ impl ShareRepository {
         &self,
         video_id: i64,
     ) -> Result<Option<VideoOwnership>, sqlx::Error> {
-        sqlx::query_as::<_, VideoOwnership>(
-            "SELECT uploader_id, tenant_id FROM videos WHERE id = $1",
-        )
-        .bind(video_id)
-        .fetch_optional(&self.pool)
-        .await
+        sqlx::query_as::<_, VideoOwnership>("SELECT uploader_id FROM videos WHERE id = $1")
+            .bind(video_id)
+            .fetch_optional(&self.pool)
+            .await
     }
 
     pub async fn create_share_link(
         &self,
-        tenant_id: i64,
         video_id: i64,
         user_id: i64,
         raw_token: &str,
         expires_at: Option<chrono::NaiveDateTime>,
     ) -> Result<ShareLink, sqlx::Error> {
         let token_hash = hash_share_token(raw_token);
-        // The share's tenant_id mirrors the video's tenant_id at creation
-        // time. The `v.tenant_id = $5` guard is defense-in-depth: the handler
+        // The `v.id = $1` guard is defense-in-depth: the handler
         // (handlers::shares::create_share_link) already enforces the H-02
-        // tenant boundary via `find_video_ownership`. INSERT ... SELECT also
-        // makes it impossible to create a share for a video that does not
+        // authorization boundary via `find_video_ownership`. INSERT ... SELECT
+        // also makes it impossible to create a share for a video that does not
         // exist (0 rows → RowNotFound → caller's 500).
         sqlx::query_as::<_, ShareLink>(
-            r#"INSERT INTO share_links (video_id, user_id, token_hash, expires_at, tenant_id)
-               SELECT $1, $2, $3, $4, v.tenant_id FROM videos v
-               WHERE v.id = $1 AND v.tenant_id = $5
+            r#"INSERT INTO share_links (video_id, user_id, token_hash, expires_at)
+               SELECT $1, $2, $3, $4 FROM videos v
+               WHERE v.id = $1
                RETURNING id, video_id, user_id, expires_at, created_at"#,
         )
         .bind(video_id)
         .bind(user_id)
         .bind(&token_hash)
         .bind(expires_at)
-        .bind(tenant_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -136,13 +129,9 @@ impl ShareRepository {
 
     /// Resolve a share link by its hashed token (expiry included).
     ///
-    /// NOTE (H-02): no `tenant_id` filter here on purpose. This is the
-    /// anonymous read path (GET /share/{token} and media_auth), and
-    /// `share_links.tenant_id` is currently never populated with a
-    /// non-default value (all rows are tenant 1). A one-sided filter would
-    /// also diverge from `media_auth` in middleware/auth.rs, which validates
-    /// tokens without a tenant condition. Revisit when tenants are actually
-    /// provisioned (H-01).
+    /// NOTE (H-02): this is the anonymous read path (GET /share/{token} and
+    /// media_auth), so the token itself is the only credential and lookup
+    /// stays unscoped.
     pub async fn is_valid_token_hash(
         &self,
         token_hash: &str,

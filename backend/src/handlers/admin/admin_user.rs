@@ -26,7 +26,7 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
 
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<
     Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
     (StatusCode, Json<ErrorResponse>),
@@ -34,7 +34,7 @@ pub async fn list_users(
     let users = state
         .services
         .admin
-        .list_users(auth_user.tenant_id)
+        .list_users()
         .await
         .map_err(map_admin_err)?;
     Ok(Json(users))
@@ -45,12 +45,12 @@ pub async fn list_users(
 /// 管理端导航徽标轮询用：只返回计数，避免轮询时反复传输整个用户列表。
 pub async fn pending_user_count(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let count = state
         .services
         .admin
-        .count_pending_users(auth_user.tenant_id)
+        .count_pending_users()
         .await
         .map_err(map_admin_err)?;
     Ok(Json(serde_json::json!({ "count": count })))
@@ -64,7 +64,7 @@ pub async fn delete_user(
     let outcome = state
         .services
         .admin
-        .delete_user(id, auth_user.id, auth_user.tenant_id)
+        .delete_user(id, auth_user.id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -105,7 +105,7 @@ pub async fn reset_user_password(
     let outcome = state
         .services
         .admin
-        .reset_user_password(id, &req.password, auth_user.tenant_id)
+        .reset_user_password(id, &req.password)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -132,7 +132,7 @@ pub async fn toggle_user_admin(
     let outcome = state
         .services
         .admin
-        .toggle_user_admin(id, auth_user.id, auth_user.tenant_id)
+        .toggle_user_admin(id, auth_user.id)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -161,7 +161,7 @@ pub async fn approve_user(
     let outcome = state
         .services
         .admin
-        .approve_user(id, req.approved, auth_user.tenant_id)
+        .approve_user(id, req.approved)
         .await
         .map_err(map_admin_err)?;
     if outcome.ok {
@@ -189,7 +189,7 @@ pub async fn kick_user(
     let count = state
         .services
         .admin
-        .kick_user(id, auth_user.tenant_id)
+        .kick_user(id)
         .await
         .map_err(map_admin_err)?;
     tracing::warn!(

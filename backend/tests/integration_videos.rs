@@ -7,7 +7,6 @@ mod integration_test_helpers;
 
 use atmos_video_backend::handlers;
 use atmos_video_backend::middleware::auth::AuthUser;
-use atmos_video_backend::middleware::tenant::{TenantContext, TenantStatus};
 use atmos_video_backend::models::video::VideoQuery;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Extension, Path, Query, State};
@@ -16,19 +15,6 @@ use axum::Json;
 use integration_test_helpers::*;
 use std::collections::HashSet;
 use std::net::SocketAddr;
-
-/// Tenant context used by handler-level assertions (matches the fixture tenant=1).
-fn test_tenant() -> TenantContext {
-    TenantContext {
-        tenant_id: 1,
-        slug: "test".into(),
-        status: TenantStatus::Active,
-        maintenance_eta: None,
-        plan: "free".into(),
-        max_users: 100,
-        max_storage_bytes: 0,
-    }
-}
 
 // ── Add external video ──
 
@@ -47,7 +33,6 @@ async fn test_add_external_video() {
         .services
         .video
         .add_external_video(
-            1,
             &title,
             Some("A test video"),
             Some("test"),
@@ -64,7 +49,7 @@ async fn test_add_external_video() {
     let video = state
         .services
         .video
-        .get_video(1, id)
+        .get_video(id)
         .await
         .expect("get_video")
         .expect("video should exist");
@@ -101,7 +86,6 @@ async fn test_list_videos_pagination() {
             .services
             .video
             .add_external_video(
-                1,
                 &format!("Pagination Test {} - {}", tag, i),
                 Some("pagination test"),
                 Some("pagetest"),
@@ -118,7 +102,7 @@ async fn test_list_videos_pagination() {
     let (items_page0, total) = state
         .services
         .video
-        .list_videos_paged(1, 0, 2, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, 2, Some(&tag), None, None, None, None, None)
         .await
         .expect("list page 0");
 
@@ -129,7 +113,7 @@ async fn test_list_videos_pagination() {
     let (items_page1, total2) = state
         .services
         .video
-        .list_videos_paged(1, 1, 2, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(1, 2, Some(&tag), None, None, None, None, None)
         .await
         .expect("list page 1");
 
@@ -169,7 +153,6 @@ async fn test_video_search() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("Searchable Title {}", unique),
             Some("search test"),
             Some("searchtest"),
@@ -184,7 +167,7 @@ async fn test_video_search() {
     let (results, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&unique), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some(&unique), None, None, None, None, None)
         .await
         .expect("search");
 
@@ -198,7 +181,6 @@ async fn test_video_search() {
         .services
         .video
         .list_videos_paged(
-            1,
             0,
             10,
             Some("zzz_nonexistent_query_zzz"),
@@ -236,7 +218,7 @@ async fn test_toggle_like() {
     let liked = state
         .services
         .playback
-        .is_liked(1, &username, video_id)
+        .is_liked(&username, video_id)
         .await
         .expect("is_liked");
     assert!(!liked, "should not be liked initially");
@@ -245,7 +227,7 @@ async fn test_toggle_like() {
     let liked = state
         .services
         .playback
-        .toggle_like(1, &username, video_id)
+        .toggle_like(&username, video_id)
         .await
         .expect("toggle_like");
     assert!(liked, "should be liked after first toggle");
@@ -254,7 +236,7 @@ async fn test_toggle_like() {
     let liked = state
         .services
         .playback
-        .is_liked(1, &username, video_id)
+        .is_liked(&username, video_id)
         .await
         .expect("is_liked");
     assert!(liked, "is_liked should return true after toggle on");
@@ -263,7 +245,7 @@ async fn test_toggle_like() {
     let liked = state
         .services
         .playback
-        .toggle_like(1, &username, video_id)
+        .toggle_like(&username, video_id)
         .await
         .expect("toggle_like");
     assert!(!liked, "should not be liked after second toggle");
@@ -272,7 +254,7 @@ async fn test_toggle_like() {
     let liked = state
         .services
         .playback
-        .is_liked(1, &username, video_id)
+        .is_liked(&username, video_id)
         .await
         .expect("is_liked");
     assert!(!liked, "is_liked should return false after toggle off");
@@ -299,7 +281,7 @@ async fn test_toggle_favorite() {
     let fav = state
         .services
         .playback
-        .is_favorited(1, &username, video_id)
+        .is_favorited(&username, video_id)
         .await
         .expect("is_favorited");
     assert!(!fav, "should not be favorited initially");
@@ -308,7 +290,7 @@ async fn test_toggle_favorite() {
     let fav = state
         .services
         .playback
-        .toggle_favorite(1, &username, video_id)
+        .toggle_favorite(&username, video_id)
         .await
         .expect("toggle_favorite");
     assert!(fav, "should be favorited after first toggle");
@@ -317,7 +299,7 @@ async fn test_toggle_favorite() {
     let fav = state
         .services
         .playback
-        .is_favorited(1, &username, video_id)
+        .is_favorited(&username, video_id)
         .await
         .expect("is_favorited");
     assert!(fav, "is_favorited should return true");
@@ -326,7 +308,7 @@ async fn test_toggle_favorite() {
     let fav = state
         .services
         .playback
-        .toggle_favorite(1, &username, video_id)
+        .toggle_favorite(&username, video_id)
         .await
         .expect("toggle_favorite");
     assert!(!fav, "should not be favorited after second toggle");
@@ -352,7 +334,7 @@ async fn test_playback_history() {
     let data = state
         .services
         .playback
-        .get_playback_data(1, &username, video_id)
+        .get_playback_data(&username, video_id)
         .await
         .expect("get data");
     assert!(data.is_none(), "should have no playback data initially");
@@ -361,7 +343,7 @@ async fn test_playback_history() {
     state
         .services
         .playback
-        .update_playback(1, &username, video_id, 30_000, 120_000)
+        .update_playback(&username, video_id, 30_000, 120_000)
         .await
         .expect("update_playback");
 
@@ -369,7 +351,7 @@ async fn test_playback_history() {
     let (position, duration) = state
         .services
         .playback
-        .get_playback_data(1, &username, video_id)
+        .get_playback_data(&username, video_id)
         .await
         .expect("get data")
         .unwrap();
@@ -380,14 +362,14 @@ async fn test_playback_history() {
     state
         .services
         .playback
-        .update_playback(1, &username, video_id, 60_000, 120_000)
+        .update_playback(&username, video_id, 60_000, 120_000)
         .await
         .expect("update_playback again");
 
     let (position, _) = state
         .services
         .playback
-        .get_playback_data(1, &username, video_id)
+        .get_playback_data(&username, video_id)
         .await
         .expect("get data after update")
         .unwrap();
@@ -401,13 +383,13 @@ async fn test_playback_history() {
     state
         .services
         .playback
-        .update_playback(1, &username, video_id, 60_000, 120_000)
+        .update_playback(&username, video_id, 60_000, 120_000)
         .await
         .expect("update_playback after window");
     let (position, _) = state
         .services
         .playback
-        .get_playback_data(1, &username, video_id)
+        .get_playback_data(&username, video_id)
         .await
         .expect("get data after throttle window")
         .unwrap();
@@ -420,7 +402,7 @@ async fn test_playback_history() {
     let (history, _) = state
         .services
         .playback
-        .get_playback_history(1, &username, 50, 0)
+        .get_playback_history(&username, 50, 0)
         .await
         .expect("get history");
 
@@ -450,7 +432,7 @@ async fn test_increment_views() {
     let video = state
         .services
         .video
-        .get_video(1, video_id)
+        .get_video(video_id)
         .await
         .expect("get_video")
         .expect("video exists");
@@ -460,14 +442,14 @@ async fn test_increment_views() {
     state
         .services
         .video
-        .increment_views(1, video_id)
+        .increment_views(video_id)
         .await
         .expect("increment_views");
 
     let video = state
         .services
         .video
-        .get_video(1, video_id)
+        .get_video(video_id)
         .await
         .expect("get_video")
         .expect("video exists");
@@ -486,7 +468,6 @@ async fn create_test_video(state: &atmos_video_backend::state::AppState, prefix:
         .services
         .video
         .add_external_video(
-            1,
             &format!("{} Video {}", prefix, unique_username(prefix)),
             Some("integration test"),
             Some("integration"),
@@ -542,7 +523,6 @@ fn test_auth_user(id: i64, username: &str) -> AuthUser {
         is_admin: true,
         role: 1,
         is_guest: false,
-        tenant_id: 1,
     }
 }
 
@@ -599,7 +579,6 @@ async fn test_list_videos_pagination_edge_pages() {
             .services
             .video
             .add_external_video(
-                1,
                 &format!("Edge Page {} - {}", tag, i),
                 Some("edge"),
                 Some("edgetest"),
@@ -616,7 +595,7 @@ async fn test_list_videos_pagination_edge_pages() {
     let (items, total) = state
         .services
         .video
-        .list_videos_paged(1, 0, 2, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, 2, Some(&tag), None, None, None, None, None)
         .await
         .expect("page 0");
     assert_eq!(items.len(), 2);
@@ -627,7 +606,7 @@ async fn test_list_videos_pagination_edge_pages() {
     let res = state
         .services
         .video
-        .list_videos_paged(1, -1, 2, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(-1, 2, Some(&tag), None, None, None, None, None)
         .await;
     assert!(
         res.is_err(),
@@ -639,7 +618,6 @@ async fn test_list_videos_pagination_edge_pages() {
         .services
         .video
         .list_videos_paged(
-            1,
             1_000_000_000_000,
             2,
             Some(&tag),
@@ -676,7 +654,6 @@ async fn test_list_videos_pagination_size_bounds() {
             .services
             .video
             .add_external_video(
-                1,
                 &format!("Size Bounds {} - {}", tag, i),
                 Some("size"),
                 Some("sizetest"),
@@ -693,7 +670,7 @@ async fn test_list_videos_pagination_size_bounds() {
     let (items, total) = state
         .services
         .video
-        .list_videos_paged(1, 0, 0, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, 0, Some(&tag), None, None, None, None, None)
         .await
         .expect("size 0");
     assert!(items.is_empty(), "size=0 应返回空列表");
@@ -703,7 +680,7 @@ async fn test_list_videos_pagination_size_bounds() {
     let res = state
         .services
         .video
-        .list_videos_paged(1, 0, -1, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, -1, Some(&tag), None, None, None, None, None)
         .await;
     assert!(res.is_err(), "负 size 应返回错误");
 
@@ -711,7 +688,7 @@ async fn test_list_videos_pagination_size_bounds() {
     let (items, total2) = state
         .services
         .video
-        .list_videos_paged(1, 0, 100_000, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, 100_000, Some(&tag), None, None, None, None, None)
         .await
         .expect("huge size");
     assert_eq!(items.len(), 3, "超大 size 应返回全部 3 条");
@@ -740,7 +717,6 @@ async fn test_list_videos_sort_default_and_views() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("sort_a_{}", tag),
             None,
             None,
@@ -754,7 +730,6 @@ async fn test_list_videos_sort_default_and_views() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("sort_b_{}", tag),
             None,
             None,
@@ -768,7 +743,6 @@ async fn test_list_videos_sort_default_and_views() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("sort_c_{}", tag),
             None,
             None,
@@ -782,7 +756,7 @@ async fn test_list_videos_sort_default_and_views() {
         state
             .services
             .video
-            .increment_views(1, id_b)
+            .increment_views(id_b)
             .await
             .expect("increment views b");
     }
@@ -791,7 +765,7 @@ async fn test_list_videos_sort_default_and_views() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&tag), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, None)
         .await
         .expect("default sort");
     assert_eq!(items.len(), 3);
@@ -803,17 +777,7 @@ async fn test_list_videos_sort_default_and_views() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(
-            1,
-            0,
-            10,
-            Some(&tag),
-            None,
-            None,
-            None,
-            None,
-            Some("views_asc"),
-        )
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, Some("views_asc"))
         .await
         .expect("views_asc");
     assert_eq!(items[2].id, id_b, "views_asc 时 B 应排最后");
@@ -822,24 +786,14 @@ async fn test_list_videos_sort_default_and_views() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&tag), None, None, None, None, Some("id"))
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, Some("id"))
         .await
         .expect("id sort");
     assert_eq!(items[0].id, id_c, "id 排序应最新在前");
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(
-            1,
-            0,
-            10,
-            Some(&tag),
-            None,
-            None,
-            None,
-            None,
-            Some("id_desc"),
-        )
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, Some("id_desc"))
         .await
         .expect("id_desc");
     assert_eq!(items[0].id, id_c);
@@ -848,7 +802,7 @@ async fn test_list_videos_sort_default_and_views() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&tag), None, None, None, None, Some("id_asc"))
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, Some("id_asc"))
         .await
         .expect("id_asc");
     assert_eq!(items[0].id, id_a, "id_asc 应最早创建在前");
@@ -858,7 +812,6 @@ async fn test_list_videos_sort_default_and_views() {
         .services
         .video
         .list_videos_paged(
-            1,
             0,
             10,
             Some(&tag),
@@ -892,7 +845,6 @@ async fn test_list_videos_sort_title() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("aaa_title_{}", tag),
             None,
             None,
@@ -906,7 +858,6 @@ async fn test_list_videos_sort_title() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("mmm_title_{}", tag),
             None,
             None,
@@ -920,7 +871,6 @@ async fn test_list_videos_sort_title() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("zzz_title_{}", tag),
             None,
             None,
@@ -934,17 +884,7 @@ async fn test_list_videos_sort_title() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(
-            1,
-            0,
-            10,
-            Some(&tag),
-            None,
-            None,
-            None,
-            None,
-            Some("title_asc"),
-        )
+        .list_videos_paged(0, 10, Some(&tag), None, None, None, None, Some("title_asc"))
         .await
         .expect("title_asc");
     assert_eq!(items[0].id, id_a, "title_asc 应 aaa 在前");
@@ -954,7 +894,6 @@ async fn test_list_videos_sort_title() {
         .services
         .video
         .list_videos_paged(
-            1,
             0,
             10,
             Some(&tag),
@@ -991,7 +930,7 @@ async fn test_video_search_edge_queries() {
     let (items, total) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(""), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some(""), None, None, None, None, None)
         .await
         .expect("empty query");
     assert!(items.is_empty(), "空查询应返回空列表");
@@ -1001,7 +940,7 @@ async fn test_video_search_edge_queries() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some("   "), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some("   "), None, None, None, None, None)
         .await
         .expect("whitespace query");
     assert!(items.is_empty(), "纯空白查询应返回空列表");
@@ -1011,7 +950,7 @@ async fn test_video_search_edge_queries() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&long), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some(&long), None, None, None, None, None)
         .await
         .expect("long query");
     assert!(items.is_empty(), "超长查询应返回空列表");
@@ -1035,7 +974,7 @@ async fn test_video_search_edge_queries() {
         let (items, _) = state
             .services
             .video
-            .list_videos_paged(1, 0, 10, Some(s), None, None, None, None, None)
+            .list_videos_paged(0, 10, Some(s), None, None, None, None, None)
             .await
             .unwrap_or_else(|e| panic!("特殊字符查询 {:?} 不应报错: {}", s, e));
         assert!(
@@ -1050,7 +989,7 @@ async fn test_video_search_edge_queries() {
     let (items, _) = state
         .services
         .video
-        .list_videos_paged(1, 0, 10, Some(&injection), None, None, None, None, None)
+        .list_videos_paged(0, 10, Some(&injection), None, None, None, None, None)
         .await
         .expect("injection query");
     assert!(
@@ -1077,7 +1016,7 @@ async fn test_get_video_nonexistent_ids() {
         let res = state
             .services
             .video
-            .get_video(1, bad)
+            .get_video(bad)
             .await
             .expect("get_video should not error");
         assert!(res.is_none(), "id {} 不应存在", bad);
@@ -1098,7 +1037,6 @@ async fn test_get_video_handler_invalid_ids() {
     for bad in ["abc", "12abc", "", "1.5", " 12", "12 "] {
         let res = handlers::videos::get_video(
             State(state.clone()),
-            Extension(test_tenant()),
             Extension(test_auth_user(9999, "viewer")),
             Path(bad.to_string()),
         )
@@ -1114,7 +1052,6 @@ async fn test_get_video_handler_invalid_ids() {
     // 合法数字但视频不存在 → 404
     let res = handlers::videos::get_video(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "viewer")),
         Path("999999999999".into()),
     )
@@ -1127,7 +1064,6 @@ async fn test_get_video_handler_invalid_ids() {
     let hash = atmos_video_backend::util::hashid::encode_id(id);
     let res = handlers::videos::get_video(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "viewer")),
         Path(hash),
     )
@@ -1155,14 +1091,14 @@ async fn test_increment_views_multiple_and_missing() {
         state
             .services
             .video
-            .increment_views(1, video_id)
+            .increment_views(video_id)
             .await
             .expect("increment views");
     }
     let video = state
         .services
         .video
-        .get_video(1, video_id)
+        .get_video(video_id)
         .await
         .expect("get_video")
         .expect("video exists");
@@ -1172,7 +1108,7 @@ async fn test_increment_views_multiple_and_missing() {
     state
         .services
         .video
-        .increment_views(1, 999_999_999_999)
+        .increment_views(999_999_999_999)
         .await
         .expect("increment on missing id should be a no-op");
 
@@ -1190,7 +1126,6 @@ async fn test_increment_views_handler_invalid_id() {
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     let res = handlers::videos::increment_views(
         State(state.clone()),
-        Extension(test_tenant()),
         Path("abc".to_string()),
         ConnectInfo(addr),
     )
@@ -1217,25 +1152,25 @@ async fn test_like_multiple_users_independent() {
     assert!(state
         .services
         .playback
-        .toggle_like(1, &u1, video_id)
+        .toggle_like(&u1, video_id)
         .await
         .expect("like u1"));
     assert!(state
         .services
         .playback
-        .toggle_like(1, &u2, video_id)
+        .toggle_like(&u2, video_id)
         .await
         .expect("like u2"));
     assert!(state
         .services
         .playback
-        .is_liked(1, &u1, video_id)
+        .is_liked(&u1, video_id)
         .await
         .expect("check u1"));
     assert!(state
         .services
         .playback
-        .is_liked(1, &u2, video_id)
+        .is_liked(&u2, video_id)
         .await
         .expect("check u2"));
 
@@ -1243,19 +1178,19 @@ async fn test_like_multiple_users_independent() {
     assert!(!state
         .services
         .playback
-        .toggle_like(1, &u1, video_id)
+        .toggle_like(&u1, video_id)
         .await
         .expect("unlike u1"));
     assert!(!state
         .services
         .playback
-        .is_liked(1, &u1, video_id)
+        .is_liked(&u1, video_id)
         .await
         .expect("check u1 after unlike"));
     assert!(state
         .services
         .playback
-        .is_liked(1, &u2, video_id)
+        .is_liked(&u2, video_id)
         .await
         .expect("check u2 unaffected"));
 
@@ -1277,7 +1212,7 @@ async fn test_toggle_like_missing_video_errors() {
     let res = state
         .services
         .playback
-        .toggle_like(1, &u, 999_999_999_999)
+        .toggle_like(&u, 999_999_999_999)
         .await;
     assert!(res.is_err(), "对不存在的视频点赞应因外键约束报错");
 }
@@ -1298,20 +1233,20 @@ async fn test_favorites_list_and_removal() {
     assert!(state
         .services
         .playback
-        .toggle_favorite(1, &u, v1)
+        .toggle_favorite(&u, v1)
         .await
         .expect("fav v1"));
     assert!(state
         .services
         .playback
-        .toggle_favorite(1, &u, v2)
+        .toggle_favorite(&u, v2)
         .await
         .expect("fav v2"));
 
     let (favs, _) = state
         .services
         .playback
-        .get_favorites(1, &u, 100, 0)
+        .get_favorites(&u, 100, 0)
         .await
         .expect("get favorites");
     assert!(favs.iter().any(|f| f.video_id == v1));
@@ -1321,13 +1256,13 @@ async fn test_favorites_list_and_removal() {
     assert!(!state
         .services
         .playback
-        .toggle_favorite(1, &u, v1)
+        .toggle_favorite(&u, v1)
         .await
         .expect("unfav v1"));
     let (favs, _) = state
         .services
         .playback
-        .get_favorites(1, &u, 100, 0)
+        .get_favorites(&u, 100, 0)
         .await
         .expect("get favorites after unfav");
     assert!(
@@ -1501,7 +1436,6 @@ async fn test_search_videos_handler_edges() {
         .services
         .video
         .add_external_video(
-            1,
             &format!("Searchable Title {}", unique),
             Some("search handler test"),
             Some("searchtest"),
@@ -1520,7 +1454,6 @@ async fn test_search_videos_handler_edges() {
     };
     let Json(resp) = handlers::videos::search_videos(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "searcher")),
         Query(q),
     )
@@ -1537,7 +1470,6 @@ async fn test_search_videos_handler_edges() {
     };
     let Json(resp) = handlers::videos::search_videos(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "searcher")),
         Query(q),
     )
@@ -1555,7 +1487,6 @@ async fn test_search_videos_handler_edges() {
     };
     let res = handlers::videos::search_videos(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "searcher")),
         Query(q),
     )
@@ -1573,7 +1504,6 @@ async fn test_search_videos_handler_edges() {
     };
     let Json(resp) = handlers::videos::search_videos(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "searcher")),
         Query(q),
     )
@@ -1586,14 +1516,15 @@ async fn test_search_videos_handler_edges() {
     );
 
     // 特殊字符 → 200 空结果，不报错
+    // 注意：plainto_tsquery 会剥离标点，只用剩余词元匹配；这里用一个
+    // 不可能存在的词元，避免共享数据库中其他测试数据造成误命中。
     let q = atmos_video_backend::models::video::SearchQuery {
-        q: "a%'\"\\--".into(),
+        q: "zqxjwvbn%'\"\\--".into(),
         page: None,
         size: None,
     };
     let Json(resp) = handlers::videos::search_videos(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(test_auth_user(9999, "searcher")),
         Query(q),
     )
@@ -1625,7 +1556,7 @@ async fn test_upload_video_wrong_file_type() {
     let res = state
         .services
         .media
-        .upload_video_file(1, "bad.mp4", &tmp, "local", user_id, None)
+        .upload_video_file("bad.mp4", &tmp, "local", user_id, None)
         .await;
     let err = res.expect_err("伪装成 mp4 的文本文件应上传失败");
     assert!(
@@ -1641,7 +1572,7 @@ async fn test_upload_video_wrong_file_type() {
     let res = state
         .services
         .media
-        .upload_video_file(1, "empty.mp4", &tmp2, "local", user_id, None)
+        .upload_video_file("empty.mp4", &tmp2, "local", user_id, None)
         .await;
     assert!(res.is_err(), "空文件应上传失败");
     assert!(!tmp2.exists(), "失败的临时文件应被服务清理");
@@ -1652,7 +1583,7 @@ async fn test_upload_video_wrong_file_type() {
     let res = state
         .services
         .media
-        .upload_video_file(1, "ghost.mp4", &tmp3, "local", 999_999_999_999, None)
+        .upload_video_file("ghost.mp4", &tmp3, "local", 999_999_999_999, None)
         .await;
     assert!(res.is_err(), "上传者不存在应报错");
     assert!(!tmp3.exists(), "失败后临时文件应被清理");
@@ -1712,7 +1643,7 @@ async fn test_upload_video_duplicate_hash_rejected() {
     let id = state
         .services
         .media
-        .upload_video_file(1, &fname, &tmp, "local", user_id, None)
+        .upload_video_file(&fname, &tmp, "local", user_id, None)
         .await
         .expect("首次上传应成功");
     assert!(id > 0);
@@ -1723,7 +1654,7 @@ async fn test_upload_video_duplicate_hash_rejected() {
     let res = state
         .services
         .media
-        .upload_video_file(1, &fname, &tmp2, "local", user_id, None)
+        .upload_video_file(&fname, &tmp2, "local", user_id, None)
         .await;
     let err = res.expect_err("相同文件重复上传应被拒绝");
     assert!(
@@ -2017,7 +1948,7 @@ async fn test_update_video_fields() {
     let ok = state
         .services
         .video
-        .update_video(1, id, Some("新标题"), Some("新描述"), Some("newcat"))
+        .update_video(id, Some("新标题"), Some("新描述"), Some("newcat"))
         .await
         .expect("update");
     assert!(ok, "更新存在的视频应返回 true");
@@ -2025,7 +1956,7 @@ async fn test_update_video_fields() {
     let video = state
         .services
         .video
-        .get_video(1, id)
+        .get_video(id)
         .await
         .expect("get_video")
         .expect("video exists");
@@ -2037,7 +1968,7 @@ async fn test_update_video_fields() {
     let ok = state
         .services
         .video
-        .update_video(1, id, None, None, None)
+        .update_video(id, None, None, None)
         .await
         .expect("noop update");
     assert!(!ok, "无字段更新应返回 false");
@@ -2046,7 +1977,7 @@ async fn test_update_video_fields() {
     let ok = state
         .services
         .video
-        .update_video(1, 999_999_999_999, Some("x"), None, None)
+        .update_video(999_999_999_999, Some("x"), None, None)
         .await
         .expect("update missing");
     assert!(!ok, "更新不存在的视频应返回 false");
@@ -2070,22 +2001,17 @@ async fn test_delete_video_single_and_batch() {
     assert!(!state
         .services
         .video
-        .delete_video(1, 999_999_999_999)
+        .delete_video(999_999_999_999)
         .await
         .expect("delete missing"));
 
     // 删除存在的视频 → true，行消失
-    assert!(state
-        .services
-        .video
-        .delete_video(1, id1)
-        .await
-        .expect("del1"));
+    assert!(state.services.video.delete_video(id1).await.expect("del1"));
     assert!(
         state
             .services
             .video
-            .get_video(1, id1)
+            .get_video(id1)
             .await
             .expect("get_video")
             .is_none(),
@@ -2096,7 +2022,7 @@ async fn test_delete_video_single_and_batch() {
     assert!(!state
         .services
         .video
-        .delete_video(1, id1)
+        .delete_video(id1)
         .await
         .expect("del1 again"));
 
@@ -2105,21 +2031,21 @@ async fn test_delete_video_single_and_batch() {
     let deleted = state
         .services
         .video
-        .delete_videos(1, &[id2, id3])
+        .delete_videos(&[id2, id3])
         .await
         .expect("batch delete");
     assert_eq!(deleted, 2, "批量删除应删掉 2 条");
     assert!(state
         .services
         .video
-        .get_video(1, id2)
+        .get_video(id2)
         .await
         .expect("q")
         .is_none());
     assert!(state
         .services
         .video
-        .get_video(1, id3)
+        .get_video(id3)
         .await
         .expect("q")
         .is_none());
@@ -2145,7 +2071,6 @@ async fn test_recommendations_latest_and_trending_ordering() {
             .services
             .video
             .add_external_video(
-                1,
                 &format!("Trend {} {}", tag, i),
                 Some("trend"),
                 Some("trendtest"),
@@ -2171,7 +2096,7 @@ async fn test_recommendations_latest_and_trending_ordering() {
         state
             .services
             .video
-            .increment_views(1, ids[0])
+            .increment_views(ids[0])
             .await
             .expect("increment views");
     }
@@ -2199,7 +2124,7 @@ async fn test_recommendations_latest_and_trending_ordering() {
     let recent = state
         .services
         .recommendation
-        .get_recent_videos(1, None, 0, 500)
+        .get_recent_videos(None, 0, 500)
         .await
         .expect("recent");
     let mine: Vec<_> = recent.0.iter().filter(|r| ids.contains(&r.id)).collect();
@@ -2213,7 +2138,7 @@ async fn test_recommendations_latest_and_trending_ordering() {
     let trending = state
         .services
         .recommendation
-        .get_trending_videos(1, None, 0, 500)
+        .get_trending_videos(None, 0, 500)
         .await
         .expect("trending");
     let mine: Vec<_> = trending.0.iter().filter(|r| ids.contains(&r.id)).collect();

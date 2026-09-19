@@ -14,7 +14,7 @@ use crate::util::response::{error_response, internal_error_log, ErrorResponse, S
 /// Start transcoding a video to multiple resolutions
 pub async fn transcode_video(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
     SafeJson(req): SafeJson<TranscodeRequest>,
 ) -> Result<Json<TranscodeResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -35,7 +35,7 @@ pub async fn transcode_video(
     let video = state
         .repos
         .video
-        .find_by_id(auth_user.tenant_id, video_id)
+        .find_by_id(video_id)
         .await
         .map_err(|e| internal_error_log("find_by_id failed", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "Video not found"))?;
@@ -82,7 +82,7 @@ pub async fn transcode_video(
 /// Get transcoding status for a video
 pub async fn transcode_status(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<TranscodeStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -91,7 +91,7 @@ pub async fn transcode_status(
     let _video = state
         .repos
         .video
-        .find_by_id(auth_user.tenant_id, video_id)
+        .find_by_id(video_id)
         .await
         .map_err(|e| internal_error_log("operation failed", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;
@@ -114,7 +114,7 @@ pub async fn transcode_status(
 /// Delete a specific variant of a video
 pub async fn delete_variant(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path((id, resolution)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -139,7 +139,7 @@ pub async fn delete_variant(
     state
         .repos
         .video
-        .delete_variant_record(auth_user.tenant_id, video_id, &resolution)
+        .delete_variant_record(video_id, &resolution)
         .await
         .map_err(|e| {
             tracing::error!("DB delete variant failed: {}", e);
@@ -150,7 +150,7 @@ pub async fn delete_variant(
     let remaining = state
         .repos
         .video
-        .count_variants(auth_user.tenant_id, video_id)
+        .count_variants(video_id)
         .await
         .map_err(|e| {
             tracing::error!("DB count variants failed: {}", e);
@@ -161,7 +161,7 @@ pub async fn delete_variant(
         state
             .repos
             .video
-            .clear_has_variants(auth_user.tenant_id, video_id)
+            .clear_has_variants(video_id)
             .await
             .map_err(|e| {
                 tracing::error!("DB update has_variants failed: {}", e);
@@ -180,7 +180,7 @@ pub async fn delete_variant(
 /// Cancel ongoing transcoding for a video
 pub async fn cancel_transcode(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -189,7 +189,7 @@ pub async fn cancel_transcode(
     let affected = state
         .repos
         .video
-        .cancel_transcode_jobs(auth_user.tenant_id, video_id)
+        .cancel_transcode_jobs(video_id)
         .await
         .map_err(|e| {
             tracing::error!("DB cancel transcode failed: {}", e);
@@ -214,7 +214,7 @@ pub async fn cancel_transcode(
 /// Start HLS transcoding for adaptive streaming
 pub async fn transcode_to_hls(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -223,7 +223,7 @@ pub async fn transcode_to_hls(
     let video = state
         .repos
         .video
-        .find_by_id(auth_user.tenant_id, video_id)
+        .find_by_id(video_id)
         .await
         .map_err(|e| internal_error_log("find video for HLS transcode", &e))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "视频不存在"))?;

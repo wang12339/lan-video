@@ -8,7 +8,6 @@ mod integration_test_helpers;
 
 use atmos_video_backend::handlers;
 use atmos_video_backend::middleware::auth::AuthUser;
-use atmos_video_backend::middleware::tenant::{TenantContext, TenantStatus};
 use atmos_video_backend::models::video::VideoQuery;
 use atmos_video_backend::services::auth_service::AuthService;
 use atmos_video_backend::state::AppState;
@@ -18,18 +17,6 @@ use axum::Json;
 use integration_test_helpers::*;
 use std::sync::Arc;
 
-fn test_tenant() -> TenantContext {
-    TenantContext {
-        tenant_id: 1,
-        slug: "test".into(),
-        status: TenantStatus::Active,
-        maintenance_eta: None,
-        plan: "free".into(),
-        max_users: 100,
-        max_storage_bytes: 0,
-    }
-}
-
 fn owner_auth_user(id: i64, username: &str) -> AuthUser {
     AuthUser {
         id,
@@ -37,7 +24,6 @@ fn owner_auth_user(id: i64, username: &str) -> AuthUser {
         is_admin: false,
         role: 1,
         is_guest: false,
-        tenant_id: 1,
     }
 }
 
@@ -45,7 +31,7 @@ fn owner_auth_user(id: i64, username: &str) -> AuthUser {
 async fn create_guest(state: &Arc<AppState>, ip: &str) -> (i64, String, String) {
     let svc = auth_service(state);
     let resp = svc
-        .create_guest_session(ip, 1)
+        .create_guest_session(ip)
         .await
         .expect("create guest session");
     assert!(resp.ok, "guest session should succeed: {:?}", resp.error);
@@ -98,7 +84,6 @@ async fn guest_session_created_and_scoped() {
     let (other_name, other_id) = create_test_user(&state, "guestoth").await;
     let res = handlers::videos::get_video(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(owner_auth_user(other_id, &other_name)),
         axum::extract::Path(video_id.to_string()),
     )
@@ -110,7 +95,6 @@ async fn guest_session_created_and_scoped() {
     // 访客自己能看到
     let res = handlers::videos::get_video(
         State(state.clone()),
-        Extension(test_tenant()),
         Extension(owner_auth_user(guest_id, &guest_username)),
         axum::extract::Path(video_id.to_string()),
     )
@@ -135,8 +119,8 @@ async fn guest_content_merges_into_real_account() {
 
     // 访客的播放历史（按用户名关联）
     sqlx::query(
-        "INSERT INTO playback_history (username, video_id, position_ms, duration_ms, tenant_id) \
-         VALUES ($1, $2, 1000, 60000, 1) ON CONFLICT DO NOTHING",
+        "INSERT INTO playback_history (username, video_id, position_ms, duration_ms) \
+         VALUES ($1, $2, 1000, 60000) ON CONFLICT DO NOTHING",
     )
     .bind(&guest_username)
     .bind(video_id)
@@ -150,7 +134,7 @@ async fn guest_content_merges_into_real_account() {
     let merged = state
         .repos
         .user
-        .merge_guest_into_user(guest_id, real_id, 1)
+        .merge_guest_into_user(guest_id, real_id)
         .await
         .expect("merge guest");
     assert_eq!(merged, 1, "one video should be merged");
@@ -199,7 +183,6 @@ async fn guest_password_hash_blocks_login() {
     // 空密码哈希 + 任意密码 → 登录失败（影子账号不可被密码登录）
     let svc = AuthService::new(
         state.repos.user.clone(),
-        state.repos.tenant.clone(),
         state.services.playback.clone(),
         state.rate_limiter.clone(),
         state.ip_rate_limiter.clone(),
@@ -212,7 +195,6 @@ async fn guest_password_hash_blocks_login() {
                 password: "whatever-password-1A!".into(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login should not error");

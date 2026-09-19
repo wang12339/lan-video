@@ -22,7 +22,7 @@
 Atmos Video 采用 **Bearer Token + Cookie** 双通道认证机制。认证流程经过以下中间件栈：
 
 ```
-请求 → security_headers → inject_state → resolve_tenant → bearer_auth → role_auth → handler
+请求 → security_headers → inject_state → bearer_auth → role_auth → handler
 ```
 
 ### 1.2 Token 机制
@@ -32,7 +32,7 @@ Atmos Video 采用 **Bearer Token + Cookie** 双通道认证机制。认证流�
 | **Token 格式** | 256 位随机 Alphanumeric 字符串（非 UUID） |
 | **生成方式** | 使用密码学安全随机数生成器（`OsRng`） |
 | **有效期** | 7 天（`COOKIE_MAX_AGE = 604800`） |
-| **存储方式** | 数据库 `auth_tokens` 表，支持多租户隔离 |
+| **存储方式** | 数据库 `auth_tokens` 表 |
 | **传递方式** | `Authorization: Bearer <token>` 请求头 或 HTTP Cookie |
 
 **认证流程：**
@@ -143,7 +143,7 @@ Atmos Video 采用基于角色的访问控制（RBAC），角色通过数值权�
 ```
 bearer_auth          → 验证 token 有效性，注入用户信息到请求扩展
 ├── token 验证       → 查询 auth_tokens 表，验证 token 存在且未过期
-├── 用户信息注入     → 将 user_id、role、tenant_id 注入请求扩展
+├── 用户信息注入     → 将 user_id、role 注入请求扩展
 └── Cookie 支持      → 同时支持 Authorization 头和 Cookie 两种方式
 
 role_auth(N)         → 验证用户角色级别 >= N
@@ -155,14 +155,7 @@ admin_auth           → 验证管理员权限
 └── 操作日志         → 记录管理员操作
 ```
 
-### 2.4 多租户隔离
-
-- 每个请求通过 `resolve_tenant` 中间件解析租户
-- 租户基于 `Host` 请求头进行路由
-- 所有数据查询自动注入 `tenant_id` 过滤条件
-- 用户、视频、播放列表等资源严格按租户隔离
-
-### 2.5 资源所有权检查
+### 2.4 资源所有权检查
 
 - 用户只能操作自己创建的资源（播放列表、评论、分享链接等）
 - 管理员可操作所有资源
@@ -613,7 +606,6 @@ chown atmos:atmos /path/to/.env
 | 速率限制 | `backend/src/middleware/rate_limit.rs` | 登录限流、Redis 持久化 |
 | 热链接防护 | `backend/src/middleware/hotlink.rs` | Referer/Origin 验证 |
 | 分享限流 | `backend/src/middleware/share_rate_limit.rs` | 分享端点限流 |
-| 租户解析 | `backend/src/middleware/tenant.rs` | 多租户隔离 |
 | 密码工具 | `backend/src/util/password.rs` | Argon2id 哈希 |
 | 认证服务 | `backend/src/services/auth_service.rs` | 注册、登录、密码重置 |
 | 路由定义 | `backend/src/app.rs` | 路由组和中间件配置 |

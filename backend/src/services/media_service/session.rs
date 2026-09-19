@@ -2,7 +2,7 @@
 //!
 //! 设计要点：
 //! - 进行中的上传**不落库**，状态保存在 `MediaService.upload_slots`
-//!   （进程内 DashMap，键为 `{tenant}:{uploader}:{hash}`）。
+//!   （进程内 DashMap，键为 `{uploader}:{hash}`）。
 //! - 每个槽位持有增量 SHA-256，每次追加同步更新，finalize 时无需
 //!   再对整文件二次全量读取（续传首次接触时仍需读一遍已有临时文件
 //!   重建哈希状态——服务重启后无法序列化哈希器）。
@@ -132,16 +132,16 @@ async fn hash_file_into(path: &Path) -> Result<(i64, Sha256), ServiceError> {
 }
 
 impl MediaService {
-    fn slot_key(tenant_id: i64, uploader_id: i64, hash: &str) -> String {
-        format!("{}:{}:{}", tenant_id, uploader_id, hash)
+    fn slot_key(uploader_id: i64, hash: &str) -> String {
+        format!("{}:{}", uploader_id, hash)
     }
 
-    /// 该上传者对应的临时文件路径。按 tenant+uploader 隔离，避免不同
+    /// 该上传者对应的临时文件路径。按 uploader 隔离，避免不同
     /// 用户上传相同内容时互相踩踏同一个临时文件。
-    pub fn upload_temp_path(&self, tenant_id: i64, uploader_id: i64, hash: &str) -> PathBuf {
+    pub fn upload_temp_path(&self, uploader_id: i64, hash: &str) -> PathBuf {
         self.config
             .media_root
-            .join(format!(".upload_{}_{}_{}", tenant_id, uploader_id, hash))
+            .join(format!(".upload_{}_{}", uploader_id, hash))
     }
 
     fn slot_handle(&self, key: &str) -> Arc<Mutex<UploadSlot>> {
@@ -171,12 +171,11 @@ impl MediaService {
     /// 只读查询：已接收字节数（供 `GET /admin/videos/upload-status`）。
     pub async fn upload_received_bytes(
         &self,
-        tenant_id: i64,
         uploader_id: i64,
         hash: &str,
     ) -> Result<i64, ServiceError> {
-        let tmp = self.upload_temp_path(tenant_id, uploader_id, hash);
-        let key = Self::slot_key(tenant_id, uploader_id, hash);
+        let tmp = self.upload_temp_path(uploader_id, hash);
+        let key = Self::slot_key(uploader_id, hash);
         let handle = self.slot_handle(&key);
         let _permit = self
             .upload_semaphore
@@ -192,13 +191,12 @@ impl MediaService {
     /// 去重预检：返回同上传者已存在的视频 ID（按 file_hash）。
     pub async fn find_upload_duplicate(
         &self,
-        tenant_id: i64,
         uploader_id: i64,
         hash: &str,
     ) -> Result<Option<i64>, ServiceError> {
         Ok(self
             .repo
-            .find_video_by_file_hash(tenant_id, uploader_id, hash)
+            .find_video_by_file_hash(uploader_id, hash)
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?
             .map(|row| row.id))
@@ -233,7 +231,6 @@ impl MediaService {
     #[allow(clippy::too_many_arguments)]
     pub async fn append_upload_chunk(
         &self,
-        tenant_id: i64,
         uploader_id: i64,
         hash: &str,
         file_name: &str,
@@ -242,8 +239,8 @@ impl MediaService {
         offset: Option<i64>,
         data: &[u8],
     ) -> Result<UploadAppendOutcome, UploadAppendError> {
-        let tmp = self.upload_temp_path(tenant_id, uploader_id, hash);
-        let key = Self::slot_key(tenant_id, uploader_id, hash);
+        let tmp = self.upload_temp_path(uploader_id, hash);
+        let key = Self::slot_key(uploader_id, hash);
         // 锁顺序固定为 信号量 → 槽位锁，避免与只读查询路径反向加锁死锁。
         let _permit = self
             .upload_semaphore
@@ -297,15 +294,7 @@ impl MediaService {
         if data.is_empty() {
             if offset == Some(guard.size) && guard.size == total_size {
                 let id = self
-                    .finalize_slot(
-                        &mut guard,
-                        tenant_id,
-                        uploader_id,
-                        file_name,
-                        category,
-                        hash,
-                        &tmp,
-                    )
+                    .finalize_slot(&mut guard, uploader_id, file_name, category, hash, &tmp)
                     .await?;
                 return Ok(UploadAppendOutcome {
                     received: guard.size,
@@ -349,15 +338,7 @@ impl MediaService {
 
         if guard.size == total_size {
             let id = self
-                .finalize_slot(
-                    &mut guard,
-                    tenant_id,
-                    uploader_id,
-                    file_name,
-                    category,
-                    hash,
-                    &tmp,
-                )
+                .finalize_slot(&mut guard, uploader_id, file_name, category, hash, &tmp)
                 .await?;
             return Ok(UploadAppendOutcome {
                 received: guard.size,
@@ -377,7 +358,6 @@ impl MediaService {
     async fn finalize_slot(
         &self,
         slot: &mut UploadSlot,
-        tenant_id: i64,
         uploader_id: i64,
         file_name: &str,
         category: &str,
@@ -398,7 +378,6 @@ impl MediaService {
         }
         match self
             .upload_video_file_for_finalize(
-                tenant_id,
                 file_name,
                 tmp,
                 category,

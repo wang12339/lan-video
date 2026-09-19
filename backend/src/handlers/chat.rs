@@ -11,7 +11,6 @@ use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::middleware::auth::AuthUser;
-use crate::middleware::tenant::TenantContext;
 use crate::models::chat::{ChatEvent, ChatHistoryResponse};
 use crate::services::chat_service::{
     ChatPayload, ChatService, CHAT_IMAGE_MAX_BYTES, CHAT_MEDIA_PREFIX, CHAT_VIDEO_MAX_BYTES,
@@ -34,12 +33,12 @@ pub struct ChatHistoryQuery {
 /// GET /chat/messages — 历史分页（id 倒序游标，前端反转拼接）
 pub async fn get_chat_history(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Query(q): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let limit = q.limit.unwrap_or(HISTORY_PAGE_LIMIT).clamp(1, 100);
     let resp = ChatService::from_state(&state)
-        .history(auth_user.tenant_id, q.before_id, limit)
+        .history(q.before_id, limit)
         .await
         .map_err(|e| internal_error_log("chat_history", &e))?;
     Ok(Json(resp))
@@ -54,24 +53,22 @@ pub async fn get_chat_history(
 pub async fn ws_chat(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Extension(tenant): Extension<TenantContext>,
     ws: WebSocketUpgrade,
 ) -> Response {
     ws.max_frame_size(WS_MAX_FRAME_BYTES)
         .max_message_size(WS_MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| run_chat_socket(socket, state, tenant.tenant_id, auth_user))
+        .on_upgrade(move |socket| run_chat_socket(socket, state, auth_user))
 }
 
 async fn run_chat_socket(
     socket: axum::extract::ws::WebSocket,
     state: Arc<AppState>,
-    tenant_id: i64,
     user: AuthUser,
 ) {
     let username = user.username.clone();
     let chat = ChatService::from_state(&state);
 
-    let mut rx = state.chat_hub.join(tenant_id, user.id, &username);
+    let mut rx = state.chat_hub.join(user.id, &username);
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut ping = tokio::time::interval(std::time::Duration::from_secs(WS_PING_INTERVAL_SECS));
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -99,7 +96,7 @@ async fn run_chat_socket(
             frame = ws_rx.next() => match frame {
                 Some(Ok(axum::extract::ws::Message::Text(text))) => {
                     let reply =
-                        handle_client_text(&chat, tenant_id, &user, text.as_str()).await;
+                        handle_client_text(&chat, &user, text.as_str()).await;
                     let Ok(reply_text) = serde_json::to_string(&reply) else { continue };
                     if ws_tx
                         .send(axum::extract::ws::Message::Text(reply_text.into()))
@@ -136,7 +133,7 @@ async fn run_chat_socket(
         }
     }
 
-    state.chat_hub.leave(tenant_id, user.id);
+    state.chat_hub.leave(user.id);
 }
 
 /// 客户端 WS 文本帧协议
@@ -159,12 +156,7 @@ enum ClientFrame {
 
 /// 处理一条客户端文本帧，返回回给**该客户端自己**的事件
 /// （成功时房间广播已由 send_message 完成，这里只回错误提示）。
-async fn handle_client_text(
-    chat: &ChatService,
-    tenant_id: i64,
-    user: &AuthUser,
-    text: &str,
-) -> ChatEvent {
+async fn handle_client_text(chat: &ChatService, user: &AuthUser, text: &str) -> ChatEvent {
     let frame: ClientFrame = match serde_json::from_str(text) {
         Ok(f) => f,
         Err(_) => {
@@ -196,7 +188,6 @@ async fn handle_client_text(
             };
             match chat
                 .send_message(
-                    tenant_id,
                     user.id,
                     &user.username,
                     user.is_guest,
@@ -226,7 +217,6 @@ async fn handle_client_text(
             };
             match chat
                 .send_message(
-                    tenant_id,
                     user.id,
                     &user.username,
                     user.is_guest,
@@ -256,7 +246,6 @@ async fn handle_client_text(
             };
             match chat
                 .send_message(
-                    tenant_id,
                     user.id,
                     &user.username,
                     user.is_guest,
@@ -502,14 +491,13 @@ pub async fn upload_chat_video(
 /// DELETE /admin/chat/messages/{id} — 管理员删言（并广播让在线客户端移除）
 pub async fn admin_delete_chat_message(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     if id <= 0 {
         return Err(error_response(StatusCode::BAD_REQUEST, "无效的消息ID"));
     }
     let deleted = ChatService::from_state(&state)
-        .admin_delete(tenant.tenant_id, id)
+        .admin_delete(id)
         .await
         .map_err(|e| internal_error_log("admin_delete_chat_message", &e))?;
     if !deleted {
@@ -521,10 +509,9 @@ pub async fn admin_delete_chat_message(
 /// GET /admin/chat/stats — 聊天室消息统计（管理后台）
 pub async fn admin_chat_stats(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let count = ChatService::from_state(&state)
-        .stats(tenant.tenant_id)
+        .stats()
         .await
         .map_err(|e| internal_error_log("admin_chat_stats", &e))?;
     Ok(Json(serde_json::json!({ "ok": true, "count": count })))
@@ -533,10 +520,9 @@ pub async fn admin_chat_stats(
 /// DELETE /admin/chat/messages — 管理员清空聊天室（并广播 Cleared 让在线客户端清屏）
 pub async fn admin_clear_chat_messages(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let deleted = ChatService::from_state(&state)
-        .admin_clear(tenant.tenant_id)
+        .admin_clear()
         .await
         .map_err(|e| internal_error_log("admin_clear_chat_messages", &e))?;
     Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))

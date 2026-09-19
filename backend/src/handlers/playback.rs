@@ -32,7 +32,7 @@ pub async fn get_playback_history_for_video(
     let (position_ms, duration_ms) = state
         .services
         .playback
-        .get_playback_data(auth_user.tenant_id, &auth_user.username, video_id)
+        .get_playback_data(&auth_user.username, video_id)
         .await
         .map_err(|e| internal_error_log("get_playback_data", &e))?
         .unwrap_or((0, 0));
@@ -58,7 +58,7 @@ pub async fn list_playback_history(
     let (items, total) = state
         .services
         .playback
-        .get_playback_history(auth_user.tenant_id, &auth_user.username, size, offset)
+        .get_playback_history(&auth_user.username, size, offset)
         .await
         .map_err(|e| internal_error_log("get_playback_history", &e))?;
     Ok(Json(PagedRecentWatchResponse {
@@ -107,7 +107,7 @@ pub async fn update_playback_history(
     let server_duration_ms = state
         .services
         .video
-        .get_video(auth_user.tenant_id, payload.video_id)
+        .get_video(payload.video_id)
         .await
         .ok()
         .flatten()
@@ -124,12 +124,7 @@ pub async fn update_playback_history(
     // 片尾判定以服务端片长为准（防客户端谎报时长度绕过焚毁判定）。
     // 到达片尾时强制落库（绕过节流，片尾写每用户每视频仅一次），
     // 并由服务端直接焚毁——不依赖前端是否调用焚毁接口。
-    let at_end = match state
-        .services
-        .video
-        .get_video(auth_user.tenant_id, payload.video_id)
-        .await
-    {
+    let at_end = match state.services.video.get_video(payload.video_id).await {
         Ok(Some(v)) => crate::services::video_service::VideoService::is_at_end(
             payload.position_ms,
             v.duration,
@@ -141,7 +136,6 @@ pub async fn update_playback_history(
         .services
         .playback
         .update_playback_opts(
-            auth_user.tenant_id,
             &auth_user.username,
             payload.video_id,
             payload.position_ms,
@@ -154,21 +148,14 @@ pub async fn update_playback_history(
         match state
             .services
             .video
-            .burn_video_record(
-                auth_user.tenant_id,
-                auth_user.id,
-                auth_user.is_admin,
-                payload.video_id,
-            )
+            .burn_video_record(auth_user.id, auth_user.is_admin, payload.video_id)
             .await
         {
             Ok(_) => {
                 state.invalidate_caches();
-                state.playback_sessions.stop(
-                    auth_user.tenant_id,
-                    &auth_user.username,
-                    payload.video_id,
-                );
+                state
+                    .playback_sessions
+                    .stop(&auth_user.username, payload.video_id);
                 tracing::info!(
                     user = %auth_user.username,
                     video_id = payload.video_id,
@@ -205,16 +192,11 @@ pub async fn start_playback_session(
     SafeJson(payload): SafeJson<SessionRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     validate_session_request(&payload)?;
-    // 会话只对“存在、属于当前租户、且归当前用户所有”的视频授予。
+    // 会话只对“存在、且归当前用户所有”的视频授予。
     // 访客模式/私有化：只能播放自己上传的视频（管理员豁免）。
-    // 未注册/已删除/跨租户/他人视频一律不建会话 —— 跨用户访问的
+    // 未注册/已删除/他人视频一律不建会话 —— 跨用户访问的
     // 合法通道只有分享链接(cookie)。
-    match state
-        .repos
-        .video
-        .find_by_id(auth_user.tenant_id, payload.video_id)
-        .await
-    {
+    match state.repos.video.find_by_id(payload.video_id).await {
         Ok(Some(v)) => {
             if !auth_user.is_admin && v.uploader_id != Some(auth_user.id) {
                 return Err(error_response(StatusCode::NOT_FOUND, "视频不存在"));
@@ -227,11 +209,10 @@ pub async fn start_playback_session(
     }
     state
         .playback_sessions
-        .start(auth_user.tenant_id, &auth_user.username, payload.video_id);
+        .start(&auth_user.username, payload.video_id);
     tracing::info!(
         user = %auth_user.username,
         video_id = payload.video_id,
-        tenant_id = auth_user.tenant_id,
         "开始播放视频"
     );
     Ok(StatusCode::NO_CONTENT)
@@ -246,7 +227,7 @@ pub async fn playback_session_heartbeat(
     validate_session_request(&payload)?;
     state
         .playback_sessions
-        .heartbeat(auth_user.tenant_id, &auth_user.username, payload.video_id);
+        .heartbeat(&auth_user.username, payload.video_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -259,7 +240,7 @@ pub async fn stop_playback_session(
     validate_session_request(&payload)?;
     state
         .playback_sessions
-        .stop(auth_user.tenant_id, &auth_user.username, payload.video_id);
+        .stop(&auth_user.username, payload.video_id);
     tracing::info!(user = %auth_user.username, video_id = payload.video_id, "停止播放视频");
     Ok(StatusCode::NO_CONTENT)
 }

@@ -4,7 +4,6 @@ use axum::{Extension, Json};
 use std::sync::Arc;
 
 use crate::middleware::auth::AuthUser;
-use crate::middleware::tenant::TenantContext;
 use crate::models::comment::{
     CommentListResponse, CommentQuery, CommentResponse, CreateCommentRequest,
 };
@@ -44,7 +43,6 @@ fn map_comment(c: crate::repositories::comment_repo::CommentRow) -> CommentRespo
 /// GET /videos/{id}/comments
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     Path(video_id): Path<String>,
     Query(q): Query<CommentQuery>,
 ) -> Result<Json<CommentListResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -56,7 +54,7 @@ pub async fn list_comments(
     let (comments, total) = state
         .services
         .comment
-        .list_comments(tenant.tenant_id, video_id, page, size)
+        .list_comments(video_id, page, size)
         .await
         .map_err(ServiceError::into_tuple)?;
     Ok(Json(CommentListResponse {
@@ -68,7 +66,6 @@ pub async fn list_comments(
 /// GET /comments/{id}/replies
 pub async fn list_replies(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     Path(comment_id): Path<String>,
 ) -> Result<Json<Vec<CommentResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let comment_id = hashid::decode_id_or_numeric(&comment_id)
@@ -76,7 +73,7 @@ pub async fn list_replies(
     let replies = state
         .services
         .comment
-        .list_replies(tenant.tenant_id, comment_id)
+        .list_replies(comment_id)
         .await
         .map_err(ServiceError::into_tuple)?;
     Ok(Json(replies.into_iter().map(map_comment).collect()))
@@ -105,7 +102,6 @@ pub async fn create_comment(
         .services
         .comment
         .create_comment(
-            auth_user.tenant_id,
             video_id,
             auth_user.id,
             &sanitized,
@@ -128,12 +124,7 @@ pub async fn delete_comment(
     state
         .services
         .comment
-        .delete_comment(
-            auth_user.tenant_id,
-            comment_id,
-            auth_user.id,
-            auth_user.is_admin,
-        )
+        .delete_comment(comment_id, auth_user.id, auth_user.is_admin)
         .await
         .map_err(|e| match e {
             ServiceError::NotFound(_) => {

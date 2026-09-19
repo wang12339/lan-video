@@ -52,7 +52,7 @@ async fn offset_mismatch_reports_server_offset() {
 
     // 服务端为空，客户端却从 offset=5 发起 → 协议错误，给出 received=0
     let err = svc
-        .append_upload_chunk(1, 1, "hashoffset", "a.mp4", 100, "local", Some(5), b"hello")
+        .append_upload_chunk(1, "hashoffset", "a.mp4", 100, "local", Some(5), b"hello")
         .await
         .unwrap_err();
     match err {
@@ -62,12 +62,12 @@ async fn offset_mismatch_reports_server_offset() {
 
     // 先正确追加 5 字节，再以过期 offset 重发 → 返回当前偏移
     let out = svc
-        .append_upload_chunk(1, 1, "hashoffset", "a.mp4", 100, "local", Some(0), b"hello")
+        .append_upload_chunk(1, "hashoffset", "a.mp4", 100, "local", Some(0), b"hello")
         .await
         .unwrap();
     assert_eq!(out.received, 5);
     let err = svc
-        .append_upload_chunk(1, 1, "hashoffset", "a.mp4", 100, "local", Some(0), b"hello")
+        .append_upload_chunk(1, "hashoffset", "a.mp4", 100, "local", Some(0), b"hello")
         .await
         .unwrap_err();
     match err {
@@ -87,16 +87,7 @@ async fn finalize_hash_mismatch_rejected_and_temp_cleaned() {
     let part1 = vec![7u8; 512];
     let part2 = vec![9u8; 512];
     let out = svc
-        .append_upload_chunk(
-            1,
-            2,
-            "hashmismatch",
-            "a.mp4",
-            1024,
-            "local",
-            Some(0),
-            &part1,
-        )
+        .append_upload_chunk(2, "hashmismatch", "a.mp4", 1024, "local", Some(0), &part1)
         .await
         .unwrap();
     assert_eq!(out.received, 512);
@@ -104,21 +95,12 @@ async fn finalize_hash_mismatch_rejected_and_temp_cleaned() {
 
     // 最后一个分片：客户端声明的哈希（key）与实际内容不符 → 400 hash_mismatch
     let err = svc
-        .append_upload_chunk(
-            1,
-            2,
-            "hashmismatch",
-            "a.mp4",
-            1024,
-            "local",
-            Some(512),
-            &part2,
-        )
+        .append_upload_chunk(2, "hashmismatch", "a.mp4", 1024, "local", Some(512), &part2)
         .await
         .unwrap_err();
     assert!(matches!(err, UploadAppendError::HashMismatch));
     assert!(
-        !svc.upload_temp_path(1, 2, "hashmismatch").exists(),
+        !svc.upload_temp_path(2, "hashmismatch").exists(),
         "哈希校验失败后临时文件应被清理"
     );
 
@@ -142,7 +124,7 @@ async fn resume_rebuilds_hasher_from_disk_after_restart() {
     {
         let svc = test_service(&dir);
         let out = svc
-            .append_upload_chunk(1, 3, &declared, "a.mp4", 1024, "local", Some(0), &part1)
+            .append_upload_chunk(3, &declared, "a.mp4", 1024, "local", Some(0), &part1)
             .await
             .unwrap();
         assert_eq!(out.received, 700);
@@ -150,14 +132,11 @@ async fn resume_rebuilds_hasher_from_disk_after_restart() {
 
     // 模拟进程重启：新实例对同一临时文件重建哈希状态
     let svc = test_service(&dir);
-    assert_eq!(
-        svc.upload_received_bytes(1, 3, &declared).await.unwrap(),
-        700
-    );
+    assert_eq!(svc.upload_received_bytes(3, &declared).await.unwrap(), 700);
 
     // 续传最后一个分片；哈希校验通过后触库（惰性池连接失败 → Internal）
     let err = svc
-        .append_upload_chunk(1, 3, &declared, "a.mp4", 1024, "local", Some(700), &part2)
+        .append_upload_chunk(3, &declared, "a.mp4", 1024, "local", Some(700), &part2)
         .await
         .unwrap_err();
     assert!(
@@ -169,10 +148,10 @@ async fn resume_rebuilds_hasher_from_disk_after_restart() {
     // 完整临时文件 + 空 body finalize：声明错误哈希必须被拒绝
     // （模拟"临时文件已完整但 finalize 前进程重启"的恢复路径）
     let part3 = vec![3u8; 1024];
-    let tmp3 = svc.upload_temp_path(1, 4, "restart2");
+    let tmp3 = svc.upload_temp_path(4, "restart2");
     std::fs::write(&tmp3, &part3).unwrap();
     let err = svc
-        .append_upload_chunk(1, 4, "restart2", "b.mp4", 1024, "local", Some(1024), b"")
+        .append_upload_chunk(4, "restart2", "b.mp4", 1024, "local", Some(1024), b"")
         .await
         .unwrap_err();
     assert!(
@@ -192,12 +171,12 @@ async fn legacy_append_without_offset_is_supported() {
 
     // 旧客户端不带 x-upload-offset：按文件末尾追加
     let out = svc
-        .append_upload_chunk(1, 5, "legacy", "a.mp4", 10, "local", None, b"01234")
+        .append_upload_chunk(5, "legacy", "a.mp4", 10, "local", None, b"01234")
         .await
         .unwrap();
     assert_eq!(out.received, 5);
     let err = svc
-        .append_upload_chunk(1, 5, "legacy", "a.mp4", 10, "local", None, b"56789")
+        .append_upload_chunk(5, "legacy", "a.mp4", 10, "local", None, b"56789")
         .await
         .unwrap_err();
     // 最后一片哈希不符（声明是 "legacy" 的临时名而非真实哈希）→ HashMismatch
@@ -213,11 +192,11 @@ async fn progress_query_from_disk_and_cleanup_keeps_active_slot() {
     let svc = test_service(&dir);
 
     // 手工放入一个 3 字节临时文件（模拟中断的上传），进度查询应能读到
-    let tmp = svc.upload_temp_path(1, 6, "progress");
+    let tmp = svc.upload_temp_path(6, "progress");
     std::fs::write(&tmp, b"abc").unwrap();
 
     assert_eq!(
-        svc.append_upload_chunk(1, 6, "progress", "a.mp4", 10, "local", Some(0), b"")
+        svc.append_upload_chunk(6, "progress", "a.mp4", 10, "local", Some(0), b"")
             .await
             .unwrap()
             .received,
@@ -226,10 +205,7 @@ async fn progress_query_from_disk_and_cleanup_keeps_active_slot() {
 
     // 未过期槽位不应被清理
     svc.cleanup_upload_slots();
-    assert_eq!(
-        svc.upload_received_bytes(1, 6, "progress").await.unwrap(),
-        3
-    );
+    assert_eq!(svc.upload_received_bytes(6, "progress").await.unwrap(), 3);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

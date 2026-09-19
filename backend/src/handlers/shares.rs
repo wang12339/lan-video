@@ -60,23 +60,11 @@ pub async fn create_share_link(
     if !auth_user.is_admin && ownership.uploader_id != Some(auth_user.id) {
         return Err(error_response(StatusCode::FORBIDDEN, "无权分享该视频"));
     }
-    // Multi-tenant boundary: a video may only be shared by a user of its own
-    // tenant. `videos.tenant_id` has existed since migration 034 but is
-    // never populated with a non-default value yet, so this check is a
-    // no-op today and becomes an active boundary once tenants exist (H-02).
-    if ownership.tenant_id != auth_user.tenant_id {
-        return Err(error_response(StatusCode::FORBIDDEN, "无权分享该视频"));
-    }
 
     let (token, share) = state
         .services
         .share
-        .create_share_link(
-            auth_user.tenant_id,
-            video_id,
-            auth_user.id,
-            req.expires_in_days,
-        )
+        .create_share_link(video_id, auth_user.id, req.expires_in_days)
         .await
         .map_err(ServiceError::into_tuple)?;
 

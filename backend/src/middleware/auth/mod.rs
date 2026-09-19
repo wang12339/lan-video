@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::middleware::tenant::TenantContext;
 use crate::state::AppState;
 use crate::util::response::error_response;
 
@@ -126,25 +125,6 @@ pub async fn bearer_auth(req: Request, next: Next) -> Response {
         }
     };
 
-    let tenant = req.extensions().get::<TenantContext>().cloned();
-    let tenant_id = match &tenant {
-        Some(t) => t.tenant_id,
-        None => {
-            tracing::warn!("bearer_auth: TenantContext missing from request extensions");
-            1
-        }
-    };
-
-    if user.tenant_id != tenant_id {
-        tracing::warn!(
-            username = %user.username,
-            token_tenant_id = user.tenant_id,
-            request_tenant_id = tenant_id,
-            "bearer_auth: token tenant mismatch, rejecting"
-        );
-        return error_response_response(StatusCode::FORBIDDEN, "无效的登录凭证");
-    }
-
     if !user.approved {
         return error_response_response(StatusCode::FORBIDDEN, "账号待管理员审批");
     }
@@ -156,7 +136,6 @@ pub async fn bearer_auth(req: Request, next: Next) -> Response {
         is_admin: user.role >= 3,
         role: user.role,
         is_guest: user.is_guest,
-        tenant_id,
     });
     next.run(req).await
 }

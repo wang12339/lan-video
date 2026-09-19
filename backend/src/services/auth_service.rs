@@ -1,7 +1,6 @@
 use crate::config::AppConfig;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfileResponse};
-use crate::repositories::tenant_repo::TenantRepository;
 use crate::repositories::user_repo::UserRepository;
 use crate::services::email_service::EmailService;
 use crate::services::playback_service::PlaybackService;
@@ -26,7 +25,6 @@ const GUEST_IP_WINDOW_SECS: u64 = 3600;
 #[derive(Clone)]
 pub struct AuthService {
     user_repo: UserRepository,
-    tenant_repo: TenantRepository,
     playback_service: PlaybackService,
     rate_limiter: RateLimiter,
     ip_rate_limiter: RateLimiter,
@@ -38,14 +36,12 @@ impl AuthService {
     ///
     /// # 参数
     /// - `user_repo`: 用户数据访问层
-    /// - `tenant_repo`: 租户数据访问层
     /// - `playback_service`: 播放历史服务
     /// - `rate_limiter`: 用户名级速率限制器
     /// - `ip_rate_limiter`: IP 级速率限制器
     /// - `config`: 应用配置
     pub fn new(
         user_repo: UserRepository,
-        tenant_repo: TenantRepository,
         playback_service: PlaybackService,
         rate_limiter: RateLimiter,
         ip_rate_limiter: RateLimiter,
@@ -53,7 +49,6 @@ impl AuthService {
     ) -> Self {
         Self {
             user_repo,
-            tenant_repo,
             playback_service,
             rate_limiter,
             ip_rate_limiter,
@@ -66,7 +61,6 @@ impl AuthService {
     /// # 参数
     /// - `req`: 认证请求，包含用户名和密码
     /// - `client_ip`: 客户端 IP 地址，用于速率限制和日志记录
-    /// - `tenant_id`: 租户 ID，用于多租户隔离
     ///
     /// # 返回
     /// - `Ok(AuthResponse)`: 注册成功
@@ -94,25 +88,16 @@ impl AuthService {
         &self,
         req: &AuthRequest,
         client_ip: &str,
-        tenant_id: i64,
     ) -> Result<AuthResponse, ServiceError> {
-        // 检查全局配置或租户设置
+        // 检查全局配置
         let global_enabled = self.config.registration_enabled();
-        let tenant_enabled = self
-            .tenant_repo
-            .get_by_id(tenant_id)
-            .await
-            .ok()
-            .flatten()
-            .map(|c| c.settings.registration_enabled)
-            .unwrap_or(false);
 
-        if !global_enabled && !tenant_enabled {
+        if !global_enabled {
             tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: registration disabled");
             return Ok(auth_err("注册功能已关闭"));
         }
 
-        self.check_rate_limits(tenant_id, &req.username, client_ip, "register")
+        self.check_rate_limits(&req.username, client_ip, "register")
             .await?;
 
         let username = req.username.trim();
@@ -160,7 +145,7 @@ impl AuthService {
         // was true on an empty database. We now require an explicit env var
         // (ALLOW_FIRST_USER_ADMIN=true) to opt in to that behaviour. Without
         // it, the first user is a regular viewer that needs admin approval.
-        let count = self.user_repo.count_users(tenant_id).await?;
+        let count = self.user_repo.count_users().await?;
         let is_first_user = count == 0;
         let first_user_admin = self.config.allow_first_user_admin;
         let role: i16 = if is_first_user && first_user_admin {
@@ -171,7 +156,7 @@ impl AuthService {
 
         let user_exists = self
             .user_repo
-            .find_by_username(tenant_id, username)
+            .find_by_username(username)
             .await
             .map(|u| u.is_some())
             .unwrap_or(false);
@@ -187,11 +172,7 @@ impl AuthService {
         // SECURITY: a concurrent registration with the same username hits a
         // unique constraint race. Map it to the same friendly error instead
         // of leaking a 500.
-        let user_id = match self
-            .user_repo
-            .create_user(tenant_id, username, &hash, role)
-            .await
-        {
+        let user_id = match self.user_repo.create_user(username, &hash, role).await {
             Ok(id) => id,
             Err(ref e) if db_error::is_unique_violation(e) => {
                 tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "register rejected: username taken (unique violation race)");
@@ -232,7 +213,6 @@ impl AuthService {
     /// # 参数
     /// - `req`: 认证请求，包含用户名和密码
     /// - `client_ip`: 客户端 IP 地址，用于速率限制和日志记录
-    /// - `tenant_id`: 租户 ID，用于多租户隔离
     ///
     /// # 返回
     /// - `Ok(AuthResponse)`: 登录成功，返回 token
@@ -257,9 +237,8 @@ impl AuthService {
         &self,
         req: &AuthRequest,
         client_ip: &str,
-        tenant_id: i64,
     ) -> Result<AuthResponse, ServiceError> {
-        self.check_rate_limits(tenant_id, &req.username, client_ip, "login")
+        self.check_rate_limits(&req.username, client_ip, "login")
             .await?;
 
         // SECURITY (A07-01 / AF-001): close the username-enumeration timing
@@ -269,10 +248,7 @@ impl AuthService {
         // We now always run a dummy argon2 verify when the user is missing,
         // equalising the timing of the "user not found" and "wrong password"
         // branches.
-        let user_opt = self
-            .user_repo
-            .find_by_username(tenant_id, req.username.trim())
-            .await?;
+        let user_opt = self.user_repo.find_by_username(req.username.trim()).await?;
         let user_hash: &str = match user_opt.as_ref() {
             Some(u) => u.password_hash.as_str(),
             None => DUMMY_ARGON2_HASH,
@@ -338,7 +314,6 @@ impl AuthService {
     pub async fn create_guest_session(
         &self,
         client_ip: &str,
-        tenant_id: i64,
     ) -> Result<AuthResponse, ServiceError> {
         let ip_key = format!("guest:ip:{client_ip}");
         if self
@@ -351,7 +326,7 @@ impl AuthService {
             return Err(ServiceError::RateLimited);
         }
 
-        let (user_id, username) = self.user_repo.create_guest_user(tenant_id).await?;
+        let (user_id, username) = self.user_repo.create_guest_user().await?;
         let token = self.user_repo.create_token(user_id).await?;
 
         tracing::info!(
@@ -606,7 +581,6 @@ impl AuthService {
     /// # 参数
     /// - `username`: 用户名
     /// - `is_admin`: 是否为管理员（用于返回给客户端）
-    /// - `tenant_id`: 租户 ID，用于多租户隔离
     ///
     /// # 返回
     /// - `Ok(UserInfoResponse)`: 用户信息响应
@@ -625,11 +599,10 @@ impl AuthService {
         &self,
         username: &str,
         is_admin: bool,
-        tenant_id: i64,
     ) -> Result<UserInfoResponse, ServiceError> {
         let user = self
             .user_repo
-            .find_by_username(tenant_id, username)
+            .find_by_username(username)
             .await
             .ok()
             .flatten();
@@ -654,7 +627,6 @@ impl AuthService {
     /// # 参数
     /// - `username`: 用户名
     /// - `is_admin`: 是否为管理员（用于返回给客户端）
-    /// - `tenant_id`: 租户 ID，用于多租户隔离
     ///
     /// # 返回
     /// - `Ok(UserProfileResponse)`: 用户个人资料响应
@@ -674,11 +646,10 @@ impl AuthService {
         &self,
         username: &str,
         is_admin: bool,
-        tenant_id: i64,
     ) -> Result<UserProfileResponse, ServiceError> {
         let created_at = self
             .user_repo
-            .find_by_username(tenant_id, username)
+            .find_by_username(username)
             .await
             .ok()
             .flatten()
@@ -687,7 +658,7 @@ impl AuthService {
 
         let (total_watched, total_time, recent) = self
             .playback_service
-            .get_user_profile_data(tenant_id, username)
+            .get_user_profile_data(username)
             .await
             .unwrap_or((0, 0, vec![]));
 
@@ -716,7 +687,6 @@ impl AuthService {
 
     async fn check_rate_limits(
         &self,
-        tenant_id: i64,
         username: &str,
         client_ip: &str,
         action: &str,
@@ -742,11 +712,9 @@ impl AuthService {
         }
 
         let trimmed = username.trim().to_lowercase();
-        let key_len = "auth:".len() + tenant_id.to_string().len() + 1 + trimmed.len();
+        let key_len = "auth:".len() + trimmed.len();
         let mut key = String::with_capacity(key_len);
         key.push_str("auth:");
-        key.push_str(&tenant_id.to_string());
-        key.push(':');
         key.push_str(&trimmed);
 
         if self.rate_limiter.check(&key).await.is_err() {

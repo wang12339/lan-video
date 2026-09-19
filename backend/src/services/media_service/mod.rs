@@ -42,7 +42,7 @@ fn thumbnail_semaphore() -> &'static tokio::sync::Semaphore {
 pub struct MediaService {
     repo: VideoRepository,
     config: AppConfig,
-    /// 分片续传会话状态（按 tenant+uploader+hash 隔离）：
+    /// 分片续传会话状态（按 uploader+hash 隔离）：
     /// 保存增量哈希器与已接收字节数，避免 finalize 时对整文件二次全量读取。
     pub(super) upload_slots:
         Arc<dashmap::DashMap<String, Arc<tokio::sync::Mutex<session::UploadSlot>>>>,
@@ -129,7 +129,6 @@ impl MediaService {
     /// 任何失败都会清理临时文件（multipart 整文件上传等调用方沿用此语义）。
     pub async fn upload_video_file(
         &self,
-        tenant_id: i64,
         file_name: &str,
         temp_path: &std::path::Path,
         category: &str,
@@ -137,7 +136,6 @@ impl MediaService {
         precomputed: Option<(i64, String)>,
     ) -> Result<i64, ServiceError> {
         self.upload_video_file_inner(
-            tenant_id,
             file_name,
             temp_path,
             category,
@@ -154,7 +152,6 @@ impl MediaService {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn upload_video_file_for_finalize(
         &self,
-        tenant_id: i64,
         file_name: &str,
         temp_path: &std::path::Path,
         category: &str,
@@ -162,7 +159,6 @@ impl MediaService {
         precomputed: Option<(i64, String)>,
     ) -> Result<i64, ServiceError> {
         self.upload_video_file_inner(
-            tenant_id,
             file_name,
             temp_path,
             category,
@@ -184,7 +180,6 @@ impl MediaService {
     #[allow(clippy::too_many_arguments)]
     async fn upload_video_file_inner(
         &self,
-        tenant_id: i64,
         file_name: &str,
         temp_path: &std::path::Path,
         category: &str,
@@ -250,11 +245,7 @@ impl MediaService {
         }
 
         // Check for duplicates using server-computed hash（按上传者隔离）
-        match self
-            .repo
-            .find_video_by_file_hash(tenant_id, uploader_id, &hash)
-            .await
-        {
+        match self.repo.find_video_by_file_hash(uploader_id, &hash).await {
             Ok(Some(_)) => {
                 let _ = tokio::fs::remove_file(temp_path).await;
                 return Err(ServiceError::Duplicate("文件已存在".into()));
@@ -361,7 +352,6 @@ impl MediaService {
         let id = match self
             .repo
             .save_local_video(
-                tenant_id,
                 &sanitized_name,
                 "",
                 source_type,
@@ -422,9 +412,8 @@ impl MediaService {
         // Generate thumbnail in background
         let svc = self.clone();
         let vid = id;
-        let vid_tenant = tenant_id;
         tokio::spawn(async move {
-            if let Err(e) = svc.generate_thumbnail(vid_tenant, vid).await {
+            if let Err(e) = svc.generate_thumbnail(vid).await {
                 info!("Thumbnail generation for video {}: {}", vid, e);
             }
         });
@@ -433,14 +422,10 @@ impl MediaService {
     }
 
     /// Generate a thumbnail from a video file using ffmpeg
-    pub async fn generate_thumbnail(
-        &self,
-        tenant_id: i64,
-        video_id: i64,
-    ) -> Result<bool, ServiceError> {
+    pub async fn generate_thumbnail(&self, video_id: i64) -> Result<bool, ServiceError> {
         let video = self
             .repo
-            .find_by_id(tenant_id, video_id)
+            .find_by_id(video_id)
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
         let video = video.ok_or_else(|| ServiceError::Internal("not found".to_string()))?;
@@ -689,7 +674,7 @@ impl MediaService {
 
             for row in &rows {
                 last_id = row.id;
-                match self.generate_thumbnail(row.tenant_id, row.id).await {
+                match self.generate_thumbnail(row.id).await {
                     Ok(true) => generated += 1,
                     Ok(false) => {}
                     Err(e) => errors.push(format!("id={}: {}", row.id, e)),

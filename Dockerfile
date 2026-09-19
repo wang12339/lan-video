@@ -2,7 +2,7 @@ FROM rust:1.95-slim AS backend-builder
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/Cargo.toml backend/Cargo.lock ./
-RUN mkdir -p src benches && echo 'fn main() {}' > src/main.rs && echo 'fn main() {}' > benches/tenant_performance.rs && cargo build --release --locked && rm -rf src benches
+RUN mkdir -p src benches && echo 'fn main() {}' > src/main.rs && cargo build --release --locked && rm -rf src benches
 COPY backend/src ./src
 COPY backend/benches ./benches
 COPY backend/templates ./templates

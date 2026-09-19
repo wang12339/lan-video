@@ -9,7 +9,6 @@ use axum::{
 };
 use moka::sync::Cache;
 
-use crate::middleware::tenant::TenantContext;
 use crate::state::AppState;
 
 use super::{
@@ -35,13 +34,12 @@ struct CachedAuthUser {
     user_id: i64,
     username: std::sync::Arc<str>,
     is_admin: bool,
-    tenant_id: i64,
 }
 
 const MEDIA_AUTH_CACHE_TTL_SECS: u64 = 10;
 
 /// 从共享 Redis 读取 media 鉴权缓存（未配置 Redis 或读取失败则视为 miss）。
-/// 缓存值格式：`{tenant_id}|{user_id}|{is_admin}|{username}`（username 不含 `|`）。
+/// 缓存值格式：`{user_id}|{is_admin}|{username}`（username 不含 `|`）。
 async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Option<CachedAuthUser> {
     let conn = state.redis.as_ref()?;
     let key = format!("media:auth:{}", token);
@@ -53,16 +51,13 @@ async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Optio
         .ok()
         .flatten();
     let val = val?;
-    let (tenant_part, rest) = val.split_once('|')?;
-    let (user_part, rest) = rest.split_once('|')?;
+    let (user_part, rest) = val.split_once('|')?;
     let (admin_part, username_part) = rest.split_once('|')?;
-    let tenant_id = tenant_part.parse::<i64>().ok()?;
     let user_id = user_part.parse::<i64>().ok()?;
     Some(CachedAuthUser {
         user_id,
         username: username_part.into(),
         is_admin: admin_part == "1",
-        tenant_id,
     })
 }
 
@@ -70,8 +65,7 @@ async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &C
     if let Some(conn) = state.redis.as_ref() {
         let key = format!("media:auth:{}", token);
         let val = format!(
-            "{}|{}|{}|{}",
-            user.tenant_id,
+            "{}|{}|{}",
             user.user_id,
             if user.is_admin { 1 } else { 0 },
             user.username
@@ -103,7 +97,7 @@ async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &C
 /// - M-03: media files that do not resolve to a registered video are denied
 ///   even to logged-in users (orphan files, in-progress `.upload_*` temp
 ///   files). The only exemption is `/media/avatars/*`, a public static asset
-///   by design (never video content, no tenant-private data).
+///   by design (never video content).
 pub async fn media_auth(req: Request, next: Next) -> Response {
     let state = req.extensions().get::<Arc<AppState>>().cloned();
     let Some(state) = state else {
@@ -139,15 +133,7 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
         .or_else(|| extract_token_from_cookie(req.headers()))
         .filter(|t| is_valid_auth_token(t));
     if let Some(token) = auth_token {
-        // SECURITY (H-01): /media goes through the global resolve_tenant
-        // middleware, so the request tenant is known here; the token must
-        // belong to that tenant or it is rejected outright.
-        let tenant_id = req
-            .extensions()
-            .get::<TenantContext>()
-            .map(|t| t.tenant_id)
-            .unwrap_or(1);
-        match resolve_media_user(&state, &token, tenant_id).await {
+        match resolve_media_user(&state, &token).await {
             MediaAuthResult::Authorized {
                 user_id,
                 username,
@@ -170,15 +156,13 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 let video_item = if let Some(id) = path_video_id {
                     // 复用 60s 的视频详情缓存吸收 <video> Range 请求风暴，
                     // 避免每个分片请求都打一次归属查询。
-                    if let Some(cached) = state.video_detail_cache.get(&(tenant_id, id)) {
+                    if let Some(cached) = state.video_detail_cache.get(&id) {
                         Some(cached)
                     } else {
-                        match state.repos.video.find_by_id(tenant_id, id).await {
+                        match state.repos.video.find_by_id(id).await {
                             Ok(Some(video)) => {
                                 let item = crate::models::video::VideoItem::from(video);
-                                state
-                                    .video_detail_cache
-                                    .insert((tenant_id, id), item.clone());
+                                state.video_detail_cache.insert(id, item.clone());
                                 Some(item)
                             }
                             Ok(None) => None,
@@ -196,7 +180,7 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 } else {
                     // Path does not contain video_id (e.g. /media/{timestamp}_{filename}.mp4)
                     // Query database to find the video by stream_url.
-                    match state.repos.video.find_by_stream_url(tenant_id, path).await {
+                    match state.repos.video.find_by_stream_url(path).await {
                         Ok(Some(video)) => Some(crate::models::video::VideoItem::from(video)),
                         Ok(None) => {
                             // Not a registered video and not an allowed public
@@ -258,10 +242,7 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 // the source of truth for active playback sessions. We no longer
                 // query the DB on every range request — that caused O(N) queries
                 // per video where N = number of HTTP range chunks.
-                if !state
-                    .playback_sessions
-                    .is_active(tenant_id, &username, video_id)
-                {
+                if !state.playback_sessions.is_active(&username, video_id) {
                     // SECURITY: a valid share token bound to this video grants
                     // the same access as an active playback session. Check it
                     // before rejecting so that logged-in users following a
@@ -422,39 +403,19 @@ async fn share_token_authorizes(
     }
 }
 
-async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) -> MediaAuthResult {
+async fn resolve_media_user(state: &Arc<AppState>, token: &str) -> MediaAuthResult {
     let cached = media_auth_cache().get(token);
-    let user = if let Some(ref c) = cached {
-        if c.tenant_id != tenant_id {
-            return MediaAuthResult::Denied(error_response_response(
-                StatusCode::FORBIDDEN,
-                "无效的登录凭证",
-            ));
-        }
-        c.clone()
+    let user = if let Some(c) = cached {
+        c
     } else {
         // 共享 Redis 缓存（多实例一致），miss 后落本地 moka 快路径
         let from_redis = media_auth_cache_get_redis(state, token).await;
         if let Some(c) = from_redis {
-            if c.tenant_id != tenant_id {
-                return MediaAuthResult::Denied(error_response_response(
-                    StatusCode::FORBIDDEN,
-                    "无效的登录凭证",
-                ));
-            }
             media_auth_cache().insert(token.to_string(), c.clone());
             c
         } else {
             match state.repos.user.find_user_by_token(token).await {
                 Ok(Some(u)) => {
-                    // SECURITY (H-01): token is bound to the tenant it was issued
-                    // in; reject cross-tenant use on /media.
-                    if u.tenant_id != tenant_id {
-                        return MediaAuthResult::Denied(error_response_response(
-                            StatusCode::FORBIDDEN,
-                            "无效的登录凭证",
-                        ));
-                    }
                     // bearer_auth rejects unapproved users; keep media_auth
                     // consistent so de-approval also revokes media access.
                     if !u.approved {
@@ -467,7 +428,6 @@ async fn resolve_media_user(state: &Arc<AppState>, token: &str, tenant_id: i64) 
                         user_id: u.id,
                         username: u.username.clone().into(),
                         is_admin: u.role >= 3,
-                        tenant_id,
                     };
                     media_auth_cache().insert(token.to_string(), entry.clone());
                     media_auth_cache_put_redis(state, token, &entry).await;
@@ -614,7 +574,6 @@ pub struct AuthUser {
     /// 访客影子账号（聊天室徽标等场景需要真实判定，
     /// 不能靠 guest_ 前缀——普通用户可注册此类用户名仿冒）
     pub is_guest: bool,
-    pub tenant_id: i64,
 }
 
 #[cfg(test)]
@@ -732,7 +691,6 @@ mod tests {
             is_admin: true,
             role: 3,
             is_guest: false,
-            tenant_id: 1,
         };
         assert!(user.is_admin);
         assert_eq!(user.role, 3);
@@ -746,7 +704,6 @@ mod tests {
             is_admin: false,
             role: 1,
             is_guest: false,
-            tenant_id: 1,
         };
         assert!(!user.is_admin);
         assert_eq!(user.role, 1);

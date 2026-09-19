@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::Extension;
 
-use crate::middleware::tenant::TenantContext;
 use crate::services::gateway_service;
 use crate::state::AppState;
 
@@ -23,15 +21,9 @@ pub async fn start(State(state): State<Arc<AppState>>) -> axum::response::Respon
 /// GET /auth/gateway/callback
 pub async fn callback(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     axum::extract::RawQuery(raw): axum::extract::RawQuery,
 ) -> axum::response::Response {
-    gateway_service::callback(
-        State(state),
-        Extension(tenant),
-        axum::extract::RawQuery(raw),
-    )
-    .await
+    gateway_service::callback(State(state), axum::extract::RawQuery(raw)).await
 }
 
 /// POST /auth/gateway/exchange

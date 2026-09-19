@@ -5,9 +5,9 @@ use crate::util::password::{MAX_PASSWORD_LEN, MIN_PASSWORD_LEN};
 
 /// Service layer for administrative user-management operations.
 ///
-/// Provides methods to list, delete, kick, approve, and modify user accounts
-/// within a tenant. All mutation methods return an [`ActionOutcome`] indicating
-/// success or failure with an optional error message.
+/// Provides methods to list, delete, kick, approve, and modify user accounts.
+/// All mutation methods return an [`ActionOutcome`] indicating success or
+/// failure with an optional error message.
 #[derive(Clone)]
 pub struct AdminService {
     user_repo: UserRepository,
@@ -34,17 +34,17 @@ impl AdminService {
         Self { user_repo }
     }
 
-    /// Lists all users belonging to the specified tenant.
+    /// Lists all users.
     ///
     /// Returns each user together with their online/offline status.
-    pub async fn list_users(&self, tenant_id: i64) -> Result<Vec<UserWithStatus>, ServiceError> {
-        let users = self.user_repo.list_users(tenant_id).await?;
+    pub async fn list_users(&self) -> Result<Vec<UserWithStatus>, ServiceError> {
+        let users = self.user_repo.list_users().await?;
         Ok(users)
     }
 
     /// 待审批注册用户数（管理导航徽标轮询用）。
-    pub async fn count_pending_users(&self, tenant_id: i64) -> Result<i64, ServiceError> {
-        Ok(self.user_repo.count_pending_users(tenant_id).await?)
+    pub async fn count_pending_users(&self) -> Result<i64, ServiceError> {
+        Ok(self.user_repo.count_pending_users().await?)
     }
 
     /// Deletes the user identified by `target_id`.
@@ -55,18 +55,9 @@ impl AdminService {
         &self,
         target_id: i64,
         actor_id: i64,
-        actor_tenant_id: i64,
     ) -> Result<ActionOutcome, ServiceError> {
         if target_id == actor_id {
             return Err(ServiceError::bad_request("不能对自己执行此操作"));
-        }
-        if !self.user_in_tenant(target_id, actor_tenant_id).await? {
-            return Ok(ActionOutcome {
-                ok: false,
-                error_msg: Some("用户不存在".into()),
-                deleted_count: None,
-                new_role: None,
-            });
         }
         let deleted = self.user_repo.delete_user(target_id).await?;
         if deleted {
@@ -97,7 +88,6 @@ impl AdminService {
         &self,
         target_id: i64,
         new_password: &str,
-        actor_tenant_id: i64,
     ) -> Result<ActionOutcome, ServiceError> {
         if new_password.chars().count() < MIN_PASSWORD_LEN
             || new_password.chars().count() > MAX_PASSWORD_LEN
@@ -106,14 +96,6 @@ impl AdminService {
                 "密码长度需在 {}-{} 个字符之间",
                 MIN_PASSWORD_LEN, MAX_PASSWORD_LEN
             )));
-        }
-        if !self.user_in_tenant(target_id, actor_tenant_id).await? {
-            return Ok(ActionOutcome {
-                ok: false,
-                error_msg: Some("用户不存在".into()),
-                deleted_count: None,
-                new_role: None,
-            });
         }
         let lower = new_password.to_ascii_lowercase();
         let weak_list = [
@@ -170,18 +152,9 @@ impl AdminService {
         &self,
         target_id: i64,
         actor_id: i64,
-        actor_tenant_id: i64,
     ) -> Result<ActionOutcome, ServiceError> {
         if target_id == actor_id {
             return Err(ServiceError::bad_request("不能对自己执行此操作"));
-        }
-        if !self.user_in_tenant(target_id, actor_tenant_id).await? {
-            return Ok(ActionOutcome {
-                ok: false,
-                error_msg: Some("用户不存在".into()),
-                deleted_count: None,
-                new_role: None,
-            });
         }
         let new_state = self.user_repo.toggle_admin(target_id).await?;
         let role: Option<i16> = if new_state {
@@ -209,16 +182,7 @@ impl AdminService {
         &self,
         target_id: i64,
         approved: bool,
-        actor_tenant_id: i64,
     ) -> Result<ActionOutcome, ServiceError> {
-        if !self.user_in_tenant(target_id, actor_tenant_id).await? {
-            return Ok(ActionOutcome {
-                ok: false,
-                error_msg: Some("用户不存在".into()),
-                deleted_count: None,
-                new_role: None,
-            });
-        }
         if approved {
             let ok = self.user_repo.approve_user(target_id, true).await?;
             Ok(ActionOutcome {
@@ -250,24 +214,8 @@ impl AdminService {
     ///
     /// Returns the number of tokens that were deleted, which effectively forces
     /// the user to re-authenticate on all devices.
-    pub async fn kick_user(
-        &self,
-        target_id: i64,
-        actor_tenant_id: i64,
-    ) -> Result<i64, ServiceError> {
-        if !self.user_in_tenant(target_id, actor_tenant_id).await? {
-            return Err(ServiceError::not_found("用户不存在"));
-        }
+    pub async fn kick_user(&self, target_id: i64) -> Result<i64, ServiceError> {
         let deleted = self.user_repo.delete_tokens_by_user_id(target_id).await?;
         Ok(deleted as i64)
-    }
-
-    /// Admin user-management endpoints must verify the target user lives in the
-    /// acting admin's tenant before mutating by bare user id (cross-tenant IDOR).
-    async fn user_in_tenant(&self, user_id: i64, tenant_id: i64) -> Result<bool, ServiceError> {
-        self.user_repo
-            .user_in_tenant(user_id, tenant_id)
-            .await
-            .map_err(ServiceError::from)
     }
 }

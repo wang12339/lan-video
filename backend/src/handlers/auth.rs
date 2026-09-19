@@ -7,7 +7,6 @@ use axum::{
 use std::sync::Arc;
 
 use crate::middleware::auth::{self as auth_mw, AuthUser};
-use crate::middleware::tenant::TenantContext;
 use crate::models::auth::{
     AuthRequest, AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, ResetPasswordRequest,
     ResetPasswordToken, SendVerificationEmailResponse, UpdateEmailRequest, UserInfoResponse,
@@ -113,12 +112,7 @@ fn handle_auth_result(
 /// 登录/注册成功后，如果请求 cookie 里还带着访客影子账号的会话 token，
 /// 把该访客名下的全部内容（视频/播放历史/点赞/收藏/播放列表/评论/弹幕）
 /// 合并到刚认证的真实账号，然后删除影子账号。
-async fn merge_guest_session_if_any(
-    state: &AppState,
-    headers: &HeaderMap,
-    new_token: &str,
-    tenant_id: i64,
-) {
+async fn merge_guest_session_if_any(state: &AppState, headers: &HeaderMap, new_token: &str) {
     let real_user = match state.repos.user.find_user_by_token(new_token).await {
         Ok(Some(u)) => u,
         _ => return,
@@ -140,7 +134,7 @@ async fn merge_guest_session_if_any(
     match state
         .repos
         .user
-        .merge_guest_into_user(guest.id, real_user.id, tenant_id)
+        .merge_guest_into_user(guest.id, real_user.id)
         .await
     {
         Ok(n) => tracing::info!(
@@ -158,14 +152,14 @@ async fn merge_guest_session_if_any(
     }
 }
 
-/// 新用户注册待审批：异步邮件通知租户管理员（不阻塞注册响应）。
+/// 新用户注册待审批：异步邮件通知管理员（不阻塞注册响应）。
 ///
 /// 收件人 = 管理员账号邮箱 + 可选 `ADMIN_NOTIFY_EMAILS`（逗号分隔，用于
 /// 管理员账号未填邮箱或需要分发列表的场景），去重后逐个发送。
 /// SMTP 未配置时 `EmailService::send` 只记日志，不会报错。
-fn notify_admins_new_registration(state: Arc<AppState>, tenant_id: i64, username: String) {
+fn notify_admins_new_registration(state: Arc<AppState>, username: String) {
     tokio::spawn(async move {
-        let mut recipients = match state.repos.user.list_admin_emails(tenant_id).await {
+        let mut recipients = match state.repos.user.list_admin_emails().await {
             Ok(list) => list,
             Err(e) => {
                 tracing::warn!(
@@ -213,21 +207,11 @@ fn notify_admins_new_registration(state: Arc<AppState>, tenant_id: i64, username
 
 pub async fn register(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     let global_enabled = state.config.registration_enabled();
-    let tenant_enabled = state
-        .repos
-        .tenant
-        .get_by_id(tenant.tenant_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.settings.registration_enabled)
-        .unwrap_or(false);
 
-    if !global_enabled && !tenant_enabled {
+    if !global_enabled {
         return Err(error_response(StatusCode::NOT_FOUND, "Not Found"));
     }
 
@@ -235,18 +219,14 @@ pub async fn register(
     let ip = client_ip(&req);
     let auth_req = parse_auth_request(req).await?;
 
-    let result = state
-        .services
-        .auth
-        .register(&auth_req, &ip, tenant.tenant_id)
-        .await;
+    let result = state.services.auth.register(&auth_req, &ip).await;
     if let Ok(ref resp) = result {
         if resp.ok {
             if let Some(token) = &resp.token {
-                merge_guest_session_if_any(&state, &headers, token, tenant.tenant_id).await;
+                merge_guest_session_if_any(&state, &headers, token).await;
             } else {
                 // 无 token = 等待管理员审批的新注册 → 邮件通知管理员
-                notify_admins_new_registration(state.clone(), tenant.tenant_id, auth_req.username);
+                notify_admins_new_registration(state.clone(), auth_req.username);
             }
         }
     }
@@ -256,18 +236,13 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     let headers = req.headers().clone();
     let ip = client_ip(&req);
     let auth_req = parse_auth_request(req).await?;
 
-    let result = state
-        .services
-        .auth
-        .login(&auth_req, &ip, tenant.tenant_id)
-        .await;
+    let result = state.services.auth.login(&auth_req, &ip).await;
     if let Ok(ref resp) = result {
         if !resp.ok {
             let fail_key = format!("login_fail:{}", ip);
@@ -283,7 +258,7 @@ pub async fn login(
                 );
             }
         } else if let Some(token) = &resp.token {
-            merge_guest_session_if_any(&state, &headers, token, tenant.tenant_id).await;
+            merge_guest_session_if_any(&state, &headers, token).await;
         }
     }
     Ok(handle_auth_result(result, &state))
@@ -297,16 +272,11 @@ pub async fn login(
 /// 幂等性由前端保证：先 `GET /auth/user`，仅在 401 时才调用本接口。
 pub async fn guest_session(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     req: Request,
 ) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     let ip = client_ip(&req);
     Ok(handle_auth_result(
-        state
-            .services
-            .auth
-            .create_guest_session(&ip, tenant.tenant_id)
-            .await,
+        state.services.auth.create_guest_session(&ip).await,
         &state,
     ))
 }
@@ -344,7 +314,7 @@ pub async fn user_info(
     match state
         .services
         .auth
-        .user_info(&auth_user.username, auth_user.is_admin, auth_user.tenant_id)
+        .user_info(&auth_user.username, auth_user.is_admin)
         .await
     {
         Ok(resp) => Json(resp),
@@ -369,7 +339,7 @@ pub async fn user_profile(
     match state
         .services
         .auth
-        .user_profile(&auth_user.username, auth_user.is_admin, auth_user.tenant_id)
+        .user_profile(&auth_user.username, auth_user.is_admin)
         .await
     {
         Ok(resp) => Json(resp),

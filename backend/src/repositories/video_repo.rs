@@ -37,16 +37,11 @@ const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_typ
 
 fn push_video_filters(
     builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-    tenant_id: i64,
     query: Option<&str>,
     source_type: Option<&str>,
     category: Option<&str>,
     uploader_id: Option<i64>,
 ) {
-    // Multi-tenant isolation (P0): every list/count query is scoped to the
-    // requesting tenant. Bound first so positional placeholders stay ordered.
-    builder.push(" AND v.tenant_id = ");
-    builder.push_bind(tenant_id);
     if let Some(q) = query {
         // 'simple' 是标准 PostgreSQL 自带配置(zhparser 不一定安装);
         // 与 search_service 的 tsquery 配置保持一致,避免未装插件时 500。
@@ -106,8 +101,6 @@ pub struct VideoRow {
     pub thumb_url: Option<String>,
     pub stream_url: String,
     pub category: String,
-    #[sqlx(default)]
-    pub tenant_id: i64,
     #[allow(dead_code)]
     pub file_hash: Option<String>,
     #[allow(dead_code)]
@@ -209,7 +202,6 @@ impl VideoRepository {
     /// - 所有可选筛选均使用绑定参数，不会注入
     pub async fn count_all(
         &self,
-        tenant_id: i64,
         query: Option<&str>,
         source_type: Option<&str>,
         category: Option<&str>,
@@ -217,14 +209,7 @@ impl VideoRepository {
     ) -> Result<i64, sqlx::Error> {
         let mut builder =
             sqlx::QueryBuilder::new("SELECT COUNT(*) as count FROM videos v WHERE 1=1");
-        push_video_filters(
-            &mut builder,
-            tenant_id,
-            query,
-            source_type,
-            category,
-            uploader_id,
-        );
+        push_video_filters(&mut builder, query, source_type, category, uploader_id);
         builder.build_query_scalar().fetch_one(&self.pool).await
     }
 
@@ -261,7 +246,6 @@ impl VideoRepository {
     #[allow(clippy::too_many_arguments)]
     pub async fn find_all_paged(
         &self,
-        tenant_id: i64,
         page: i64,
         size: i64,
         query: Option<&str>,
@@ -281,13 +265,8 @@ impl VideoRepository {
                 "SELECT {}, h.position_ms AS watch_position FROM videos v",
                 VIDEO_COLUMNS_PREFIXED
             ));
-            // P0 isolation: the watch-position join is additionally scoped by
-            // tenant so a username collision across tenants can never attach
-            // another tenant's history to a video in this list.
             builder.push(" LEFT JOIN playback_history h ON v.id = h.video_id AND h.username = ");
             builder.push_bind(uname);
-            builder.push(" AND h.tenant_id = ");
-            builder.push_bind(tenant_id);
         } else {
             builder.push(format!(
                 "SELECT {}, NULL::bigint AS watch_position FROM videos v",
@@ -295,14 +274,7 @@ impl VideoRepository {
             ));
         }
         builder.push(" WHERE 1=1");
-        push_video_filters(
-            &mut builder,
-            tenant_id,
-            query,
-            source_type,
-            category,
-            uploader_id,
-        );
+        push_video_filters(&mut builder, query, source_type, category, uploader_id);
 
         match username {
             Some(_uname) => {
@@ -330,33 +302,26 @@ impl VideoRepository {
             .await
     }
 
-    /// 根据视频 ID 获取单条视频记录（租户隔离）。
-    ///
-    /// 仅返回属于 `tenant_id` 的视频，杜绝跨租户 IDOR 读取。
+    /// 根据视频 ID 获取单条视频记录。
     ///
     /// # SQL
     /// ```sql
-    /// SELECT {VIDEO_COLUMNS} FROM videos WHERE id = $1 AND tenant_id = $2
+    /// SELECT {VIDEO_COLUMNS} FROM videos WHERE id = $1
     /// ```
-    pub async fn find_by_id(
-        &self,
-        tenant_id: i64,
-        id: i64,
-    ) -> Result<Option<VideoRow>, sqlx::Error> {
+    pub async fn find_by_id(&self, id: i64) -> Result<Option<VideoRow>, sqlx::Error> {
         log_slow_query("video_repo::find_by_id", || async {
             sqlx::query_as::<_, VideoRow>(&format!(
-                "SELECT {} FROM videos WHERE id = $1 AND tenant_id = $2",
+                "SELECT {} FROM videos WHERE id = $1",
                 VIDEO_COLUMNS
             ))
             .bind(id)
-            .bind(tenant_id)
             .fetch_optional(&self.pool)
             .await
         })
         .await
     }
 
-    /// 根据视频 ID 获取单条视频记录（**不**做租户过滤）。
+    /// 根据视频 ID 获取单条视频记录。
     ///
     /// 仅供内部能力型路径使用，两点均已有独立的授权边界：
     /// 1. `share` token 校验（全局 token 唯一，见 share_repo 的 H-02 说明）；
@@ -386,20 +351,15 @@ impl VideoRepository {
     /// # 性能
     /// - `ANY($1)` 利用主键索引，单次查询替代 N+1
     /// - 空列表时提前返回空 Vec，不发 DB 请求
-    pub async fn find_all_by_ids(
-        &self,
-        tenant_id: i64,
-        ids: &[i64],
-    ) -> Result<Vec<VideoRow>, sqlx::Error> {
+    pub async fn find_all_by_ids(&self, ids: &[i64]) -> Result<Vec<VideoRow>, sqlx::Error> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {} FROM videos WHERE id = ANY($1) AND tenant_id = $2 ORDER BY array_position($1, id)",
+            "SELECT {} FROM videos WHERE id = ANY($1) ORDER BY array_position($1, id)",
             VIDEO_COLUMNS
         ))
         .bind(ids)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
     }
@@ -418,7 +378,6 @@ impl VideoRepository {
     #[allow(clippy::too_many_arguments)]
     pub async fn save_external_video(
         &self,
-        tenant_id: i64,
         title: &str,
         description: &str,
         category: &str,
@@ -427,10 +386,9 @@ impl VideoRepository {
         uploader_id: Option<i64>,
     ) -> Result<i64, sqlx::Error> {
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO videos (tenant_id, title, description, source_type, cover_url, stream_url, category, uploader_id) \
-             VALUES ($1, $2, $3, 'external', $4, $5, $6, $7) RETURNING id"
+            "INSERT INTO videos (title, description, source_type, cover_url, stream_url, category, uploader_id) \
+             VALUES ($1, $2, 'external', $3, $4, $5, $6) RETURNING id"
         )
-        .bind(tenant_id)
         .bind(title)
         .bind(description)
         .bind(cover_url)
@@ -534,19 +492,16 @@ impl VideoRepository {
     /// - 返回 `None` 表示该文件尚未上传
     pub async fn find_video_by_file_hash(
         &self,
-        tenant_id: i64,
         uploader_id: i64,
         hash: &str,
     ) -> Result<Option<VideoRow>, sqlx::Error> {
-        // 私有模型（访客模式）：重复判定只看同一上传者。若按租户级判定，
-        // 用户会撞上"看不见的别人的文件"而莫名 409；且共享同一行会让
-        // 阅后即焚/删除误删他人的内容。
+        // 私有模型（访客模式）：重复判定只看同一上传者，避免共享同一行
+        // 让阅后即焚/删除误删他人的内容。
         sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {} FROM videos WHERE file_hash = $1 AND tenant_id = $2 AND uploader_id = $3",
+            "SELECT {} FROM videos WHERE file_hash = $1 AND uploader_id = $2",
             VIDEO_COLUMNS
         ))
         .bind(hash)
-        .bind(tenant_id)
         .bind(uploader_id)
         .fetch_optional(&self.pool)
         .await
@@ -560,21 +515,17 @@ impl VideoRepository {
     /// 稀少，且缓存 None 会让"上传后立即可播"出现 30 秒假阴性）。
     pub async fn find_by_stream_url(
         &self,
-        tenant_id: i64,
         stream_url: &str,
     ) -> Result<Option<VideoRow>, sqlx::Error> {
-        // Cache key is tenant-qualified so a media path registered under one
-        // tenant can never be resolved (and thus streamed) under another.
-        let cache_key = format!("{}|{}", tenant_id, stream_url);
+        let cache_key = stream_url.to_string();
         if let Some(row) = self.stream_url_cache.get(&cache_key) {
             return Ok(Some(row));
         }
         let row = sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {} FROM videos WHERE stream_url = $1 AND tenant_id = $2",
+            "SELECT {} FROM videos WHERE stream_url = $1",
             VIDEO_COLUMNS
         ))
         .bind(stream_url)
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await?;
         if let Some(v) = &row {
@@ -598,17 +549,15 @@ impl VideoRepository {
     /// - `ANY($1)` 利用 `file_hash` 索引
     pub async fn find_existing_hashes(
         &self,
-        tenant_id: i64,
         hashes: &[String],
     ) -> Result<Vec<String>, sqlx::Error> {
         if hashes.is_empty() {
             return Ok(vec![]);
         }
         let rows = sqlx::query_as::<_, FileHashRow>(
-            "SELECT file_hash FROM videos WHERE file_hash = ANY($1) AND tenant_id = $2",
+            "SELECT file_hash FROM videos WHERE file_hash = ANY($1)",
         )
         .bind(hashes)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().filter_map(|r| r.file_hash).collect())
@@ -616,9 +565,8 @@ impl VideoRepository {
 
     /// 查找缺少封面图的本地视频（游标分页，供后台封面生成任务使用）。
     ///
-    /// **故意不做租户过滤**：封面生成属于全局后台任务，MEDIA_ROOT 在租户间
-    /// 共享，需遍历所有租户的视频补齐封面。此方法与 `find_by_id_unscoped`
-    /// 一样仅供内部使用，不对外暴露。
+    /// 封面生成属于全局后台任务，需遍历所有视频补齐封面。此方法与
+    /// `find_by_id_unscoped` 一样仅供内部使用，不对外暴露。
     ///
     /// # SQL
     /// ```sql
@@ -639,7 +587,7 @@ impl VideoRepository {
         limit: i64,
     ) -> Result<Vec<VideoRow>, sqlx::Error> {
         sqlx::query_as::<_, VideoRow>(&format!(
-            "SELECT {}, tenant_id FROM videos WHERE (cover_url IS NULL OR thumb_url IS NULL) AND source_type LIKE 'local%' AND id > $1 ORDER BY id LIMIT $2",
+            "SELECT {} FROM videos WHERE (cover_url IS NULL OR thumb_url IS NULL) AND source_type LIKE 'local%' AND id > $1 ORDER BY id LIMIT $2",
             VIDEO_COLUMNS
         ))
         .bind(after_id)
@@ -648,12 +596,12 @@ impl VideoRepository {
         .await
     }
 
-    /// 全量列出本地视频的 `(id, tenant_id, stream_url)`,供后台
+    /// 全量列出本地视频的 `(id, stream_url)`,供后台
     /// “视频记录 ↔ 物理文件”一致性清扫使用(文件丢失的记录会被删除)。
-    pub async fn list_local_video_media(&self) -> Result<Vec<(i64, i64, String)>, sqlx::Error> {
+    pub async fn list_local_video_media(&self) -> Result<Vec<(i64, String)>, sqlx::Error> {
         log_slow_query("video_repo::list_local_video_media", || async {
-            sqlx::query_as::<_, (i64, i64, String)>(
-                "SELECT id, tenant_id, stream_url FROM videos WHERE source_type = 'local_video'",
+            sqlx::query_as::<_, (i64, String)>(
+                "SELECT id, stream_url FROM videos WHERE source_type = 'local_video'",
             )
             .fetch_all(&self.pool)
             .await
@@ -680,17 +628,14 @@ impl VideoRepository {
     /// - 空列表提前返回
     pub async fn find_existing_by_name_and_size_batch(
         &self,
-        tenant_id: i64,
         files: &[(String, i64)],
     ) -> Result<HashSet<(String, i64)>, sqlx::Error> {
         if files.is_empty() {
             return Ok(HashSet::new());
         }
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT original_name, file_size FROM videos WHERE tenant_id = ",
+            "SELECT original_name, file_size FROM videos WHERE (original_name, file_size) IN (",
         );
-        builder.push_bind(tenant_id);
-        builder.push(" AND (original_name, file_size) IN (");
         let mut separated = builder.separated(", ");
         for (name, size) in files {
             separated.push("(");
@@ -735,18 +680,12 @@ impl VideoRepository {
     /// - 事务保证原子性：要么全部删除，要么全部回滚
     /// - 级联删除顺序：先删依赖表（history/likes/favorites/comments/tags），再删主表
     /// - 最后统一回收各 uploader 的存储配额（单条 UPDATE，非逐个更新）
-    pub async fn batch_delete_videos(
-        &self,
-        tenant_id: i64,
-        ids: &[i64],
-    ) -> Result<u64, sqlx::Error> {
+    pub async fn batch_delete_videos(&self, ids: &[i64]) -> Result<u64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
         let mut tx = self.pool.begin().await?;
 
-        // P0 隔离：主表删除与配额回收均限定在租户内（关联表按已被租户限定的
-        // video_id 级联，video_id 全局唯一，不会波及其它租户）。
         sqlx::query("DELETE FROM playback_history WHERE video_id = ANY($1)")
             .bind(ids)
             .execute(&mut *tx)
@@ -772,18 +711,16 @@ impl VideoRepository {
         sqlx::query(
             "UPDATE users SET storage_used_bytes = GREATEST(0, COALESCE(storage_used_bytes, 0) - sub.total_bytes) \
              FROM (SELECT uploader_id, SUM(file_size) AS total_bytes \
-                   FROM videos WHERE id = ANY($1) AND tenant_id = $2 AND uploader_id IS NOT NULL \
+                   FROM videos WHERE id = ANY($1) AND uploader_id IS NOT NULL \
                    GROUP BY uploader_id) AS sub \
              WHERE users.id = sub.uploader_id",
         )
         .bind(ids)
-        .bind(tenant_id)
         .execute(&mut *tx)
         .await?;
 
-        let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1) AND tenant_id = $2")
+        let result = sqlx::query("DELETE FROM videos WHERE id = ANY($1)")
             .bind(ids)
-            .bind(tenant_id)
             .execute(&mut *tx)
             .await?;
 
@@ -799,8 +736,8 @@ impl VideoRepository {
     /// # 返回
     /// - `true` — 成功删除（至少影响 1 行）
     /// - `false` — ID 不存在（0 行受影响）
-    pub async fn delete_video_cascade(&self, tenant_id: i64, id: i64) -> Result<bool, sqlx::Error> {
-        let rows = self.batch_delete_videos(tenant_id, &[id]).await?;
+    pub async fn delete_video_cascade(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let rows = self.batch_delete_videos(&[id]).await?;
         Ok(rows > 0)
     }
 
@@ -823,7 +760,6 @@ impl VideoRepository {
     #[allow(clippy::too_many_arguments)]
     pub async fn save_local_video(
         &self,
-        tenant_id: i64,
         title: &str,
         description: &str,
         source_type: &str,
@@ -837,10 +773,9 @@ impl VideoRepository {
         uploader_id: Option<i64>,
     ) -> Result<i64, sqlx::Error> {
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO videos (tenant_id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id"
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id"
         )
-        .bind(tenant_id)
         .bind(title)
         .bind(description)
         .bind(source_type)
@@ -873,18 +808,16 @@ impl VideoRepository {
     /// 实际插入的行数。空列表提前返回 0。
     pub async fn batch_save_local_videos(
         &self,
-        tenant_id: i64,
         videos: &[LocalVideoValues<'_>],
     ) -> Result<u64, sqlx::Error> {
         if videos.is_empty() {
             return Ok(0);
         }
         let mut builder = sqlx::QueryBuilder::new(
-            "INSERT INTO videos (tenant_id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name) ",
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name) ",
         );
         builder.push_values(videos, |mut b, v| {
-            b.push_bind(tenant_id)
-                .push_bind(v.0)
+            b.push_bind(v.0)
                 .push_bind(v.1)
                 .push_bind(v.2)
                 .push_bind(v.3)
@@ -916,7 +849,6 @@ impl VideoRepository {
     /// - 使用 `QueryBuilder` 动态拼接，避免 COALESCE 的写放大
     pub async fn update_video(
         &self,
-        tenant_id: i64,
         id: i64,
         title: Option<&str>,
         description: Option<&str>,
@@ -944,8 +876,6 @@ impl VideoRepository {
 
         builder.push(" WHERE id = ");
         builder.push_bind(id);
-        builder.push(" AND tenant_id = ");
-        builder.push_bind(tenant_id);
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
@@ -963,10 +893,9 @@ impl VideoRepository {
     /// # 性能
     /// - 原子操作，无需先 SELECT 再 UPDATE
     /// - 使用主键索引
-    pub async fn increment_views(&self, tenant_id: i64, id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE videos SET views = views + 1 WHERE id = $1 AND tenant_id = $2")
+    pub async fn increment_views(&self, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE videos SET views = views + 1 WHERE id = $1")
             .bind(id)
-            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -1041,16 +970,15 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 管理后台仪表盘展示各来源（local/external/...）的视频数量分布。
-    pub async fn count_by_type(&self, tenant_id: i64) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    pub async fn count_by_type(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
         #[derive(sqlx::FromRow)]
         struct Row {
             source_type: String,
             count: i64,
         }
         let rows = sqlx::query_as::<_, Row>(
-            "SELECT source_type, COUNT(*)::bigint as count FROM videos WHERE tenant_id = $1 GROUP BY source_type ORDER BY count DESC"
+            "SELECT source_type, COUNT(*)::bigint as count FROM videos GROUP BY source_type ORDER BY count DESC"
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| (r.source_type, r.count)).collect())
     }
@@ -1069,24 +997,20 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 管理后台仪表盘展示各分类的视频数量。空字符串与 `NULL` 统一显示为"未分类"。
-    pub async fn count_by_category(
-        &self,
-        tenant_id: i64,
-    ) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    pub async fn count_by_category(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
         #[derive(sqlx::FromRow)]
         struct Row {
             category: String,
             count: i64,
         }
         let rows = sqlx::query_as::<_, Row>(
-            "SELECT cat as category, COUNT(*)::bigint as count FROM (SELECT COALESCE(NULLIF(category,''), '未分类') as cat FROM videos WHERE tenant_id = $1) t GROUP BY cat ORDER BY count DESC"
+            "SELECT cat as category, COUNT(*)::bigint as count FROM (SELECT COALESCE(NULLIF(category,''), '未分类') as cat FROM videos) t GROUP BY cat ORDER BY count DESC"
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| (r.category, r.count)).collect())
     }
 
-    /// 获取当前租户所有视频的总播放次数。
+    /// 获取所有视频的总播放次数。
     ///
     /// # SQL
     /// ```sql
@@ -1095,13 +1019,10 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 管理后台仪表盘展示全站累计播放量。`COALESCE` 处理空表返回 `NULL` 的情况。
-    pub async fn total_views(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
-        let (total,): (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(views), 0)::bigint FROM videos WHERE tenant_id = $1",
-        )
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await?;
+    pub async fn total_views(&self) -> Result<i64, sqlx::Error> {
+        let (total,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(views), 0)::bigint FROM videos")
+            .fetch_one(&self.pool)
+            .await?;
         Ok(total)
     }
 
@@ -1114,13 +1035,11 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 管理后台仪表盘展示全站视频总时长。`COALESCE` 处理空表返回 `NULL` 的情况。
-    pub async fn total_duration_secs(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
-        let (total,): (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(duration), 0)::bigint FROM videos WHERE tenant_id = $1",
-        )
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await?;
+    pub async fn total_duration_secs(&self) -> Result<i64, sqlx::Error> {
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COALESCE(SUM(duration), 0)::bigint FROM videos")
+                .fetch_one(&self.pool)
+                .await?;
         Ok(total)
     }
 
@@ -1138,20 +1057,17 @@ impl VideoRepository {
     /// 实际更新的行数。空列表提前返回 0。
     pub async fn batch_update_category(
         &self,
-        tenant_id: i64,
         ids: &[i64],
         category: &str,
     ) -> Result<i64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
-        let result =
-            sqlx::query("UPDATE videos SET category = $1 WHERE id = ANY($2) AND tenant_id = $3")
-                .bind(category)
-                .bind(ids)
-                .bind(tenant_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("UPDATE videos SET category = $1 WHERE id = ANY($2)")
+            .bind(category)
+            .bind(ids)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() as i64)
     }
 
@@ -1168,14 +1084,10 @@ impl VideoRepository {
     ///
     /// # 返回
     /// `HashSet<String>` 方便 O(1) 包含检查。
-    pub async fn find_all_local_file_names(
-        &self,
-        tenant_id: i64,
-    ) -> Result<HashSet<String>, sqlx::Error> {
+    pub async fn find_all_local_file_names(&self) -> Result<HashSet<String>, sqlx::Error> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT stream_url FROM videos WHERE source_type LIKE 'local%' AND tenant_id = $1",
+            "SELECT stream_url FROM videos WHERE source_type LIKE 'local%'",
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().collect())
@@ -1213,18 +1125,14 @@ impl VideoRepository {
     /// 管理员删除某个分辨率的转码文件时调用，同步清理数据库记录。
     pub async fn delete_variant_record(
         &self,
-        tenant_id: i64,
         video_id: i64,
         resolution: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "DELETE FROM video_variants WHERE video_id = $1 AND resolution = $2 AND tenant_id = $3",
-        )
-        .bind(video_id)
-        .bind(resolution)
-        .bind(tenant_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("DELETE FROM video_variants WHERE video_id = $1 AND resolution = $2")
+            .bind(video_id)
+            .bind(resolution)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -1237,14 +1145,12 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 判断视频是否还有可用的多分辨率变体，决定是否清除 `has_variants` 标记。
-    pub async fn count_variants(&self, tenant_id: i64, video_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM video_variants WHERE video_id = $1 AND tenant_id = $2",
-        )
-        .bind(video_id)
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await?;
+    pub async fn count_variants(&self, video_id: i64) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM video_variants WHERE video_id = $1")
+                .bind(video_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(count)
     }
 
@@ -1257,14 +1163,9 @@ impl VideoRepository {
     ///
     /// # 用途
     /// 所有分辨率变体被删除后调用，告知播放器不再尝试加载多分辨率流。
-    pub async fn clear_has_variants(
-        &self,
-        tenant_id: i64,
-        video_id: i64,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE videos SET has_variants = false WHERE id = $1 AND tenant_id = $2")
+    pub async fn clear_has_variants(&self, video_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE videos SET has_variants = false WHERE id = $1")
             .bind(video_id)
-            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -1288,21 +1189,16 @@ impl VideoRepository {
     ///
     /// # 返回
     /// 按分辨率从高到低排序的变体列表（2160p → 1080p → 720p → ...）。
-    pub async fn list_variants(
-        &self,
-        tenant_id: i64,
-        video_id: i64,
-    ) -> Result<Vec<VideoVariantRow>, sqlx::Error> {
+    pub async fn list_variants(&self, video_id: i64) -> Result<Vec<VideoVariantRow>, sqlx::Error> {
         sqlx::query_as::<_, VideoVariantRow>(
             r#"SELECT resolution, file_path, file_size, bitrate, codec
                FROM video_variants
-               WHERE video_id = $1 AND tenant_id = $2
+               WHERE video_id = $1
                ORDER BY CASE resolution
                    WHEN '2160p' THEN 1 WHEN '1080p' THEN 2 WHEN '720p' THEN 3
                    WHEN '480p' THEN 4 WHEN '360p' THEN 5 ELSE 6 END"#,
         )
         .bind(video_id)
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await
     }
@@ -1321,17 +1217,12 @@ impl VideoRepository {
     ///
     /// # 返回
     /// 实际被取消的任务数量（`rows_affected`）。
-    pub async fn cancel_transcode_jobs(
-        &self,
-        tenant_id: i64,
-        video_id: i64,
-    ) -> Result<u64, sqlx::Error> {
+    pub async fn cancel_transcode_jobs(&self, video_id: i64) -> Result<u64, sqlx::Error> {
         let result = sqlx::query(
             "UPDATE transcoding_jobs SET status = 'failed', error_message = 'Cancelled by admin' \
-             WHERE video_id = $1 AND tenant_id = $2 AND status IN ('pending', 'processing')",
+             WHERE video_id = $1 AND status IN ('pending', 'processing')",
         )
         .bind(video_id)
-        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())

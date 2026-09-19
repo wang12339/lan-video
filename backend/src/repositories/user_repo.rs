@@ -22,8 +22,8 @@ use crate::db::log_slow_query;
 /// so the find_token_detail "kicked / expired" differentiation in bearer_auth
 /// keeps working unchanged.
 ///
-/// The cached UserRow carries tenant_id (H-01 binding) and role/approved;
-/// role/approval changes are likewise TTL-bounded, which is acceptable.
+/// The cached UserRow carries role/approved; role/approval changes are
+/// likewise TTL-bounded, which is acceptable.
 static TOKEN_CACHE: OnceLock<Cache<String, UserRow>> = OnceLock::new();
 
 const TOKEN_CACHE_TTL_SECS: u64 = 10;
@@ -52,9 +52,6 @@ pub struct UserRow {
     /// 访客影子账号标记（迁移 052）。访客账号无密码、不可登录，
     /// 注册/登录真实账号时其内容会被合并并删除本行。
     pub is_guest: bool,
-    /// Tenant this user (or, on token queries, the token) belongs to.
-    /// On token lookups it mirrors `auth_tokens.tenant_id` (H-01 binding).
-    pub tenant_id: i64,
 }
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
@@ -88,44 +85,38 @@ impl UserRepository {
         &self.pool
     }
 
-    /// Count all users belonging to `tenant_id`.
+    /// Count all users.
     ///
-    /// **SQL**: `SELECT COUNT(*) FROM users WHERE tenant_id = $1`
+    /// **SQL**: `SELECT COUNT(*) FROM users WHERE NOT is_guest`
     ///
-    /// Uses the composite index `idx_users_tenant_id` (or PK scan filtered
-    /// by tenant). The result is a sequential scan of the filtered rows;
-    /// fine-grained tenant isolation keeps the working set small per tenant.
-    pub async fn count_users(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
+    /// The result is a sequential scan of the filtered rows.
+    pub async fn count_users(&self) -> Result<i64, sqlx::Error> {
         // 访客影子账号不计入"注册用户数"：register 的首用户判定（首用户
         // 自动管理员）与展示统计都只应看真实账号。
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND NOT is_guest")
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE NOT is_guest")
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count)
     }
 
     /// Register a new user.
     ///
-    /// **SQL**: `INSERT INTO users (tenant_id, username, password_hash, approved, role) … RETURNING id`
+    /// **SQL**: `INSERT INTO users (username, password_hash, approved, role) … RETURNING id`
     ///
     /// The `approved` flag is set to `true` when `role >= 3` (admin), so
     /// admin accounts are auto-approved while normal users require manual
-    /// approval. The uniqueness constraint on `(tenant_id, username)` raises
+    /// approval. The unique constraint on `username` raises
     /// `sqlx::Error` (unique_violation) if the username is already taken.
     pub async fn create_user(
         &self,
-        tenant_id: i64,
         username: &str,
         password_hash: &str,
         role: i16,
     ) -> Result<i64, sqlx::Error> {
         let approved = role >= 3;
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (tenant_id, username, password_hash, approved, role, is_guest) VALUES ($1, $2, $3, $4, $5, false) RETURNING id"
+            "INSERT INTO users (username, password_hash, approved, role, is_guest) VALUES ($1, $2, $3, $4, false) RETURNING id"
         )
-        .bind(tenant_id)
         .bind(username)
         .bind(password_hash)
         .bind(approved)
@@ -144,7 +135,7 @@ impl UserRepository {
     ///   通过密码登录）
     /// - `approved = true`（访客无需管理员审批即可使用）
     /// - `role = 1`（与普通 viewer 相同的权限层）
-    pub async fn create_guest_user(&self, tenant_id: i64) -> Result<(i64, String), sqlx::Error> {
+    pub async fn create_guest_user(&self) -> Result<(i64, String), sqlx::Error> {
         use rand::distributions::Alphanumeric;
         use rand::Rng;
         let suffix: String = rand::rngs::OsRng
@@ -154,9 +145,8 @@ impl UserRepository {
             .collect();
         let username = format!("guest_{suffix}");
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (tenant_id, username, password_hash, approved, role, is_guest) VALUES ($1, $2, '', true, 1, true) RETURNING id",
+            "INSERT INTO users (username, password_hash, approved, role, is_guest) VALUES ($1, '', true, 1, true) RETURNING id",
         )
-        .bind(tenant_id)
         .bind(&username)
         .fetch_one(&self.pool)
         .await?;
@@ -178,7 +168,6 @@ impl UserRepository {
         &self,
         guest_id: i64,
         target_user_id: i64,
-        tenant_id: i64,
     ) -> Result<u64, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
@@ -196,15 +185,12 @@ impl UserRepository {
             return Ok(0);
         }
 
-        let video_rows = sqlx::query(
-            "UPDATE videos SET uploader_id = $2 WHERE uploader_id = $1 AND tenant_id = $3",
-        )
-        .bind(guest_id)
-        .bind(target_user_id)
-        .bind(tenant_id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+        let video_rows = sqlx::query("UPDATE videos SET uploader_id = $2 WHERE uploader_id = $1")
+            .bind(guest_id)
+            .bind(target_user_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
 
         // 播放历史/点赞/收藏按 (username, video_id) 关联；直接改用户名。
         // UNIQUE(username, video_id) 冲突在真实场景中不可达（访客与真实
@@ -254,23 +240,17 @@ impl UserRepository {
         Ok(video_rows)
     }
 
-    /// Look up a user by `(tenant_id, username)`.
+    /// Look up a user by `username`.
     ///
-    /// **SQL**: `SELECT … FROM users WHERE tenant_id = $1 AND username = $2`
+    /// **SQL**: `SELECT … FROM users WHERE username = $1`
     ///
-    /// Uses the unique composite index on `(tenant_id, username)` for a
-    /// single-row index lookup (O(log n)). This is the primary lookup path
-    /// for authentication (login).
-    pub async fn find_by_username(
-        &self,
-        tenant_id: i64,
-        username: &str,
-    ) -> Result<Option<UserRow>, sqlx::Error> {
+    /// Uses the unique index on `username` for a single-row index lookup
+    /// (O(log n)). This is the primary lookup path for authentication (login).
+    pub async fn find_by_username(&self, username: &str) -> Result<Option<UserRow>, sqlx::Error> {
         let user = log_slow_query("user_repo::find_by_username", || async {
             sqlx::query_as::<_, UserRow>(
-                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, tenant_id FROM users WHERE tenant_id = $1 AND username = $2"
+                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest FROM users WHERE username = $1"
             )
-            .bind(tenant_id)
             .bind(username)
             .fetch_optional(&self.pool)
             .await
@@ -293,23 +273,20 @@ impl UserRepository {
 
     /// Mint a new authentication token for `user_id`.
     ///
-    /// **SQL**: `INSERT INTO auth_tokens (user_id, tenant_id, token_hash, expires_at, revoked)
-    ///          SELECT id, tenant_id, $2, CURRENT_TIMESTAMP + INTERVAL '7 days', false
+    /// **SQL**: `INSERT INTO auth_tokens (user_id, token_hash, expires_at, revoked)
+    ///          SELECT id, $2, CURRENT_TIMESTAMP + INTERVAL '7 days', false
     ///          FROM users WHERE id = $1`
     ///
-    /// SECURITY (H-01): the token is bound to its user's tenant at creation
-    /// time — `tenant_id` is copied from `users.tenant_id` in the same
-    /// INSERT..SELECT statement, so a token minted on tenant A can never
-    /// authenticate on tenant B. Token is a 256-bit random alphanumeric
-    /// string; only its SHA-256 hash is stored. Expires in 7 days. The raw
-    /// token is returned to the caller (never stored).
+    /// Token is a 256-bit random alphanumeric string; only its SHA-256 hash
+    /// is stored. Expires in 7 days. The raw token is returned to the caller
+    /// (never stored).
     pub async fn create_token(&self, user_id: i64) -> Result<String, sqlx::Error> {
         use sha2::{Digest, Sha256};
         let token = Self::generate_random_token();
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         sqlx::query(
-            "INSERT INTO auth_tokens (user_id, tenant_id, token_hash, expires_at, revoked)
-             SELECT id, tenant_id, $2, CURRENT_TIMESTAMP + INTERVAL '7 days', false
+            "INSERT INTO auth_tokens (user_id, token_hash, expires_at, revoked)
+             SELECT id, $2, CURRENT_TIMESTAMP + INTERVAL '7 days', false
              FROM users WHERE id = $1",
         )
         .bind(user_id)
@@ -341,7 +318,7 @@ impl UserRepository {
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let user = log_slow_query("user_repo::find_user_by_token", || async {
             sqlx::query_as::<_, UserRow>(
-                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, u.is_guest, t.tenant_id
+                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, u.is_guest
                    FROM auth_tokens t
                    JOIN users u ON t.user_id = u.id
                    WHERE t.token_hash = $1 AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked"#,
@@ -379,8 +356,8 @@ impl UserRepository {
         }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-        let row = sqlx::query_as::<_, (i64, i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool, bool)>(
-            r#"SELECT u.id, t.tenant_id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at,
+        let row = sqlx::query_as::<_, (i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool, bool)>(
+            r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at,
                       u.email, u.email_verified, u.is_guest,
                       t.revoked, t.expires_at > CURRENT_TIMESTAMP AS valid
                FROM auth_tokens t
@@ -393,7 +370,6 @@ impl UserRepository {
         Ok(row.map(
             |(
                 id,
-                tenant_id,
                 username,
                 password_hash,
                 approved,
@@ -418,7 +394,6 @@ impl UserRepository {
                         email,
                         email_verified,
                         is_guest,
-                        tenant_id,
                     },
                     revoked,
                     valid,
@@ -487,50 +462,32 @@ impl UserRepository {
         Ok(result.rows_affected())
     }
 
-    /// List all users in a tenant, newest first, with online status.
+    /// List all users, newest first, with online status.
     ///
     /// **SQL**: `SELECT u.*, EXISTS(SELECT 1 FROM auth_tokens t
     ///          WHERE t.user_id = u.id AND t.expires_at > CURRENT_TIMESTAMP
     ///          AND NOT t.revoked) AS has_active_token
-    ///          FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at DESC`
+    ///          FROM users u ORDER BY u.created_at DESC`
     ///
     /// The correlated subquery checks for an active auth token per user.
-    /// This is an N+1 pattern but acceptable for admin lists (< 1k users
-    /// per tenant). The subquery uses `auth_tokens(user_id, revoked, expires_at)`
+    /// This is an N+1 pattern but acceptable for admin lists (< 1k users).
+    /// The subquery uses `auth_tokens(user_id, revoked, expires_at)`
     /// composite index.
     ///
-    /// **Index**: `users(tenant_id, created_at DESC)` for the ordered scan;
+    /// **Index**: `users(created_at DESC)` for the ordered scan;
     /// `auth_tokens(user_id, revoked, expires_at)` for the correlated EXISTS.
-    pub async fn list_users(&self, tenant_id: i64) -> Result<Vec<UserWithStatus>, sqlx::Error> {
+    pub async fn list_users(&self) -> Result<Vec<UserWithStatus>, sqlx::Error> {
         let users = log_slow_query("user_repo::list_users", || async {
             sqlx::query_as::<_, UserWithStatus>(
                 r#"SELECT u.id, u.username, u.approved, u.role >= 3 AS is_admin, u.role, u.avatar_url, u.created_at, u.is_guest,
                           EXISTS(SELECT 1 FROM auth_tokens t WHERE t.user_id = u.id AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked) AS has_active_token
-                   FROM users u WHERE u.tenant_id = $1 ORDER BY u.created_at DESC"#,
+                   FROM users u ORDER BY u.created_at DESC"#,
             )
-            .bind(tenant_id)
             .fetch_all(&self.pool)
             .await
         })
         .await?;
         Ok(users)
-    }
-
-    /// True iff a user with `user_id` exists inside `tenant_id`.
-    ///
-    /// Admin user-management endpoints MUST call this before acting on a bare
-    /// user id — otherwise a tenant's admin can delete/reset/kick users of
-    /// other tenants (cross-tenant IDOR).
-    ///
-    /// **Index**: `users(id)` PK (filtered by `tenant_id`).
-    pub async fn user_in_tenant(&self, user_id: i64, tenant_id: i64) -> Result<bool, sqlx::Error> {
-        let (exists,): (bool,) =
-            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2)")
-                .bind(user_id)
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(exists)
     }
 
     /// Permanently delete a user and all their tokens.
@@ -636,34 +593,30 @@ impl UserRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Count unapproved (pending) users in a tenant.
+    /// Count unapproved (pending) users.
     ///
-    /// **SQL**: `SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND approved = false`
+    /// **SQL**: `SELECT COUNT(*) FROM users WHERE approved = false`
     ///
     /// Used by the admin dashboard badge to show how many users need review.
     ///
-    /// **Index**: `users(tenant_id, approved)` or the composite tenant index
-    /// with a filter on `approved = false`.
-    pub async fn count_pending_users(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND approved = false")
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await?;
+    /// **Index**: `users(approved)` with a filter on `approved = false`.
+    pub async fn count_pending_users(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE approved = false")
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count)
     }
 
-    /// 租户管理员的邮箱列表（新用户注册待审批邮件通知用）。
+    /// 管理员邮箱列表（新用户注册待审批邮件通知用）。
     ///
     /// 仅返回非空邮箱；不要求 `email_verified`——该邮箱是管理员自己
     /// 在个人资料中维护的通知地址，是否验证与能否收信无关。
-    pub async fn list_admin_emails(&self, tenant_id: i64) -> Result<Vec<String>, sqlx::Error> {
+    pub async fn list_admin_emails(&self) -> Result<Vec<String>, sqlx::Error> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT email FROM users \
-             WHERE tenant_id = $1 AND role >= 3 AND email IS NOT NULL AND email <> '' \
+             WHERE role >= 3 AND email IS NOT NULL AND email <> '' \
              ORDER BY id",
         )
-        .bind(tenant_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|(email,)| email).collect())
@@ -787,13 +740,12 @@ impl UserRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Look up a user by email address (cross-tenant).
+    /// Look up a user by email address.
     ///
     /// **SQL**: `SELECT … FROM users WHERE email = $1`
     ///
     /// Used for password reset flow: the user enters their email and we
-    /// need to find the account. This is a **cross-tenant** lookup — if
-    /// multiple tenants share the same email, the first match is returned.
+    /// need to find the account.
     ///
     /// **Index**: `users(email)` index for the single-column lookup. If no
     /// email index exists, this falls back to a sequential scan (consider
@@ -801,7 +753,7 @@ impl UserRepository {
     /// becomes a hot path).
     pub async fn find_by_email(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
         sqlx::query_as::<_, UserRow>(
-            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, tenant_id FROM users WHERE email = $1"
+            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest FROM users WHERE email = $1"
         )
         .bind(email)
         .fetch_optional(&self.pool)

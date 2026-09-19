@@ -122,16 +122,12 @@ impl ChatService {
     /// 持久化并广播一条消息。返回广播用的事件。
     pub async fn send_message(
         &self,
-        tenant_id: i64,
         user_id: i64,
         username: &str,
         is_guest: bool,
         payload: ChatPayload<'_>,
     ) -> Result<ChatEvent, ServiceError> {
-        let row = self
-            .repo
-            .insert(tenant_id, user_id, username, payload)
-            .await?;
+        let row = self.repo.insert(user_id, username, payload).await?;
         let event = ChatEvent::Message {
             id: row.id,
             user_id,
@@ -143,18 +139,17 @@ impl ChatService {
             video_url: row.video_url,
             ts: row.created_at.to_rfc3339(),
         };
-        self.hub.broadcast(tenant_id, event.clone());
+        self.hub.broadcast(event.clone());
         Ok(event)
     }
 
     /// 历史分页（倒序游标）。
     pub async fn history(
         &self,
-        tenant_id: i64,
         before_id: Option<i64>,
         limit: i64,
     ) -> Result<ChatHistoryResponse, ServiceError> {
-        let rows = self.repo.list_paged(tenant_id, before_id, limit).await?;
+        let rows = self.repo.list_paged(before_id, limit).await?;
         let has_more = rows.len() as i64 >= limit;
         let items = rows
             .into_iter()
@@ -180,10 +175,10 @@ impl ChatService {
 
     /// 管理员删除消息，并广播删除事件让在线客户端移除。
     /// 图片/视频消息同步尽力而为地清理物理文件。
-    pub async fn admin_delete(&self, tenant_id: i64, id: i64) -> Result<bool, ServiceError> {
+    pub async fn admin_delete(&self, id: i64) -> Result<bool, ServiceError> {
         // 先取行（拿媒体 URL）再删除
-        let row = self.repo.find_by_id(tenant_id, id).await?;
-        let deleted = self.repo.delete(tenant_id, id).await?;
+        let row = self.repo.find_by_id(id).await?;
+        let deleted = self.repo.delete(id).await?;
         if deleted {
             if let Some(row) = row {
                 let media_urls = [row.image_url, row.video_url];
@@ -200,22 +195,22 @@ impl ChatService {
                     }
                 });
             }
-            self.hub.broadcast(tenant_id, ChatEvent::Deleted { id });
+            self.hub.broadcast(ChatEvent::Deleted { id });
         }
         Ok(deleted)
     }
 
-    /// 本租户消息总数（管理后台展示用）。
-    pub async fn stats(&self, tenant_id: i64) -> Result<i64, ServiceError> {
-        Ok(self.repo.count(tenant_id).await?)
+    /// 消息总数（管理后台展示用）。
+    pub async fn stats(&self) -> Result<i64, ServiceError> {
+        Ok(self.repo.count().await?)
     }
 
-    /// 管理员清空本租户聊天室。返回删除条数；有删除时广播 Cleared
+    /// 管理员清空聊天室。返回删除条数；有删除时广播 Cleared
     /// 让所有在线客户端立即清空消息列表。
-    pub async fn admin_clear(&self, tenant_id: i64) -> Result<u64, ServiceError> {
-        let deleted = self.repo.delete_all(tenant_id).await?;
+    pub async fn admin_clear(&self) -> Result<u64, ServiceError> {
+        let deleted = self.repo.delete_all().await?;
         if deleted > 0 {
-            self.hub.broadcast(tenant_id, ChatEvent::Cleared);
+            self.hub.broadcast(ChatEvent::Cleared);
         }
         Ok(deleted)
     }

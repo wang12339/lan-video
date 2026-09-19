@@ -1454,8 +1454,8 @@ async fn upload_video_flow_with_database() {
     let username = format!("upload_flow_{}", std::process::id());
     let pool = repo.pool();
     let (uploader_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO users (username, password_hash, approved, role, tenant_id) \
-         VALUES ($1, 'x', true, 1, 1) RETURNING id",
+        "INSERT INTO users (username, password_hash, approved, role) \
+         VALUES ($1, 'x', true, 1) RETURNING id",
     )
     .bind(&username)
     .fetch_one(pool)
@@ -1465,13 +1465,13 @@ async fn upload_video_flow_with_database() {
     let tmp = unique_dir("upload_tmp");
     let tmp_file = unique_file(&tmp, "集成测试.mp4", MP4_ISOM_BYTES);
     let id = svc
-        .upload_video_file(1, "集成测试.mp4", &tmp_file, "test", uploader_id, None)
+        .upload_video_file("集成测试.mp4", &tmp_file, "test", uploader_id, None)
         .await
         .expect("上传失败");
     assert!(id > 0);
 
     // 清理：删除 DB 行 + 落盘文件
-    let deleted = repo.delete_video_cascade(1, id).await.expect("清理失败");
+    let deleted = repo.delete_video_cascade(id).await.expect("清理失败");
     assert!(deleted);
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(uploader_id)

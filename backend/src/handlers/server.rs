@@ -34,7 +34,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     // Database check
     let db_start = Instant::now();
-    let db_ok = state.repos.user.count_users(1).await.is_ok();
+    let db_ok = state.repos.user.count_users().await.is_ok();
     let db_duration = db_start.elapsed();
     checks.insert(
         "database".to_string(),

@@ -31,7 +31,6 @@ use atmos_video_backend::services::search_service::SearchService;
 use atmos_video_backend::services::share_service::ShareService;
 use atmos_video_backend::services::tag_service::TagService;
 use atmos_video_backend::services::task_queue::TaskQueue;
-use atmos_video_backend::services::tenant_service::TenantService;
 use atmos_video_backend::services::transcoder::Transcoder;
 use atmos_video_backend::services::video_service::VideoService;
 use atmos_video_backend::state::{
@@ -172,11 +171,6 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let share_repo =
         atmos_video_backend::repositories::share_repo::ShareRepository::new(pool.clone());
     let tag_repo = TagRepository::new(pool.clone());
-    let tenant_repo = atmos_video_backend::repositories::tenant_repo::TenantRepository::new(
-        pool.clone(),
-        config.public_url.clone(),
-    );
-    let plan_repo = atmos_video_backend::repositories::plan_repo::PlanRepository::new(pool.clone());
     let danmaku_repo =
         atmos_video_backend::repositories::danmaku_repo::DanmakuRepository::new(pool.clone());
     let registration_repo = RegistrationRepository::new(pool.clone());
@@ -194,8 +188,6 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let playlist_service = atmos_video_backend::services::playlist_service::PlaylistService::new(
         playlist_repo.clone(),
     );
-    let plan_service =
-        atmos_video_backend::services::plan_service::PlanService::new(plan_repo.clone());
 
     let video_cache = VideoListCache::builder()
         .time_to_live(Duration::from_secs(10))
@@ -227,8 +219,6 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
             danmaku: danmaku_repo,
             share: share_repo,
             tag: tag_repo,
-            tenant: tenant_repo.clone(),
-            plan: plan_repo,
         },
         services: ServiceLayer {
             video: video_service,
@@ -237,7 +227,6 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
             playlist: playlist_service,
             auth: AuthService::new(
                 user_repo,
-                tenant_repo.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -250,8 +239,6 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
             comment: comment_service,
             share: share_service,
             admin: admin_service,
-            tenant: TenantService::new(tenant_repo),
-            plan: plan_service,
         },
         config,
         rate_limiter: RateLimiter::new(),
@@ -345,7 +332,6 @@ pub async fn cleanup_test_comments(pool: &PgPool, video_id: i64) {
 pub fn auth_service(state: &AppState) -> AuthService {
     AuthService::new(
         state.repos.user.clone(),
-        state.repos.tenant.clone(),
         state.services.playback.clone(),
         state.rate_limiter.clone(),
         state.ip_rate_limiter.clone(),
@@ -366,7 +352,7 @@ pub async fn create_test_user(state: &Arc<AppState>, prefix: &str) -> (String, i
     let user_id = state
         .repos
         .user
-        .create_user(1, &username, &hash, 3)
+        .create_user(&username, &hash, 3)
         .await
         .expect("create test user");
     (username, user_id)
@@ -394,7 +380,6 @@ pub async fn login_and_get_token(state: &Arc<AppState>, username: &str, password
                 password: password.to_string(),
             },
             "127.0.0.1",
-            1,
         )
         .await
         .expect("login should not error");
@@ -409,7 +394,6 @@ pub async fn create_test_video(state: &Arc<AppState>, prefix: &str) -> i64 {
         .services
         .video
         .add_external_video(
-            1,
             &title,
             Some("test fixture video"),
             Some("fixture"),
@@ -451,7 +435,7 @@ pub async fn create_test_comment(
     state
         .services
         .comment
-        .create_comment(1, video_id, user_id, content, parent_id, false)
+        .create_comment(video_id, user_id, content, parent_id, false)
         .await
         .expect("create test comment")
 }
@@ -567,7 +551,6 @@ mod tests {
                     password: "WrongPassword_1".into(),
                 },
                 "127.0.0.1",
-                1,
             )
             .await
             .expect("login should not error");
@@ -591,7 +574,7 @@ mod tests {
         let (comments, total) = state
             .services
             .comment
-            .list_comments(1, video_id, 0, 10)
+            .list_comments(video_id, 0, 10)
             .await
             .expect("list comments");
         assert!(total >= 1);

@@ -19,7 +19,6 @@ impl ChatRepository {
     /// 可为空；`image_url`/`video_url` 指向 /media/chat/ 下的文件）。
     pub async fn insert(
         &self,
-        tenant_id: i64,
         user_id: i64,
         username: &str,
         msg: NewChatMessage<'_>,
@@ -28,11 +27,10 @@ impl ChatRepository {
         // 非文本消息（图片/视频）允许空配文
         debug_assert!(!content.is_empty() || msg.msg_type != 0);
         sqlx::query_as::<_, ChatMessageRow>(
-            "INSERT INTO chat_messages (tenant_id, user_id, username, content, msg_type, image_url, video_url) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+            "INSERT INTO chat_messages (user_id, username, content, msg_type, image_url, video_url) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
              RETURNING id, user_id, username, content, msg_type, image_url, video_url, created_at",
         )
-        .bind(tenant_id)
         .bind(user_id)
         .bind(username)
         .bind(content)
@@ -46,17 +44,15 @@ impl ChatRepository {
     /// 历史分页：按 id 倒序游标翻页（`before_id = NULL` 时从最新开始）。
     pub async fn list_paged(
         &self,
-        tenant_id: i64,
         before_id: Option<i64>,
         limit: i64,
     ) -> Result<Vec<ChatMessageRow>, sqlx::Error> {
         let limit = limit.clamp(1, 100);
         sqlx::query_as::<_, ChatMessageRow>(
             "SELECT id, user_id, username, content, msg_type, image_url, video_url, created_at FROM chat_messages \
-             WHERE tenant_id = $1 AND ($2::bigint IS NULL OR id < $2) \
-             ORDER BY id DESC LIMIT $3",
+             WHERE ($1::bigint IS NULL OR id < $1) \
+             ORDER BY id DESC LIMIT $2",
         )
-        .bind(tenant_id)
         .bind(before_id)
         .bind(limit)
         .fetch_all(&self.pool)
@@ -64,45 +60,36 @@ impl ChatRepository {
     }
 
     /// 按 id 取单条消息（管理员删言前取 image_url/video_url 用）。
-    pub async fn find_by_id(
-        &self,
-        tenant_id: i64,
-        id: i64,
-    ) -> Result<Option<ChatMessageRow>, sqlx::Error> {
+    pub async fn find_by_id(&self, id: i64) -> Result<Option<ChatMessageRow>, sqlx::Error> {
         sqlx::query_as::<_, ChatMessageRow>(
             "SELECT id, user_id, username, content, msg_type, image_url, video_url, created_at \
-             FROM chat_messages WHERE id = $1 AND tenant_id = $2",
+             FROM chat_messages WHERE id = $1",
         )
         .bind(id)
-        .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await
     }
 
-    /// 本租户消息总数（管理后台统计用）。
-    pub async fn count(&self, tenant_id: i64) -> Result<i64, sqlx::Error> {
-        let (n,) =
-            sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM chat_messages WHERE tenant_id = $1")
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await?;
+    /// 消息总数（管理后台统计用）。
+    pub async fn count(&self) -> Result<i64, sqlx::Error> {
+        let (n,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM chat_messages")
+            .fetch_one(&self.pool)
+            .await?;
         Ok(n)
     }
 
-    /// 清空本租户全部消息。返回删除条数。
-    pub async fn delete_all(&self, tenant_id: i64) -> Result<u64, sqlx::Error> {
-        let res = sqlx::query("DELETE FROM chat_messages WHERE tenant_id = $1")
-            .bind(tenant_id)
+    /// 清空全部消息。返回删除条数。
+    pub async fn delete_all(&self) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query("DELETE FROM chat_messages")
             .execute(&self.pool)
             .await?;
         Ok(res.rows_affected())
     }
 
     /// 管理员删除单条消息。返回是否删除成功。
-    pub async fn delete(&self, tenant_id: i64, id: i64) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM chat_messages WHERE id = $1 AND tenant_id = $2")
+    pub async fn delete(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM chat_messages WHERE id = $1")
             .bind(id)
-            .bind(tenant_id)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)

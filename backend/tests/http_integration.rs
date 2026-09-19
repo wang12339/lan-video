@@ -110,7 +110,7 @@ async fn create_viewer(state: &Arc<AppState>, prefix: &str) -> (String, i64) {
     let user_id = state
         .repos
         .user
-        .create_user(1, &username, &hash, 1)
+        .create_user(&username, &hash, 1)
         .await
         .expect("create viewer");
     state
@@ -137,7 +137,7 @@ async fn create_pending_user_with_token(state: &Arc<AppState>, prefix: &str) -> 
     let user_id = state
         .repos
         .user
-        .create_user(1, &username, &hash, 1)
+        .create_user(&username, &hash, 1)
         .await
         .expect("create pending user");
     let token = state
@@ -492,7 +492,7 @@ async fn test_login_unapproved_user_fails() {
     state
         .repos
         .user
-        .create_user(1, &username, &hash, 1)
+        .create_user(&username, &hash, 1)
         .await
         .unwrap();
     let app = build_test_app().await;
@@ -1198,7 +1198,6 @@ async fn test_video_search_finds_created_video() {
         .services
         .video
         .add_external_video(
-            1,
             &title,
             Some("search test"),
             Some("searchtest"),

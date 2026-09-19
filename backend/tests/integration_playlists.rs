@@ -23,7 +23,7 @@ async fn test_create_playlist() {
     let p = state
         .services
         .playlist
-        .create_playlist(1, user_id, "My Playlist", Some("a description"), Some(true))
+        .create_playlist(user_id, "My Playlist", Some("a description"), Some(true))
         .await
         .expect("create playlist");
 
@@ -56,20 +56,20 @@ async fn test_list_playlists() {
     let p1 = state
         .services
         .playlist
-        .create_playlist(1, user_id, "List Test 1", None, Some(false))
+        .create_playlist(user_id, "List Test 1", None, Some(false))
         .await
         .expect("create playlist 1");
     let p2 = state
         .services
         .playlist
-        .create_playlist(1, user_id, "List Test 2", None, Some(true))
+        .create_playlist(user_id, "List Test 2", None, Some(true))
         .await
         .expect("create playlist 2");
 
     let playlists = state
         .services
         .playlist
-        .list_user_playlists(1, user_id)
+        .list_user_playlists(user_id)
         .await
         .expect("list playlists");
 
@@ -109,7 +109,7 @@ async fn test_add_video_to_playlist() {
     let p = state
         .services
         .playlist
-        .create_playlist(1, user_id, "Add Video Test", None, None)
+        .create_playlist(user_id, "Add Video Test", None, None)
         .await
         .expect("create playlist");
 
@@ -117,7 +117,7 @@ async fn test_add_video_to_playlist() {
     state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, user_id, video_id)
+        .add_video_to_playlist(p.id, user_id, video_id)
         .await
         .expect("add video to playlist");
 
@@ -125,7 +125,7 @@ async fn test_add_video_to_playlist() {
     let (_, count) = state
         .services
         .playlist
-        .get_playlist(1, p.id, user_id, false)
+        .get_playlist(p.id, user_id, false)
         .await
         .expect("get playlist");
     assert_eq!(count, 1, "playlist should have 1 item");
@@ -134,7 +134,7 @@ async fn test_add_video_to_playlist() {
     let videos = state
         .services
         .playlist
-        .list_playlist_videos(1, p.id, user_id, false)
+        .list_playlist_videos(p.id, user_id, false)
         .await
         .expect("list playlist videos");
     assert_eq!(videos.len(), 1);
@@ -144,14 +144,14 @@ async fn test_add_video_to_playlist() {
     state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, user_id, video_id)
+        .add_video_to_playlist(p.id, user_id, video_id)
         .await
         .expect("add duplicate video should be no-op");
 
     let (_, count) = state
         .services
         .playlist
-        .get_playlist(1, p.id, user_id, false)
+        .get_playlist(p.id, user_id, false)
         .await
         .expect("get playlist after dup");
     assert_eq!(count, 1, "duplicate add should not increase count");
@@ -180,7 +180,7 @@ async fn test_remove_video_from_playlist() {
     let p = state
         .services
         .playlist
-        .create_playlist(1, user_id, "Remove Video Test", None, None)
+        .create_playlist(user_id, "Remove Video Test", None, None)
         .await
         .expect("create playlist");
 
@@ -188,21 +188,21 @@ async fn test_remove_video_from_playlist() {
     state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, user_id, video_id)
+        .add_video_to_playlist(p.id, user_id, video_id)
         .await
         .expect("add video");
 
     state
         .services
         .playlist
-        .remove_video_from_playlist(1, p.id, user_id, video_id)
+        .remove_video_from_playlist(p.id, user_id, video_id)
         .await
         .expect("remove video");
 
     let (_, count) = state
         .services
         .playlist
-        .get_playlist(1, p.id, user_id, false)
+        .get_playlist(p.id, user_id, false)
         .await
         .expect("get playlist");
     assert_eq!(count, 0, "playlist should be empty after removal");
@@ -211,7 +211,7 @@ async fn test_remove_video_from_playlist() {
     state
         .services
         .playlist
-        .remove_video_from_playlist(1, p.id, user_id, video_id)
+        .remove_video_from_playlist(p.id, user_id, video_id)
         .await
         .expect("remove non-existent video should be no-op");
 
@@ -239,7 +239,7 @@ async fn test_delete_playlist() {
     let p = state
         .services
         .playlist
-        .create_playlist(1, user_id, "Delete Test", None, None)
+        .create_playlist(user_id, "Delete Test", None, None)
         .await
         .expect("create playlist");
 
@@ -247,7 +247,7 @@ async fn test_delete_playlist() {
     state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, user_id, video_id)
+        .add_video_to_playlist(p.id, user_id, video_id)
         .await
         .expect("add video");
 
@@ -255,7 +255,7 @@ async fn test_delete_playlist() {
     state
         .services
         .playlist
-        .delete_playlist(1, p.id, user_id)
+        .delete_playlist(p.id, user_id)
         .await
         .expect("delete playlist");
 
@@ -263,7 +263,7 @@ async fn test_delete_playlist() {
     let res = state
         .services
         .playlist
-        .get_playlist(1, p.id, user_id, false)
+        .get_playlist(p.id, user_id, false)
         .await;
     assert!(res.is_err(), "deleted playlist should not be found");
 
@@ -292,7 +292,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let p = state
         .services
         .playlist
-        .create_playlist(1, owner_id, "Owner's Playlist", None, Some(true))
+        .create_playlist(owner_id, "Owner's Playlist", None, Some(true))
         .await
         .expect("create playlist");
 
@@ -300,7 +300,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let res = state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, other_id, video_id)
+        .add_video_to_playlist(p.id, other_id, video_id)
         .await;
     assert!(res.is_err(), "non-owner should not be able to add video");
 
@@ -308,7 +308,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     state
         .services
         .playlist
-        .add_video_to_playlist(1, p.id, owner_id, video_id)
+        .add_video_to_playlist(p.id, owner_id, video_id)
         .await
         .expect("owner should be able to add video");
 
@@ -316,7 +316,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let res = state
         .services
         .playlist
-        .remove_video_from_playlist(1, p.id, other_id, video_id)
+        .remove_video_from_playlist(p.id, other_id, video_id)
         .await;
     assert!(res.is_err(), "non-owner should not be able to remove video");
 
@@ -324,7 +324,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let res = state
         .services
         .playlist
-        .update_playlist(1, p.id, other_id, Some("hacked"), None, None)
+        .update_playlist(p.id, other_id, Some("hacked"), None, None)
         .await;
     assert!(
         res.is_err(),
@@ -335,7 +335,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let res = state
         .services
         .playlist
-        .delete_playlist(1, p.id, other_id)
+        .delete_playlist(p.id, other_id)
         .await;
     assert!(
         res.is_err(),
@@ -346,7 +346,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let res = state
         .services
         .playlist
-        .reorder_playlist(1, p.id, other_id, &[video_id])
+        .reorder_playlist(p.id, other_id, &[video_id])
         .await;
     assert!(
         res.is_err(),
@@ -357,7 +357,7 @@ async fn test_non_owner_cannot_modify_playlist() {
     let (fetched, count) = state
         .services
         .playlist
-        .get_playlist(1, p.id, owner_id, false)
+        .get_playlist(p.id, owner_id, false)
         .await
         .expect("owner should be able to read");
     assert_eq!(fetched.id, p.id);

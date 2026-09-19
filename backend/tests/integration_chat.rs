@@ -48,7 +48,6 @@ async fn chat_send_history_delete() {
     // 发三条消息
     let e1 = chat
         .send_message(
-            1,
             user_id,
             &username,
             false,
@@ -62,7 +61,6 @@ async fn chat_send_history_delete() {
         .await
         .unwrap();
     chat.send_message(
-        1,
         user_id,
         &username,
         false,
@@ -77,7 +75,6 @@ async fn chat_send_history_delete() {
     .unwrap();
     let e3 = chat
         .send_message(
-            1,
             user_id,
             &username,
             false,
@@ -96,26 +93,26 @@ async fn chat_send_history_delete() {
     ));
 
     // 历史分页：倒序、游标
-    let page1 = chat.history(1, None, 2).await.unwrap();
+    let page1 = chat.history(None, 2).await.unwrap();
     assert_eq!(page1.items.len(), 2);
     assert!(page1.has_more, "取 2 条应提示还有更多");
     assert!(page1.items[0].id > page1.items[1].id, "倒序");
     assert_eq!(page1.items[0].content, "第三条");
 
-    let page2 = chat.history(1, Some(page1.items[1].id), 2).await.unwrap();
+    let page2 = chat.history(Some(page1.items[1].id), 2).await.unwrap();
     assert!(page2.items.iter().any(|i| i.content == "第一条"));
 
     // 管理员删除 → 广播 Deleted + 再次分页不再出现
     let deleted_id = e3.message_id();
-    let ok = chat.admin_delete(1, deleted_id).await.unwrap();
+    let ok = chat.admin_delete(deleted_id).await.unwrap();
     assert!(ok, "删除应成功");
-    let after = chat.history(1, None, 100).await.unwrap();
+    let after = chat.history(None, 100).await.unwrap();
     assert!(
         !after.items.iter().any(|i| i.id == deleted_id),
         "删除后不应再出现在历史中"
     );
     // 幂等：重复删除返回 false
-    assert!(!chat.admin_delete(1, deleted_id).await.unwrap());
+    assert!(!chat.admin_delete(deleted_id).await.unwrap());
 
     // 清理
     sqlx::query("DELETE FROM chat_messages WHERE user_id = $1")
@@ -172,7 +169,6 @@ async fn chat_image_message_persistence() {
     // 图片消息：content 为空配文 + msgType=1 + imageUrl
     let e = chat
         .send_message(
-            1,
             user_id,
             &username,
             false,
@@ -187,7 +183,6 @@ async fn chat_image_message_persistence() {
         .unwrap();
     let text = chat
         .send_message(
-            1,
             user_id,
             &username,
             false,
@@ -201,7 +196,7 @@ async fn chat_image_message_persistence() {
         .await
         .unwrap();
 
-    let page = chat.history(1, None, 100).await.unwrap();
+    let page = chat.history(None, 100).await.unwrap();
     let img = page
         .items
         .iter()
@@ -219,7 +214,7 @@ async fn chat_image_message_persistence() {
     assert_eq!(txt.image_url, None);
 
     // 管理员删除图片消息（media_root/chat 下无实际文件也不应报错）
-    let ok = chat.admin_delete(1, e.message_id()).await.unwrap();
+    let ok = chat.admin_delete(e.message_id()).await.unwrap();
     assert!(ok);
 
     // 清理
@@ -251,7 +246,6 @@ async fn chat_video_message_persistence() {
     let (username, user_id) = create_test_user(&state, "chatvid").await;
     let e = chat
         .send_message(
-            1,
             user_id,
             &username,
             false,
@@ -265,7 +259,7 @@ async fn chat_video_message_persistence() {
         .await
         .unwrap();
 
-    let page = chat.history(1, None, 100).await.unwrap();
+    let page = chat.history(None, 100).await.unwrap();
     let vid = page
         .items
         .iter()
@@ -276,7 +270,7 @@ async fn chat_video_message_persistence() {
     assert_eq!(vid.image_url, None);
 
     // 管理员删除（chat 目录下无实际文件也不应报错）
-    assert!(chat.admin_delete(1, e.message_id()).await.unwrap());
+    assert!(chat.admin_delete(e.message_id()).await.unwrap());
 
     // 清理
     sqlx::query("DELETE FROM chat_messages WHERE user_id = $1")
@@ -285,68 +279,6 @@ async fn chat_video_message_persistence() {
         .await
         .unwrap();
     cleanup_test_user(state.repos.video.pool(), &username).await;
-}
-
-#[tokio::test]
-async fn chat_admin_clear_all() {
-    let Some(_) = database_url() else {
-        eprintln!("DATABASE_URL not set, skipping");
-        return;
-    };
-    let state = test_app_state().await;
-    let chat = ChatService::from_state(&state);
-
-    // 用专用租户，避免 admin_clear 清掉真实聊天数据
-    let pool = state.repos.video.pool();
-    let (tenant_id,) = sqlx::query_as::<_, (i64,)>(
-        "INSERT INTO tenants (name, slug) VALUES ('__test_chat_clear', '__test-chat-clear') RETURNING id",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-
-    let (username, user_id) = create_test_user(&state, "chatclr").await;
-    for c in ["甲", "乙", "丙"] {
-        chat.send_message(
-            tenant_id,
-            user_id,
-            &username,
-            false,
-            ChatPayload {
-                content: c,
-                msg_type: 0,
-                image_url: None,
-                video_url: None,
-            },
-        )
-        .await
-        .unwrap();
-    }
-    assert_eq!(chat.stats(tenant_id).await.unwrap(), 3);
-
-    // 清空 → 返回删除数 3，广播 Cleared，统计归零
-    let deleted = chat.admin_clear(tenant_id).await.unwrap();
-    assert_eq!(deleted, 3);
-    assert_eq!(chat.stats(tenant_id).await.unwrap(), 0);
-    assert_eq!(
-        chat.history(tenant_id, None, 100)
-            .await
-            .unwrap()
-            .items
-            .len(),
-        0
-    );
-
-    // 空聊天室重复清空：0 条、不报错
-    assert_eq!(chat.admin_clear(tenant_id).await.unwrap(), 0);
-
-    // 清理（chat_messages 随租户级联删除）
-    sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .unwrap();
-    cleanup_test_user(pool, &username).await;
 }
 
 #[tokio::test]

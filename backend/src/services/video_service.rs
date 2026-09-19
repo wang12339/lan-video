@@ -52,7 +52,6 @@ impl VideoService {
     #[allow(clippy::too_many_arguments)]
     pub async fn list_videos_paged(
         &self,
-        tenant_id: i64,
         page: i64,
         size: i64,
         query: Option<&str>,
@@ -66,9 +65,8 @@ impl VideoService {
         // both hit the pool, so this roughly halves list latency.
         let (total, rows) = tokio::try_join!(
             self.repo
-                .count_all(tenant_id, query, source_type, category, uploader_id),
+                .count_all(query, source_type, category, uploader_id),
             self.repo.find_all_paged(
-                tenant_id,
                 page,
                 size,
                 query,
@@ -86,19 +84,14 @@ impl VideoService {
     /// 根据ID获取视频详情
     ///
     /// # 参数
-    /// - `tenant_id`: 租户 ID（视频隔离）
     /// - `id`: 视频ID
     ///
     /// # 返回
     /// - `Ok(Some(VideoItem))`: 视频存在时返回视频信息
     /// - `Ok(None)`: 视频不存在
     /// - `Err(ServiceError)`: 数据库查询失败
-    pub async fn get_video(
-        &self,
-        tenant_id: i64,
-        id: i64,
-    ) -> Result<Option<VideoItem>, ServiceError> {
-        let row = self.repo.find_by_id(tenant_id, id).await?;
+    pub async fn get_video(&self, id: i64) -> Result<Option<VideoItem>, ServiceError> {
+        let row = self.repo.find_by_id(id).await?;
         Ok(row.map(VideoItem::from))
     }
 
@@ -119,7 +112,6 @@ impl VideoService {
     ///   文件清理失败不影响删除结果）
     pub async fn burn_after_watch(
         &self,
-        tenant_id: i64,
         username: &str,
         requester_id: i64,
         requester_is_admin: bool,
@@ -129,7 +121,7 @@ impl VideoService {
         // 403 掩盖——首次焚毁会级联删除播放历史，重复请求会走不到进度）
         let video = self
             .repo
-            .find_by_id(tenant_id, video_id)
+            .find_by_id(video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
@@ -137,7 +129,7 @@ impl VideoService {
         if !is_image_source(&video.source_type) {
             let (position_ms, duration_ms) = self
                 .playback
-                .get_playback_data(tenant_id, username, video_id)
+                .get_playback_data(username, video_id)
                 .await?
                 .ok_or_else(|| ServiceError::Forbidden("需完整观看后才能焚毁".into()))?;
             if !is_watch_complete(position_ms, duration_ms) {
@@ -145,7 +137,7 @@ impl VideoService {
             }
         }
         // burn_video_record 内部会再做 owner-or-admin 与片长门槛校验
-        self.burn_video_record(tenant_id, requester_id, requester_is_admin, video_id)
+        self.burn_video_record(requester_id, requester_is_admin, video_id)
             .await
     }
 
@@ -166,14 +158,13 @@ impl VideoService {
     ///   文件清理失败不影响删除结果）
     pub async fn burn_video_record(
         &self,
-        tenant_id: i64,
         requester_id: i64,
         requester_is_admin: bool,
         video_id: i64,
     ) -> Result<(), ServiceError> {
         let video = self
             .repo
-            .find_by_id(tenant_id, video_id)
+            .find_by_id(video_id)
             .await?
             .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
@@ -195,7 +186,7 @@ impl VideoService {
             .chain(variant_paths)
             .collect();
 
-        let deleted = self.repo.delete_video_cascade(tenant_id, video_id).await?;
+        let deleted = self.repo.delete_video_cascade(video_id).await?;
         if !deleted {
             return Err(ServiceError::NotFound("视频不存在".into()));
         }
@@ -224,7 +215,7 @@ impl VideoService {
             tracing::warn!("burn media cleanup task panicked: {}", e);
         }
 
-        info!(video_id, tenant_id, "video burned after watch");
+        info!(video_id, "video burned after watch");
         Ok(())
     }
 
@@ -271,7 +262,6 @@ impl VideoService {
     #[allow(clippy::too_many_arguments)]
     pub async fn add_external_video(
         &self,
-        tenant_id: i64,
         title: &str,
         description: Option<&str>,
         category: Option<&str>,
@@ -283,15 +273,7 @@ impl VideoService {
         let cat = category.unwrap_or("general");
         let id = self
             .repo
-            .save_external_video(
-                tenant_id,
-                title,
-                desc,
-                cat,
-                cover_url,
-                stream_url,
-                uploader_id,
-            )
+            .save_external_video(title, desc, cat, cover_url, stream_url, uploader_id)
             .await?;
         Ok(id)
     }
@@ -306,10 +288,9 @@ impl VideoService {
     /// - `Err(ServiceError)`: 数据库查询失败
     pub async fn check_existing_hashes(
         &self,
-        tenant_id: i64,
         hashes: Vec<String>,
     ) -> Result<Vec<String>, ServiceError> {
-        Ok(self.repo.find_existing_hashes(tenant_id, &hashes).await?)
+        Ok(self.repo.find_existing_hashes(&hashes).await?)
     }
 
     /// 检查已存在的文件（按文件名和大小）
@@ -325,14 +306,13 @@ impl VideoService {
     /// - 使用批量查询代替 N+1 查询
     pub async fn check_existing_files(
         &self,
-        tenant_id: i64,
         files: &[FileCheckItem],
     ) -> Result<HashSet<usize>, ServiceError> {
         // Single batch query instead of N+1
         let pairs: Vec<(String, i64)> = files.iter().map(|f| (f.name.clone(), f.size)).collect();
         let existing_pairs = self
             .repo
-            .find_existing_by_name_and_size_batch(tenant_id, &pairs)
+            .find_existing_by_name_and_size_batch(&pairs)
             .await?;
 
         let mut existing = HashSet::new();
@@ -347,7 +327,6 @@ impl VideoService {
     /// 扫描媒体目录并导入新文件
     ///
     /// # 参数
-    /// - `tenant_id`: 导入文件所属租户 ID
     /// - `category`: 导入文件的分类
     ///
     /// # 返回
@@ -363,13 +342,9 @@ impl VideoService {
     /// # 限制
     /// - 最多扫描5000个文件
     /// - 支持格式：mp4, m3u8, mov, avi, mkv, webm, flv, wmv, jpg, jpeg, png, webp, gif, bmp
-    pub async fn scan_media_directory(
-        &self,
-        tenant_id: i64,
-        category: &str,
-    ) -> Result<i64, ServiceError> {
+    pub async fn scan_media_directory(&self, category: &str) -> Result<i64, ServiceError> {
         const MAX_SCAN_FILES: usize = 5000;
-        let existing_urls = self.repo.find_all_local_file_names(tenant_id).await?;
+        let existing_urls = self.repo.find_all_local_file_names().await?;
         let media_root = self.config.media_root.clone();
         let video_exts: HashSet<&str> =
             ["mp4", "m3u8", "mov", "avi", "mkv", "webm", "flv", "wmv"].into();
@@ -487,13 +462,13 @@ impl VideoService {
             added += 1;
 
             if batch.len() >= BATCH_SIZE {
-                let n = self.repo.batch_save_local_videos(tenant_id, &batch).await?;
+                let n = self.repo.batch_save_local_videos(&batch).await?;
                 info!("Batch inserted {} videos", n);
                 batch.clear();
             }
         }
         if !batch.is_empty() {
-            let n = self.repo.batch_save_local_videos(tenant_id, &batch).await?;
+            let n = self.repo.batch_save_local_videos(&batch).await?;
             info!("Batch inserted {} videos", n);
         }
         if added > 0 {
@@ -516,15 +491,15 @@ impl VideoService {
     /// - 优先从数据库级联删除（source of truth）
     /// - 删除成功后尝试清理物理文件（stream/cover/thumb）
     /// - 文件清理失败不影响数据库删除结果
-    pub async fn delete_video(&self, tenant_id: i64, id: i64) -> Result<bool, ServiceError> {
-        let video = self.repo.find_by_id(tenant_id, id).await?;
+    pub async fn delete_video(&self, id: i64) -> Result<bool, ServiceError> {
+        let video = self.repo.find_by_id(id).await?;
         let Some(v) = video else {
             return Ok(false);
         };
         // The DB cascade is the source of truth; only touch the filesystem if
         // it succeeds (otherwise we'd orphan a DB row pointing at a deleted
         // file).
-        let deleted = self.repo.delete_video_cascade(tenant_id, id).await?;
+        let deleted = self.repo.delete_video_cascade(id).await?;
         // Best-effort physical cleanup for stream/cover/thumb files in a
         // single blocking task (previously three sequential spawn_blocking
         // calls plus sync canonicalize() calls on the async runtime).
@@ -571,12 +546,12 @@ impl VideoService {
     /// - 单次查询加载所有视频信息
     /// - 单次事务批量删除数据库记录
     /// - 批量清理物理文件（单个阻塞任务处理所有文件）
-    pub async fn delete_videos(&self, tenant_id: i64, ids: &[i64]) -> Result<u64, ServiceError> {
+    pub async fn delete_videos(&self, ids: &[i64]) -> Result<u64, ServiceError> {
         // Load all video info in a single query
-        let videos = self.repo.find_all_by_ids(tenant_id, ids).await?;
+        let videos = self.repo.find_all_by_ids(ids).await?;
 
         // Batch delete from DB in a single transaction (source of truth)
-        let deleted = self.repo.batch_delete_videos(tenant_id, ids).await?;
+        let deleted = self.repo.batch_delete_videos(ids).await?;
 
         // Best-effort physical file cleanup in ONE blocking task instead of
         // up to 3×500 sequential spawn_blocking calls with per-file await.
@@ -631,7 +606,7 @@ impl VideoService {
         let media_root = self.config.media_root.clone();
         let missing = tokio::task::spawn_blocking(move || {
             rows.into_iter()
-                .filter(|(_, _, url)| {
+                .filter(|(_, url)| {
                     let Some(relative) = url.strip_prefix("/media/") else {
                         // 非 /media 前缀(如外部直链)不属于本地文件,跳过
                         return false;
@@ -642,7 +617,7 @@ impl VideoService {
                     }
                     !media_root.join(relative).exists()
                 })
-                .map(|(id, tenant_id, _)| (tenant_id, id))
+                .map(|(id, _)| id)
                 .collect::<Vec<_>>()
         })
         .await
@@ -656,8 +631,8 @@ impl VideoService {
             "sweep_missing_video_files: deleting video rows whose media file no longer exists"
         );
         let mut deleted = 0usize;
-        for (tenant_id, id) in &missing {
-            match self.repo.batch_delete_videos(*tenant_id, &[*id]).await {
+        for id in &missing {
+            match self.repo.batch_delete_videos(&[*id]).await {
                 Ok(n) if n > 0 => deleted += 1,
                 Ok(_) => {}
                 Err(e) => {
@@ -682,7 +657,6 @@ impl VideoService {
     /// - `Err(ServiceError)`: 数据库更新失败
     pub async fn update_video(
         &self,
-        tenant_id: i64,
         id: i64,
         title: Option<&str>,
         description: Option<&str>,
@@ -690,7 +664,7 @@ impl VideoService {
     ) -> Result<bool, ServiceError> {
         let rows = self
             .repo
-            .update_video(tenant_id, id, title, description, category)
+            .update_video(id, title, description, category)
             .await?;
         Ok(rows > 0)
     }
@@ -698,15 +672,14 @@ impl VideoService {
     /// 递增视频播放次数
     ///
     /// # 参数
-    /// - `tenant_id`: 租户 ID（视频隔离）
     /// - `id`: 视频ID
     ///
     /// # 返回
     /// - `Ok(())`: 更新成功
     /// - `Err(ServiceError)`: 数据库更新失败
-    pub async fn increment_views(&self, tenant_id: i64, id: i64) -> Result<(), ServiceError> {
+    pub async fn increment_views(&self, id: i64) -> Result<(), ServiceError> {
         self.repo
-            .increment_views(tenant_id, id)
+            .increment_views(id)
             .await
             .map_err(ServiceError::from)
     }

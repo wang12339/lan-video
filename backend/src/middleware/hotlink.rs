@@ -454,13 +454,11 @@ mod tests {
     use crate::middleware::rate_limit::RateLimiter;
     use crate::repositories::comment_repo::CommentRepository;
     use crate::repositories::danmaku_repo::DanmakuRepository;
-    use crate::repositories::plan_repo::PlanRepository;
     use crate::repositories::playback_repo::PlaybackRepository;
     use crate::repositories::playlist_repo::PlaylistRepository;
     use crate::repositories::registration_repo::RegistrationRepository;
     use crate::repositories::share_repo::ShareRepository;
     use crate::repositories::tag_repo::TagRepository;
-    use crate::repositories::tenant_repo::TenantRepository;
     use crate::repositories::user_repo::UserRepository;
     use crate::repositories::video_repo::VideoRepository;
     use crate::services::admin_service::AdminService;
@@ -468,7 +466,6 @@ mod tests {
     use crate::services::comment_service::CommentService;
     use crate::services::email_service::EmailService;
     use crate::services::media_service::MediaService;
-    use crate::services::plan_service::PlanService;
     use crate::services::playback_service::PlaybackService;
     use crate::services::playlist_service::PlaylistService;
     use crate::services::recommendation_service::RecommendationService;
@@ -476,7 +473,6 @@ mod tests {
     use crate::services::share_service::ShareService;
     use crate::services::tag_service::TagService;
     use crate::services::task_queue::TaskQueue;
-    use crate::services::tenant_service::TenantService;
     use crate::services::transcoder::Transcoder;
     use crate::services::video_service::VideoService;
     use crate::state::{AppState, PlaybackSessionTracker, RepoLayer, ServiceLayer};
@@ -484,9 +480,9 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
-    /// Build an AppState whose tenant repo points at a dead port (1), so the
-    /// only field hotlink_guard reads — `config.public_url` — is under test
-    /// control and no DB connection is ever established.
+    /// Build an AppState whose repos point at a dead port (1); the only field
+    /// hotlink_guard reads — `config.public_url` — is under test control and
+    /// no DB connection is ever established.
     fn test_state(public_url: &str) -> Arc<AppState> {
         let config = AppConfig {
             database_url: String::new(),
@@ -543,8 +539,6 @@ mod tests {
             danmaku: DanmakuRepository::new(pool.clone()),
             share: ShareRepository::new(pool.clone()),
             tag: TagRepository::new(pool.clone()),
-            tenant: TenantRepository::new(pool.clone(), config.public_url.clone()),
-            plan: PlanRepository::new(pool.clone()),
         };
         let playback_service = PlaybackService::new(repos.playback.clone());
         let playlist_service = PlaylistService::new(repos.playlist.clone());
@@ -555,7 +549,6 @@ mod tests {
             playlist: playlist_service,
             auth: AuthService::new(
                 repos.user.clone(),
-                repos.tenant.clone(),
                 playback_service,
                 RateLimiter::new(),
                 RateLimiter::new(),
@@ -568,8 +561,6 @@ mod tests {
             comment: CommentService::new(repos.comment.clone(), repos.video.clone()),
             share: ShareService::new(repos.share.clone()),
             admin: AdminService::new(repos.user.clone()),
-            tenant: TenantService::new(repos.tenant.clone()),
-            plan: PlanService::new(repos.plan.clone()),
         };
         let transcoder = Transcoder::new(&std::env::temp_dir(), Default::default());
         Arc::new(AppState {

@@ -310,7 +310,7 @@ async fn search_empty_query_short_circuits_before_db() {
     // 死池 + 空查询：若短路逻辑回归、开始查库，这里会返回 Err
     for q in ["", "   ", "\t\n  ", "   \u{3000}  "] {
         let (results, total) = svc
-            .full_text_search(1, None, q, 1, 10)
+            .full_text_search(None, q, 1, 10)
             .await
             .expect("空查询必须短路返回 Ok，不触碰数据库");
         assert!(results.is_empty());
@@ -321,12 +321,8 @@ async fn search_empty_query_short_circuits_before_db() {
 #[tokio::test]
 async fn search_suggest_empty_query_short_circuits_before_db() {
     let svc = SearchService::new(VideoRepository::new(dead_pool()));
-    assert!(svc
-        .search_suggest(1, None, "   ", 5)
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(svc.search_suggest(1, None, "", 5).await.unwrap().is_empty());
+    assert!(svc.search_suggest(None, "   ", 5).await.unwrap().is_empty());
+    assert!(svc.search_suggest(None, "", 5).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -335,11 +331,11 @@ async fn search_nonempty_query_reaches_db() {
     // 证明上面的短路只发生在 normalize 后为空时，防止"假短路"掩盖查询。
     let svc = SearchService::new(VideoRepository::new(dead_pool()));
     let err = svc
-        .full_text_search(1, None, "hello", 1, 10)
+        .full_text_search(None, "hello", 1, 10)
         .await
         .unwrap_err();
     assert!(format!("{}", err).contains("搜索失败"), "got: {err}");
-    let err = svc.search_suggest(1, None, "hello", 5).await.unwrap_err();
+    let err = svc.search_suggest(None, "hello", 5).await.unwrap_err();
     assert!(format!("{}", err).contains("搜索建议失败"), "got: {err}");
 }
 
@@ -436,18 +432,18 @@ async fn task_queue_add_works_with_db_down() {
 async fn playback_write_throttled_within_window() {
     let svc = PlaybackService::new(PlaybackRepository::new(dead_pool()));
     // 首次写入：不受节流，真实触库 → 死池报错
-    let first = svc.update_playback(1, "alice", 1, 500, 1000).await;
+    let first = svc.update_playback("alice", 1, 500, 1000).await;
     assert!(first.is_err(), "首次写入必须放行并触库（期望 DB 连接错误）");
     // 10s 窗口内重复上报：被节流吞掉，返回 Ok 且不触库
-    assert!(svc.update_playback(1, "alice", 1, 600, 1000).await.is_ok());
-    assert!(svc.update_playback(1, "alice", 1, 700, 1000).await.is_ok());
+    assert!(svc.update_playback("alice", 1, 600, 1000).await.is_ok());
+    assert!(svc.update_playback("alice", 1, 700, 1000).await.is_ok());
     // 不同视频、不同用户：各自独立 key，仍会触库（Err）
     assert!(
-        svc.update_playback(1, "alice", 2, 100, 1000).await.is_err(),
+        svc.update_playback("alice", 2, 100, 1000).await.is_err(),
         "不同 video_id 必须不受前一条节流影响"
     );
     assert!(
-        svc.update_playback(1, "bob", 1, 100, 1000).await.is_err(),
+        svc.update_playback("bob", 1, 100, 1000).await.is_err(),
         "不同用户必须不受他人节流影响"
     );
 }
@@ -455,13 +451,13 @@ async fn playback_write_throttled_within_window() {
 #[tokio::test]
 async fn playback_throttle_key_is_username_and_video() {
     let svc = PlaybackService::new(PlaybackRepository::new(dead_pool()));
-    assert!(svc.update_playback(1, "u1", 10, 1, 1000).await.is_err());
+    assert!(svc.update_playback("u1", 10, 1, 1000).await.is_err());
     // 同用户同视频：命中节流
-    assert!(svc.update_playback(1, "u1", 10, 2, 1000).await.is_ok());
+    assert!(svc.update_playback("u1", 10, 2, 1000).await.is_ok());
     // 同用户不同视频：新 key，放行触库
-    assert!(svc.update_playback(1, "u1", 11, 1, 1000).await.is_err());
+    assert!(svc.update_playback("u1", 11, 1, 1000).await.is_err());
     // 不同用户同视频：新 key，放行触库
-    assert!(svc.update_playback(1, "u2", 10, 1, 1000).await.is_err());
+    assert!(svc.update_playback("u2", 10, 1, 1000).await.is_err());
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -546,7 +542,7 @@ async fn search_full_text_and_pagination_defense_with_real_db() {
 
     // 注意：handler 的分页约定是 page 从 0 开始（offset = page * size）
     let (results, total) = svc
-        .full_text_search(1, None, "AlphaSearch", 0, 10)
+        .full_text_search(None, "AlphaSearch", 0, 10)
         .await
         .expect("搜索不应失败");
     assert!(total >= 1, "应至少命中刚插入的视频");
@@ -565,15 +561,15 @@ async fn search_full_text_and_pagination_defense_with_real_db() {
 
     // 分页防御：负数 / 巨大 page、size=0 / 巨大 size 均不得触发 PostgreSQL 错误
     let (_, _) = svc
-        .full_text_search(1, None, "AlphaSearch", -1_000_000, -10)
+        .full_text_search(None, "AlphaSearch", -1_000_000, -10)
         .await
         .expect("负 page/size 必须被 clamp，不得报错");
     let (_, _) = svc
-        .full_text_search(1, None, "AlphaSearch", 1, 10)
+        .full_text_search(None, "AlphaSearch", 1, 10)
         .await
         .expect("page=1（offset=10）必须被接受，不得报错");
     let (oversized, total_beyond) = svc
-        .full_text_search(1, None, "AlphaSearch", 1_000_000, 100)
+        .full_text_search(None, "AlphaSearch", 1_000_000, 100)
         .await
         .expect("超大 page/size 必须被 clamp，不得报错");
     assert!(oversized.is_empty(), "offset 越界应返回空结果");
@@ -614,7 +610,7 @@ async fn search_suggest_real_db_and_cache_consistency() {
 
     // 前缀命中（tsvector 匹配分支）
     let s1 = svc
-        .search_suggest(1, None, "suggestalpha", 10)
+        .search_suggest(None, "suggestalpha", 10)
         .await
         .expect("suggest 失败");
     assert!(
@@ -622,16 +618,10 @@ async fn search_suggest_real_db_and_cache_consistency() {
         "建议应包含前缀/向量匹配的标题: {s1:?}"
     );
     // 连续第二次调用（命中缓存）：结果必须与首次一致
-    let s2 = svc
-        .search_suggest(1, None, "suggestalpha", 10)
-        .await
-        .unwrap();
+    let s2 = svc.search_suggest(None, "suggestalpha", 10).await.unwrap();
     assert_eq!(s1, s2, "缓存命中的结果必须与首次一致");
     // 不同 limit → 不同 cache key，行为正确即可
-    let s3 = svc
-        .search_suggest(1, None, "suggestalpha", 1)
-        .await
-        .unwrap();
+    let s3 = svc.search_suggest(None, "suggestalpha", 1).await.unwrap();
     assert_eq!(s3.len(), 1);
 
     sqlx::query("DELETE FROM videos WHERE id = $1")
@@ -690,7 +680,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
 
     // ── user：有首选分类，正常推荐 ──
     let recs = svc
-        .get_recommendations(1, &user, None, v5, 10)
+        .get_recommendations(&user, None, v5, 10)
         .await
         .expect("get_recommendations 失败");
     let ids: Vec<i64> = recs.iter().map(|r| r.id).collect();
@@ -714,7 +704,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
     // 注：`rows.is_empty()` 分支要求用户把全库视频都看过才能触发，
     // 在共享的已填充数据库里不可行，这里验证等价的无历史分支。
     let fallback = svc
-        .get_recommendations(1, &fresh_user, None, v5, 10)
+        .get_recommendations(&fresh_user, None, v5, 10)
         .await
         .expect("回退 trending 失败");
     assert!(!fallback.is_empty(), "无历史用户必须回退到 trending");
@@ -726,7 +716,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
 
     // ── get_similar_videos / get_trending_videos / get_recent_videos ──
     let similar = svc
-        .get_similar_videos(1, None, v1, 10)
+        .get_similar_videos(None, v1, 10)
         .await
         .expect("get_similar_videos 失败");
     assert!(
@@ -737,12 +727,12 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
     );
     assert!(similar.iter().all(|r| r.id != v1));
     let trending = svc
-        .get_trending_videos(1, None, 0, 10)
+        .get_trending_videos(None, 0, 10)
         .await
         .expect("trending 失败");
     assert!(!trending.0.is_empty());
     let recent = svc
-        .get_recent_videos(1, None, 0, 10)
+        .get_recent_videos(None, 0, 10)
         .await
         .expect("recent 失败");
     assert!(!recent.0.is_empty());

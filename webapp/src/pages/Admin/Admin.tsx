@@ -9,13 +9,11 @@ const DashboardTab = lazy(() => import('./DashboardTab'))
 const VideosTab = lazy(() => import('./VideosTab'))
 const UsersTab = lazy(() => import('./UsersTab'))
 const TagsTab = lazy(() => import('./TagsTab'))
-const TenantTab = lazy(() => import('./TenantTab'))
-const PlanTab = lazy(() => import('./PlanTab'))
 const SystemTab = lazy(() => import('./SystemTab'))
 const LogsTab = lazy(() => import('./LogsTab'))
 const ChatTab = lazy(() => import('./ChatTab'))
 
-type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'tenants' | 'plans' | 'system' | 'logs' | 'chat'
+type Tab = 'dashboard' | 'videos' | 'users' | 'tags' | 'system' | 'logs' | 'chat'
 type MediaSubTab = 'video' | 'image'
 
 const TABS: { key: Tab; icon: string }[] = [
@@ -23,8 +21,6 @@ const TABS: { key: Tab; icon: string }[] = [
   { key: 'videos', icon: '🎬' },
   { key: 'users', icon: '👥' },
   { key: 'tags', icon: '🏷️' },
-  { key: 'tenants', icon: '🏢' },
-  { key: 'plans', icon: '📦' },
   { key: 'system', icon: '⚙️' },
   { key: 'logs', icon: '📋' },
   { key: 'chat', icon: '💬' },
@@ -155,8 +151,6 @@ export default function Admin() {
               )}
               {tab === 'users' && <UsersTab />}
               {tab === 'tags' && <TagsTab />}
-              {tab === 'tenants' && <TenantTab />}
-              {tab === 'plans' && <PlanTab />}
               {tab === 'system' && <SystemTab />}
               {tab === 'logs' && <LogsTab />}
               {tab === 'chat' && <ChatTab />}

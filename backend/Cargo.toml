@@ -41,9 +41,6 @@ sysinfo = "0.30"
 [dev-dependencies]
 criterion = "0.5"
 
-[[bench]]
-name = "tenant_performance"
-harness = false
 
 [profile.release]
 lto = true

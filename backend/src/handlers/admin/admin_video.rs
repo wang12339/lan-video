@@ -113,7 +113,6 @@ pub async fn add_external_video(
         .services
         .video
         .add_external_video(
-            auth_user.tenant_id,
             &req.title,
             req.description.as_deref(),
             req.category.as_deref(),
@@ -207,14 +206,7 @@ pub async fn upload_video(
     let id = match state
         .services
         .media
-        .upload_video_file(
-            auth_user.tenant_id,
-            &file_name,
-            &tmp_path,
-            &category,
-            auth_user.id,
-            precomputed,
-        )
+        .upload_video_file(&file_name, &tmp_path, &category, auth_user.id, precomputed)
         .await
     {
         Ok(id) => id,
@@ -297,7 +289,7 @@ pub async fn upload_status(
     match state
         .services
         .media
-        .find_upload_duplicate(auth_user.tenant_id, auth_user.id, &q.hash)
+        .find_upload_duplicate(auth_user.id, &q.hash)
         .await
     {
         Ok(Some(id)) => {
@@ -336,7 +328,7 @@ pub async fn upload_status(
     let received = state
         .services
         .media
-        .upload_received_bytes(auth_user.tenant_id, auth_user.id, &q.hash)
+        .upload_received_bytes(auth_user.id, &q.hash)
         .await
         .map_err(|e| {
             tracing::warn!("upload-status progress failed: {}", e);
@@ -431,7 +423,6 @@ pub async fn upload_resume(
         .services
         .media
         .append_upload_chunk(
-            auth_user.tenant_id,
             auth_user.id,
             &hash,
             &file_name,
@@ -473,7 +464,7 @@ pub async fn upload_resume(
 /// POST /admin/videos/check-hashes
 pub async fn check_hashes(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<CheckHashesRequest>,
 ) -> Result<Json<CheckHashesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.hashes.len() > 1000 {
@@ -485,7 +476,7 @@ pub async fn check_hashes(
     let existing = state
         .services
         .video
-        .check_existing_hashes(auth_user.tenant_id, req.hashes)
+        .check_existing_hashes(req.hashes)
         .await
         .map_err(|e| internal_error_log("check_existing_hashes", &e))?;
     Ok(Json(CheckHashesResponse { existing }))
@@ -494,7 +485,7 @@ pub async fn check_hashes(
 /// POST /admin/videos/check-files
 pub async fn check_files(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(files): SafeJson<Vec<FileCheckItem>>,
 ) -> Result<Json<CheckFilesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if files.len() > 1000 {
@@ -506,7 +497,7 @@ pub async fn check_files(
     let existing_indices = state
         .services
         .video
-        .check_existing_files(auth_user.tenant_id, &files)
+        .check_existing_files(&files)
         .await
         .map_err(|e| internal_error_log("check_existing_files", &e))?;
     Ok(Json(CheckFilesResponse {
@@ -516,7 +507,7 @@ pub async fn check_files(
 
 pub async fn scan_media(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     multipart: Option<Multipart>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let category = if let Some(mut mp) = multipart {
@@ -535,7 +526,7 @@ pub async fn scan_media(
     let added = state
         .services
         .video
-        .scan_media_directory(auth_user.tenant_id, &category)
+        .scan_media_directory(&category)
         .await
         .map_err(|e| internal_error_log("scan_media_directory", &e))?;
 
@@ -547,7 +538,7 @@ pub async fn scan_media(
 /// PUT /admin/videos/{id}
 pub async fn update_video(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<i64>,
     SafeJson(req): SafeJson<VideoUpdateRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -572,7 +563,6 @@ pub async fn update_video(
         .services
         .video
         .update_video(
-            auth_user.tenant_id,
             id,
             req.title.as_deref(),
             req.description.as_deref(),
@@ -600,19 +590,14 @@ pub async fn update_video(
 /// DELETE /admin/videos/{id}
 pub async fn delete_video(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let Some(id) = hashid::decode_id_or_numeric(&id) else {
         return Err(error_response(StatusCode::BAD_REQUEST, "无效的视频ID"));
     };
     state.invalidate_caches();
-    match state
-        .services
-        .video
-        .delete_video(auth_user.tenant_id, id)
-        .await
-    {
+    match state.services.video.delete_video(id).await {
         Ok(true) => {
             tracing::info!(video_id = id, "admin deleted video");
             Ok(Json(OkResponse {
@@ -639,7 +624,7 @@ pub async fn delete_video(
 /// DELETE /admin/videos/batch
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(ids): SafeJson<Vec<String>>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ids.len() > 500 {
@@ -656,7 +641,7 @@ pub async fn delete_videos(
     let deleted = state
         .services
         .video
-        .delete_videos(auth_user.tenant_id, &numeric_ids)
+        .delete_videos(&numeric_ids)
         .await
         .map_err(|e| {
             tracing::error!("delete_videos failed: {}", e);
@@ -724,7 +709,7 @@ pub struct BatchCategoryRequest {
 
 pub async fn batch_update_category(
     State(state): State<Arc<AppState>>,
-    Extension(auth_user): Extension<AuthUser>,
+    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<BatchCategoryRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.ids.len() > 1000 {
@@ -742,7 +727,7 @@ pub async fn batch_update_category(
     let updated = state
         .repos
         .video
-        .batch_update_category(auth_user.tenant_id, &req.ids, &req.category)
+        .batch_update_category(&req.ids, &req.category)
         .await
         .map_err(|e| internal_error_log("batch_update_category", &e))?;
     state.invalidate_caches();

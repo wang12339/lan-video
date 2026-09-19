@@ -17,13 +17,11 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Extension;
 use rand::Rng;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-use crate::middleware::tenant::TenantContext;
 use crate::models::auth::AuthResponse;
 use crate::state::AppState;
 use crate::util::response::error_response;
@@ -149,7 +147,6 @@ pub async fn start(State(state): State<Arc<AppState>>) -> axum::response::Respon
 /// GET /auth/gateway/callback?code=..&state=..（或 error=..）
 pub async fn callback(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<TenantContext>,
     axum::extract::RawQuery(raw): axum::extract::RawQuery,
 ) -> axum::response::Response {
     let webapp_login = "/webapp/";
@@ -247,13 +244,7 @@ pub async fn callback(
     let gw_username = ui.username.trim().to_string();
     let display_email = ui.email.clone().filter(|e| e.contains('@'));
 
-    let result = gateway_sign_in(
-        &state,
-        tenant.tenant_id,
-        &gw_username,
-        display_email.as_deref(),
-    )
-    .await;
+    let result = gateway_sign_in(&state, &gw_username, display_email.as_deref()).await;
     match result {
         Ok(atmos_token) => {
             // 生成一次性 exchange code，30 秒有效
@@ -335,7 +326,6 @@ pub async fn exchange(
 /// 按网关用户名登录/建号，返回 Atmos token
 async fn gateway_sign_in(
     state: &AppState,
-    tenant_id: i64,
     gw_username: &str,
     email: Option<&str>,
 ) -> Result<String, String> {
@@ -343,7 +333,7 @@ async fn gateway_sign_in(
     if let Some(user) = state
         .repos
         .user
-        .find_by_username(tenant_id, gw_username)
+        .find_by_username(gw_username)
         .await
         .map_err(|e| e.to_string())?
     {
@@ -391,7 +381,7 @@ async fn gateway_sign_in(
     let new_id = state
         .repos
         .user
-        .create_user(tenant_id, &username, &password_hash, 1)
+        .create_user(&username, &password_hash, 1)
         .await
         .map_err(|e| e.to_string())?;
     // create_user 里 role>=3 才 approved；这里手动放行网关用户

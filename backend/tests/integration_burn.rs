@@ -123,7 +123,7 @@ async fn test_burn_requires_watch_progress() {
     fx.state
         .repos
         .playback
-        .upsert_playback(1, &fx.viewer.0, fx.video_id, 50_000, 100_000)
+        .upsert_playback(&fx.viewer.0, fx.video_id, 50_000, 100_000)
         .await
         .expect("seed partial progress");
     let (status, body) = send_json(
@@ -163,7 +163,7 @@ async fn test_burn_no_user_distinction_owner_also_burns() {
     fx.state
         .repos
         .playback
-        .upsert_playback(1, &fx.uploader.0, fx.video_id, 100_000, 100_000)
+        .upsert_playback(&fx.uploader.0, fx.video_id, 100_000, 100_000)
         .await
         .expect("seed full progress for owner");
     let (status, _) = send_json(
@@ -241,8 +241,8 @@ async fn test_burn_deletes_video_and_physical_files() {
         .await
         .expect("point video at fake local files");
     sqlx::query(
-        "INSERT INTO video_variants (tenant_id, video_id, resolution, file_path, file_size, bitrate, created_at) \
-         VALUES (1, $1, '720p', $2, 7, NULL, CURRENT_TIMESTAMP) \
+        "INSERT INTO video_variants (video_id, resolution, file_path, file_size, bitrate, created_at) \
+         VALUES ($1, '720p', $2, 7, NULL, CURRENT_TIMESTAMP) \
          ON CONFLICT (video_id, resolution) DO UPDATE SET file_path = $2",
     )
     .bind(fx.video_id)
@@ -255,7 +255,7 @@ async fn test_burn_deletes_video_and_physical_files() {
     fx.state
         .repos
         .playback
-        .upsert_playback(1, &fx.viewer.0, fx.video_id, 95_000, 100_000)
+        .upsert_playback(&fx.viewer.0, fx.video_id, 95_000, 100_000)
         .await
         .expect("seed full progress");
     let (status, body) = send_json(
@@ -302,7 +302,7 @@ async fn test_burn_deletes_video_and_physical_files() {
         .state
         .repos
         .playback
-        .get_playback_data(1, &fx.viewer.0, fx.video_id)
+        .get_playback_data(&fx.viewer.0, fx.video_id)
         .await
         .expect("query playback after burn");
     assert!(progress.is_none(), "焚毁后播放历史必须级联删除");

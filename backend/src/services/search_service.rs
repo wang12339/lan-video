@@ -77,7 +77,6 @@ impl SearchService {
 
     pub async fn full_text_search(
         &self,
-        tenant_id: i64,
         owner_id: Option<i64>,
         query: &str,
         page: i64,
@@ -117,8 +116,7 @@ impl SearchService {
                     'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20') as headline,
                 COUNT(*) OVER() AS total
             FROM videos
-            WHERE tenant_id = $4
-              AND ($5::bigint IS NULL OR uploader_id = $5)
+            WHERE ($4::bigint IS NULL OR uploader_id = $4)
               AND search_vector @@ plainto_tsquery('simple', $1)
             ORDER BY rank DESC, id DESC
             LIMIT $2 OFFSET $3
@@ -127,7 +125,6 @@ impl SearchService {
         .bind(&query)
         .bind(size)
         .bind(offset)
-        .bind(tenant_id)
         .bind(owner_id)
         .fetch_all(pool)
         .await
@@ -154,7 +151,6 @@ impl SearchService {
 
     pub async fn search_suggest(
         &self,
-        tenant_id: i64,
         owner_id: Option<i64>,
         query: &str,
         limit: i64,
@@ -165,13 +161,7 @@ impl SearchService {
         }
         let limit = limit.clamp(1, MAX_SIZE);
 
-        let cache_key = format!(
-            "{}|{}|{}|{}",
-            tenant_id,
-            owner_id.unwrap_or(0),
-            query,
-            limit
-        );
+        let cache_key = format!("{}|{}|{}", owner_id.unwrap_or(0), query, limit);
         if let Some(cached) = suggest_cache().get(&cache_key) {
             return Ok(cached);
         }
@@ -204,14 +194,12 @@ impl SearchService {
                 SELECT title,
                        ts_rank(search_vector, plainto_tsquery('simple', $1)) AS rk
                 FROM videos
-                WHERE tenant_id = $4
-                  AND ($5::bigint IS NULL OR uploader_id = $5)
+                WHERE ($4::bigint IS NULL OR uploader_id = $4)
                   AND search_vector @@ plainto_tsquery('simple', $1)
                 UNION ALL
                 SELECT title, 0::real AS rk
                 FROM videos
-                WHERE tenant_id = $4
-                  AND ($5::bigint IS NULL OR uploader_id = $5)
+                WHERE ($4::bigint IS NULL OR uploader_id = $4)
                   AND title ILIKE $2 || '%'
             ) AS t
             GROUP BY title
@@ -222,7 +210,6 @@ impl SearchService {
         .bind(&query)
         .bind(&pattern)
         .bind(limit)
-        .bind(tenant_id)
         .bind(owner_id)
         .fetch_all(pool)
         .await

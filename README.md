@@ -11,7 +11,6 @@
 - 🔍 **全文搜索与推荐** - 基于 PostgreSQL 的全文搜索和智能推荐
 - 📋 **播放列表管理** - 创建、编辑和分享播放列表
 - 🔗 **分享链接生成** - 一键生成分享链接，支持密码保护和过期时间
-- 👥 **多租户支持** - 完整的多租户架构
 - 🔒 **完善的权限控制** - 基于角色的访问控制（RBAC）
 - 💬 **评论系统** - 视频评论与互动
 - 🏷️ **标签管理** - 灵活的视频标签系统
@@ -90,7 +89,7 @@ main.rs → build_router(app.rs) → 中间件栈 → handlers → services → 
 ```
 
 **中间件执行顺序**（由外到内）：
-- 全局：`security_headers` → `inject_state` → `resolve_tenant` → `request_id` → `request_log` → `TraceLayer` → `CompressionLayer` → CORS
+- 全局：`security_headers` → `inject_state` → `request_id` → `request_log` → `TraceLayer` → `CompressionLayer` → CORS
 - 路由级：`bearer_auth` → `role_auth(N)` → `admin_auth` → `rate_limit` → `hotlink_guard` → `bandwidth_throttle`
 
 **分层规则**：handler 不直接访问数据库，必须通过 service → repository。
