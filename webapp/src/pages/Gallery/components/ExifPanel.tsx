@@ -60,12 +60,15 @@ function formatDateTime(takenAt: string | undefined, locale: string): string | n
   try {
     const date = new Date(takenAt)
     if (isNaN(date.getTime())) return takenAt
+    // EXIF 拍摄时间没有时区，后端按"墙钟时间存为 UTC"处理；
+    // 展示时固定用 UTC，避免按浏览器时区偏移（跨时区会差一天）
     return date.toLocaleString(locale, {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'UTC',
     })
   } catch {
     return takenAt

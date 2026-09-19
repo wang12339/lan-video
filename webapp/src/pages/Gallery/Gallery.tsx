@@ -632,8 +632,18 @@ export default function Gallery() {
       if (taken) {
         const date = new Date(taken)
         if (!isNaN(date.getTime())) {
-          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-          label = date.toLocaleDateString(i18n.language, { year: 'numeric', month: 'long', day: 'numeric' })
+          // EXIF 时间无时区，后端按墙钟时间存为 UTC；分组固定用 UTC 日期，
+          // 与后端 taken_after/taken_before 的 UTC 日界保持一致
+          const year = date.getUTCFullYear()
+          const month = date.getUTCMonth()
+          const day = date.getUTCDate()
+          key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+          label = new Date(Date.UTC(year, month, day)).toLocaleDateString(i18n.language, {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            timeZone: 'UTC',
+          })
         }
       }
       const group = groups.get(key)
