@@ -7,6 +7,26 @@ use crate::services::log_parser;
 use crate::state::AppState;
 use crate::util::response::{error_response, ErrorResponse};
 
+#[utoipa::path(
+    get,
+    path = "/admin/logs",
+    tag = "admin",
+    summary = "Read recent log entries",
+    description = "从最新日志文件尾部读取日志条目，支持 level/search 过滤与分页",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("level" = Option<String>, Query, description = "按日志级别过滤（INFO/WARN/ERROR…）"),
+        ("search" = Option<String>, Query, description = "按消息/路径/用户等关键字过滤"),
+        ("limit" = Option<usize>, Query, description = "返回条数（默认 200，最大 1000）"),
+        ("offset" = Option<usize>, Query, description = "跳过条数（从最新往旧）")
+    ),
+    responses(
+        (status = 200, description = "Log entries", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Query(params): Query<LogQuery>,
@@ -54,6 +74,19 @@ pub async fn get_logs(
 }
 
 /// DELETE /admin/logs — 清空当前日志文件
+#[utoipa::path(
+    delete,
+    path = "/admin/logs",
+    tag = "admin",
+    description = "清空当前日志文件内容",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Logs cleared", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn clear_logs(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

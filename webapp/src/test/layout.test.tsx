@@ -113,7 +113,7 @@ const en = {
 /** 根据当前 i18n 语言返回对应翻译 */
 function t(key: 'nav' | 'common', field: string): string {
   const lang = i18n.language === 'zh-CN' ? zh : en
-  return (lang as Record<string, Record<string, string>>)[key][field] ?? field
+  return (lang as Record<string, Record<string, string>>)[key]?.[field] ?? field
 }
 
 function makeUser(overrides: Record<string, unknown> = {}) {
@@ -124,6 +124,7 @@ function makeUser(overrides: Record<string, unknown> = {}) {
     avatarUrl: undefined,
     createdAt: '',
     emailVerified: true,
+    isGuest: false,
     ...overrides,
   }
 }
@@ -139,8 +140,10 @@ function mockAuth(user: ReturnType<typeof makeUser> | null) {
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
   })

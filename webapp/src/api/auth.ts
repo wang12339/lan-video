@@ -174,16 +174,23 @@ export async function sendVerificationEmail(): Promise<{ ok: boolean; message: s
 }
 
 /**
- * 更新用户邮箱地址
+ * 更新用户邮箱地址（需提供当前密码验证身份）
  * @param email - 新邮箱地址
- * @returns 操作结果，包含是否成功和提示消息
- * @throws {APIError} 邮箱格式无效或已被占用时抛出
+ * @param password - 当前密码
+ * @returns 操作结果，包含是否成功和提示消息；服务端可能随响应重新签发 token
+ * @throws {APIError} 密码错误、邮箱格式无效或已被占用时抛出
  */
-export async function updateEmail(email: string): Promise<{ ok: boolean; message: string }> {
-  return request<{ ok: boolean; message: string }>('/auth/user/email', {
+export async function updateEmail(
+  email: string,
+  password: string,
+): Promise<{ ok: boolean; message: string; token?: string }> {
+  const res = await request<{ ok: boolean; message: string; token?: string }>('/auth/user/email', {
     method: 'PUT',
-    body: { email },
+    body: { email, password },
   });
+  // 邮箱变更后服务端可能重新签发 token，立即持久化，避免旧 token 后续请求 401
+  if (res.token) saveToken(res.token);
+  return res;
 }
 
 /**

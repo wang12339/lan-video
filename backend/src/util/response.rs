@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Display;
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     /// 机器可读的错误码（如 `duplicate` / `quota_exceeded` / `offset_mismatch`）。

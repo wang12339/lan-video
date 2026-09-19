@@ -53,6 +53,7 @@ const mockUser: UserInfo = {
   createdAt: '2024-01-01T00:00:00Z',
   email: 'test@example.com',
   emailVerified: true,
+  isGuest: false,
 }
 
 const mockAdminUser: UserInfo = {
@@ -61,6 +62,7 @@ const mockAdminUser: UserInfo = {
   isAdmin: true,
   createdAt: '2024-01-01T00:00:00Z',
   emailVerified: true,
+  isGuest: false,
 }
 
 // 从 mock 模块拿到 AuthError 构造函数，供测试中构造实例

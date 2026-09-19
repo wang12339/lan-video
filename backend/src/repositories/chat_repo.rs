@@ -70,6 +70,21 @@ impl ChatRepository {
         .await
     }
 
+    /// 判断某个 `/media/chat/...` 路径是否确实被某条聊天消息引用
+    /// （`image_url` 或 `video_url`）。
+    ///
+    /// media_auth 收紧 `/media/chat/*` 时使用：仅当文件被消息引用才放行，
+    /// 防止登录用户遍历/读取上传目录中未被引用的孤儿文件。
+    pub async fn media_is_referenced(&self, path: &str) -> Result<bool, sqlx::Error> {
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE image_url = $1 OR video_url = $1)",
+        )
+        .bind(path)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
+    }
+
     /// 消息总数（管理后台统计用）。
     pub async fn count(&self) -> Result<i64, sqlx::Error> {
         let (n,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM chat_messages")

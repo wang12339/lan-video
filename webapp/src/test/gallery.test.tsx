@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Gallery from '../pages/Gallery/Gallery'
 import { clearGalleryCache } from '../api/galleryCache'
-import type { MappedImage, VideoListResponse } from '../api/types'
+import type { MappedImage, UserInfo, VideoListResponse } from '../api/types'
 
 // ── IntersectionObserver Mock ──────────────────────────────────────────────────
 // jsdom 不支持 IntersectionObserver，需要手动 mock
@@ -122,14 +122,15 @@ const mockMapImage = vi.mocked(mapImage)
 const mockUseAuth = vi.mocked(useAuth)
 const mockBurnVideo = vi.mocked(burnVideo)
 
-function makeUser() {
+function makeUser(): UserInfo {
   return {
-    id: 1,
+    id: '1',
     username: 'testuser',
     email: 'test@example.com',
     isAdmin: false,
-    role: 1 as const,
-    avatarUrl: null,
+    createdAt: '2024-01-01T00:00:00Z',
+    emailVerified: true,
+    isGuest: false,
   }
 }
 
@@ -145,8 +146,10 @@ beforeEach(() => {
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
   })

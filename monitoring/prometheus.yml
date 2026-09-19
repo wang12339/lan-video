@@ -11,20 +11,22 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  # 已禁用：/metrics 与 /metrics/prometheus 在 backend/src/app.rs 的
-  # internal_routes 中要求管理员 Bearer 鉴权（admin_auth + bearer_auth），
-  # 后端目前没有面向 Prometheus 的只读 metrics token 机制，静态抓取必然 401。
-  # 如后续实现 metrics 专用凭据，再取消以下注释并配置 authorization。
-  # - job_name: "atmos-video"
-  #   static_configs:
-  #     - targets: ["app:8082"]
-  #   metrics_path: "/metrics"
-  #   scrape_interval: 10s
-  #   scrape_timeout: 5s
-  #   relabel_configs:
-  #     - source_labels: [__address__]
-  #       target_label: instance
-  #       replacement: "atmos-video"
+  # 需要后端配置 METRICS_TOKEN，并把同一令牌写入下面的 credentials_file。
+  # 未配置令牌时 /metrics* 返回 404；令牌不匹配返回 401。
+  - job_name: "atmos-video"
+    static_configs:
+      - targets: ["app:8082"]
+    metrics_path: "/metrics/prometheus"
+    scheme: "http"
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "atmos-video"
 
   - job_name: "postgres"
     static_configs:

@@ -84,6 +84,15 @@ where
     Ok(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/recommendations",
+    tag = "recommendations",
+    summary = "Get personalized recommendations",
+    description = "Get video recommendations based on the user's viewing history and category preferences",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "Recommendations", body = RecommendationResponse))
+)]
 /// GET /recommendations
 ///
 /// Get personalized recommendations based on user's viewing history
@@ -111,6 +120,19 @@ pub async fn get_recommendations(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/recommendations/similar/{video_id}",
+    tag = "recommendations",
+    summary = "Get similar videos",
+    description = "Get videos similar to a specific video based on category matching (requires authentication)",
+    security(("bearerAuth" = [])),
+    params(("video_id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 200, description = "Similar videos", body = RecommendationResponse),
+        (status = 400, description = "无效的视频ID")
+    )
+)]
 /// GET /recommendations/similar/{video_id}
 ///
 /// Get videos similar to a specific video
@@ -147,6 +169,19 @@ pub async fn get_similar_videos(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/recommendations/trending",
+    tag = "recommendations",
+    summary = "Get trending videos",
+    description = "Get popular videos ranked by views and engagement (requires authentication)",
+    security(("bearerAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (1-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100)")
+    ),
+    responses((status = 200, description = "Trending videos", body = RecommendationResponse))
+)]
 /// GET /recommendations/trending
 ///
 /// Get trending/popular videos (cached for 2 minutes)
@@ -178,6 +213,19 @@ pub async fn get_trending_videos(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/recommendations/recent",
+    tag = "recommendations",
+    summary = "Get recent videos",
+    description = "Get most recently uploaded videos (requires authentication)",
+    security(("bearerAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (1-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100)")
+    ),
+    responses((status = 200, description = "Recent videos", body = RecommendationResponse))
+)]
 /// GET /recommendations/recent
 ///
 /// Get recently uploaded videos (cached for 2 minutes)

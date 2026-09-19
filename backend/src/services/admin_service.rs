@@ -120,18 +120,13 @@ impl AdminService {
             tracing::error!("password hash failed: {}", e);
             ServiceError::internal("密码加密失败")
         })?;
+        // 原子化：改密码 + 吊销全部 token 在同一事务内提交。
+        // 旧实现分两步且 token 吊销失败只记日志，可能留下“密码已改但
+        // 旧 token 仍有效”的危险状态。
         let ok = self
             .user_repo
-            .update_password_hash(target_id, &hash)
+            .reset_password_and_revoke_tokens(target_id, &hash)
             .await?;
-        // Invalidate all tokens for this user so they must re-login
-        if let Err(e) = self.user_repo.delete_tokens_by_user_id(target_id).await {
-            tracing::error!(
-                "Failed to invalidate tokens after password reset for user {}: {}",
-                target_id,
-                e
-            );
-        }
         Ok(ActionOutcome {
             ok,
             error_msg: if !ok {

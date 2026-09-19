@@ -1,12 +1,13 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct RecommendationResponse {
     pub items: Vec<RecommendationItem>,
     pub total: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendationItem {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]

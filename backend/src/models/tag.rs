@@ -1,18 +1,19 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CreateTagRequest {
     pub name: String,
     pub color: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct UpdateTagRequest {
     pub name: Option<String>,
     pub color: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagResponse {
     pub id: i32,
@@ -21,7 +22,7 @@ pub struct TagResponse {
     pub usage_count: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagListResponse {
     pub tags: Vec<TagResponse>,
@@ -30,7 +31,7 @@ pub struct TagListResponse {
     pub size: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct TagQuery {
     pub page: Option<i64>,
     pub size: Option<i64>,

@@ -40,6 +40,21 @@ fn validate_tag_color(color: &str) -> Result<(), (StatusCode, Json<ErrorResponse
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/tags",
+    tag = "tags",
+    summary = "List all tags",
+    description = "Get all available tags with usage count",
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (0-indexed, default 0)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100, default 50)")
+    ),
+    responses(
+        (status = 200, description = "Tag list", body = TagListResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn list_tags(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TagQuery>,
@@ -70,6 +85,50 @@ pub async fn list_tags(
     }))
 }
 
+/// `/admin/tags` 与公开的 `/tags` 共用 `list_tags` 逻辑（见 app.rs），但
+/// utoipa 一个函数只能携带一条 `#[utoipa::path]`，故用薄包装单独登记
+/// admin 路径的文档。
+#[utoipa::path(
+    get,
+    path = "/admin/tags",
+    tag = "tags",
+    summary = "List all tags (admin)",
+    description = "Admin view of all tags with usage count",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (0-indexed, default 0)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100, default 50)")
+    ),
+    responses(
+        (status = 200, description = "Tag list", body = TagListResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn list_tags_admin(
+    state: State<Arc<AppState>>,
+    query: Query<TagQuery>,
+) -> Result<Json<TagListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    list_tags(state, query).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/tags",
+    tag = "tags",
+    summary = "Create a tag",
+    description = "Create a new tag. Name must be unique and 1-50 characters.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = CreateTagRequest,
+    responses(
+        (status = 201, description = "Tag created", body = TagResponse),
+        (status = 400, description = "Invalid tag name or color"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 409, description = "Tag name already exists")
+    )
+)]
 pub async fn create_tag(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<CreateTagRequest>,
@@ -97,6 +156,19 @@ pub async fn create_tag(
     Ok(Json(tag.into()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/tags/{id}",
+    tag = "tags",
+    summary = "Get tag by ID",
+    description = "Get a single tag with its usage count",
+    params(("id" = i32, Path, description = "Tag ID")),
+    responses(
+        (status = 200, description = "Tag details", body = TagResponse),
+        (status = 404, description = "Tag not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
@@ -112,6 +184,24 @@ pub async fn get_tag(
     Ok(Json(tag.into()))
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/tags/{id}",
+    tag = "tags",
+    summary = "Update a tag",
+    description = "Update tag name and/or color",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(("id" = i32, Path, description = "Tag ID")),
+    request_body = UpdateTagRequest,
+    responses(
+        (status = 200, description = "Tag updated", body = TagResponse),
+        (status = 400, description = "Invalid tag name or color"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Tag not found"),
+        (status = 409, description = "Tag name already exists")
+    )
+)]
 pub async fn update_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
@@ -146,6 +236,21 @@ pub async fn update_tag(
     Ok(Json(tag.into()))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/tags/{id}",
+    tag = "tags",
+    summary = "Delete a tag",
+    description = "Delete a tag and all its video associations",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(("id" = i32, Path, description = "Tag ID")),
+    responses(
+        (status = 200, description = "Tag deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Tag not found")
+    )
+)]
 pub async fn delete_tag(
     State(state): State<Arc<AppState>>,
     Path(tag_id): Path<i32>,
@@ -164,6 +269,17 @@ pub async fn delete_tag(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/tags/popular",
+    tag = "tags",
+    summary = "Get popular tags",
+    description = "Get most frequently used tags (limit 20)",
+    responses(
+        (status = 200, description = "Popular tags", body = [TagResponse]),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_popular_tags(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<TagResponse>>, (StatusCode, Json<ErrorResponse>)> {
@@ -177,6 +293,23 @@ pub async fn get_popular_tags(
     Ok(Json(tags.into_iter().map(TagResponse::from).collect()))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/tags",
+    tag = "tags",
+    summary = "Add tags to a video",
+    description = "Add one or more tags to a video by tag IDs",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID (hashid or numeric)")),
+    request_body = Vec<i32>,
+    responses(
+        (status = 200, description = "Tags added", body = serde_json::Value),
+        (status = 400, description = "Invalid video ID or tag IDs"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Video or tag not found")
+    )
+)]
 pub async fn add_tags_to_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -208,6 +341,22 @@ pub async fn add_tags_to_video(
     })))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/videos/{id}/tags",
+    tag = "tags",
+    summary = "Remove tags from a video",
+    description = "按标签 ID 数组从视频上移除标签",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID (hashid or numeric)")),
+    request_body = Vec<i32>,
+    responses(
+        (status = 200, description = "Tags removed", body = serde_json::Value),
+        (status = 400, description = "Invalid video ID or tag IDs"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn remove_tags_from_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -235,6 +384,24 @@ pub async fn remove_tags_from_video(
     })))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/videos/{id}/tags/{tag_id}",
+    tag = "tags",
+    summary = "Remove a tag from a video",
+    description = "Remove a specific tag from a video",
+    security(("bearerAuth" = [])),
+    params(
+        ("id" = String, Path, description = "Video ID (hashid or numeric)"),
+        ("tag_id" = i32, Path, description = "Tag ID")
+    ),
+    responses(
+        (status = 200, description = "Tag removed", body = serde_json::Value),
+        (status = 400, description = "Invalid video ID or tag ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn remove_tag_from_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -261,6 +428,20 @@ pub async fn remove_tag_from_video(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/tags",
+    tag = "tags",
+    summary = "Get tags for a video",
+    description = "Get all tags assigned to a video",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID (hashid or numeric)")),
+    responses(
+        (status = 200, description = "Video tags", body = [TagResponse]),
+        (status = 400, description = "Invalid video ID"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_video_tags(
     State(state): State<Arc<AppState>>,
     Path(video_id): Path<String>,

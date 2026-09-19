@@ -44,6 +44,8 @@ fn pending() -> &'static Arc<Mutex<HashMap<String, PendingAuth>>> {
 }
 
 const PENDING_TTL_SECS: u64 = 600;
+/// PENDING 容量上限：/auth/gateway/start 为公开接口，若不限容量可被灌满内存。
+const PENDING_MAX_ENTRIES: usize = 10_000;
 
 /// 一次性 exchange code 暂存（exchange_code → Atmos token）。
 /// 30 秒有效、用后即焚，用于把 token 安全交给前端。
@@ -56,6 +58,8 @@ fn exchanges() -> &'static Arc<Mutex<ExchangeMap>> {
 }
 
 const EXCHANGE_TTL_SECS: u64 = 30;
+/// EXCHANGES 容量上限：超出时淘汰最旧的一次性 code（用户重新登录即可）。
+const EXCHANGE_MAX_ENTRIES: usize = 10_000;
 
 /// 网关是否已启用（四个配置全部非空）
 pub fn enabled(state: &AppState) -> bool {
@@ -87,6 +91,21 @@ async fn gc_pending() {
 async fn gc_exchanges() {
     let mut map = exchanges().lock().await;
     map.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(EXCHANGE_TTL_SECS));
+}
+
+/// 淘汰最旧的一条 exchange code；map 为空返回 false。
+fn evict_oldest_exchange(map: &mut ExchangeMap) -> bool {
+    let oldest = map
+        .iter()
+        .min_by_key(|(_, (_, t))| *t)
+        .map(|(k, _)| k.clone());
+    match oldest {
+        Some(key) => {
+            map.remove(&key);
+            true
+        }
+        None => false,
+    }
 }
 
 // ---------- 网关响应结构 ----------
@@ -132,13 +151,25 @@ pub async fn start(State(state): State<Arc<AppState>>) -> axum::response::Respon
     let verifier = verifier[..96.min(verifier.len())].to_string();
 
     gc_pending().await;
-    pending().lock().await.insert(
-        state_param.clone(),
-        PendingAuth {
-            verifier,
-            created_at: Instant::now(),
-        },
-    );
+    {
+        let mut map = pending().lock().await;
+        // 容量保护：公开接口，灌满 PENDING 会拖垮进程内存与全局锁。
+        if map.len() >= PENDING_MAX_ENTRIES {
+            tracing::warn!(
+                entries = map.len(),
+                "gateway pending map is full, rejecting new login start"
+            );
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "登录请求过多，请稍后重试")
+                .into_response();
+        }
+        map.insert(
+            state_param.clone(),
+            PendingAuth {
+                verifier,
+                created_at: Instant::now(),
+            },
+        );
+    }
 
     let authorize_url = format!(
         "{}/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&scope=profile+email&state={}&code_challenge={}&code_challenge_method=S256",
@@ -268,10 +299,13 @@ pub async fn callback(
             // 生成一次性 exchange code，30 秒有效
             let exchange_code = random_token(48);
             gc_exchanges().await;
-            exchanges()
-                .lock()
-                .await
-                .insert(exchange_code.clone(), (atmos_token, Instant::now()));
+            {
+                let mut map = exchanges().lock().await;
+                if map.len() >= EXCHANGE_MAX_ENTRIES {
+                    evict_oldest_exchange(&mut map);
+                }
+                map.insert(exchange_code.clone(), (atmos_token, Instant::now()));
+            }
             // 302 回前端落地页
             axum::response::Redirect::to(&format!("{webapp_login}?gw_code={exchange_code}"))
                 .into_response()
@@ -608,4 +642,27 @@ fn urldecode(s: &str) -> String {
 fn redirect_err(webapp_login: &str, code: &str) -> axum::response::Response {
     axum::response::Redirect::to(&format!("{webapp_login}?gw_error={}", urlencode(code)))
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evict_oldest_exchange_removes_oldest_entry() {
+        let mut map: ExchangeMap = HashMap::new();
+        let now = Instant::now();
+        map.insert(
+            "old".to_string(),
+            ("token-old".to_string(), now - Duration::from_secs(10)),
+        );
+        map.insert("new".to_string(), ("token-new".to_string(), now));
+
+        assert!(evict_oldest_exchange(&mut map));
+        assert!(!map.contains_key("old"));
+        assert!(map.contains_key("new"));
+
+        let mut empty: ExchangeMap = HashMap::new();
+        assert!(!evict_oldest_exchange(&mut empty));
+    }
 }

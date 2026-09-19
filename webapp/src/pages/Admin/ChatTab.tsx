@@ -72,6 +72,7 @@ export default function ChatTab() {
         confirmText={t('common.confirm')}
         onConfirm={confirmDialog.onConfirm}
         onCancel={handleCancel}
+        onClosed={handleCancel}
       />
 
       <AlertDialog

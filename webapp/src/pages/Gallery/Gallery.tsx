@@ -13,6 +13,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../components/Toast/Toast'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
 import type { MappedImage } from '../../api/types'
+import { useVirtualGrid, type RowHeightContext } from '../../hooks/useVirtualGrid'
 import './Gallery.css'
 
 const PAGE_SIZE = 40
@@ -21,6 +22,20 @@ const SEARCH_DEBOUNCE_MS = 300
 const INTERSECTION_ROOT_MARGIN = '0px 0px 300px 0px'
 /** 灯箱预加载前后各 2 张图片 */
 const LIGHTBOX_PRELOAD_RANGE = 2
+/** 画廊网格列间距（与 Gallery.css 的 gap 默认值一致） */
+const GALLERY_GAP = 14
+
+/**
+ * 画廊行高估算：卡片固定宽高比（grid 4:3 / wide 16:9），
+ * 按列宽换算后即为准确的卡片高度，保证滚动条与总高度稳定。
+ */
+function estimateGalleryRowHeight(layout: 'grid' | 'wide') {
+  return ({ containerWidth, columns, gap }: RowHeightContext): number => {
+    const safeColumns = Math.max(1, columns)
+    const columnWidth = (containerWidth - Math.max(0, safeColumns - 1) * gap) / safeColumns
+    return layout === 'wide' ? columnWidth * (9 / 16) : columnWidth * (3 / 4)
+  }
+}
 
 // ── 图片卡片组件（memo 优化） ─────────────────────────────────────────────────
 interface GalleryCardProps {
@@ -154,6 +169,20 @@ export default function Gallery() {
     }
   }, [query, user])
 
+  // 窗口滚动的响应式网格虚拟化：只渲染可视区域 + overscan 行
+  const { containerRef, windowed, virtualItems, paddingTop, paddingBottom } = useVirtualGrid({
+    itemCount: images.length,
+    minItemWidth: layout === 'wide' ? 340 : 220,
+    rowHeight: estimateGalleryRowHeight(layout),
+    gap: GALLERY_GAP,
+    overscan: 2,
+    layoutKey: layout,
+    onReachEnd: () => {
+      // 窗口化后哨兵可能不在视口内，由“可见范围触达已加载末尾”兜底触发
+      if (hasMoreRef.current && !loadingRef.current) loadImages(pageRef.current, true)
+    },
+  })
+
   // 切换搜索条件：作废在途请求、重置页码、清空旧列表、回到顶部
   useEffect(() => {
     loadGenRef.current++
@@ -188,8 +217,9 @@ export default function Gallery() {
   }, [loadImages, images.length, loading])
 
   // 首屏内容不足一屏时自动补页，避免"无限追加"停摆
+  // 用 ref 判断加载中：与虚拟化窗口的触底加载共享同一同步标记，避免重复请求
   useEffect(() => {
-    if (loading || images.length === 0 || !hasMoreRef.current) return
+    if (loadingRef.current || images.length === 0 || !hasMoreRef.current) return
     if (images.length === fillLenRef.current) return
     const scrollable = document.documentElement.scrollHeight > window.innerHeight
     if (!scrollable) {
@@ -489,17 +519,26 @@ export default function Gallery() {
           </button>
         </div>
       ) : images.length > 0 ? (
-        <div className={`gallery-grid ${layout === 'wide' ? 'wide' : ''}`}>
-          {images.map((img, idx) => (
-            <GalleryCard
-              key={img.id}
-              img={img}
-              index={idx}
-              onClick={openLightbox}
-              onKeyDown={onCardKeyDown}
-              t={t}
-            />
-          ))}
+        <div
+          ref={containerRef}
+          className={`gallery-grid ${layout === 'wide' ? 'wide' : ''}`}
+          style={windowed ? { paddingTop, paddingBottom } : undefined}
+        >
+          {virtualItems.map((idx) => {
+            const img = images[idx]
+            if (!img) return null
+            return (
+              <GalleryCard
+                key={img.id}
+                img={img}
+                // index 必须是完整列表中的下标：灯箱切换/焚毁依赖它
+                index={idx}
+                onClick={openLightbox}
+                onKeyDown={onCardKeyDown}
+                t={t}
+              />
+            )
+          })}
         </div>
       ) : showEmpty ? (
         <div className="gallery-empty" role="status" aria-live="polite">

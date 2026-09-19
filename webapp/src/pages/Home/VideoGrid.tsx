@@ -3,8 +3,28 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { MappedVideo } from '../../api/types'
 import VideoCard, { VideoCardSkeleton } from '../../components/VideoCard/VideoCard'
+import { useVirtualGrid, type RowHeightContext } from '../../hooks/useVirtualGrid'
 
 const VideoCardMemo = React.memo(VideoCard)
+
+/** 网格视图列间距（与 Home.css 的 --card-gap 默认值一致） */
+const GRID_GAP = 16
+/** 列表视图行间距（与 .video-grid.list-view 的 gap 一致） */
+const LIST_GAP = 12
+/** 列表视图单行估算高度（缩略图 135px + 信息区） */
+const LIST_ROW_HEIGHT = 140
+/** 网格视图卡片信息区估算高度（padding + 标题两行 + 元信息，偏保守） */
+const GRID_INFO_HEIGHT = 96
+
+/**
+ * 网格视图行高估算：列宽 * 9/16（缩略图 16:9）+ 信息区。
+ * 刻意取偏小值：低估只会多渲染几行，高估会导致视口底部出现空白。
+ */
+function estimateGridRowHeight({ containerWidth, columns, gap }: RowHeightContext): number {
+  const safeColumns = Math.max(1, columns)
+  const columnWidth = (containerWidth - Math.max(0, safeColumns - 1) * gap) / safeColumns
+  return columnWidth * (9 / 16) + GRID_INFO_HEIGHT
+}
 
 function useSkeletonCount() {
   return useMemo(() => {
@@ -46,6 +66,24 @@ export default function VideoGrid({
   const showInitialError = isError && videos.length === 0 && !isPending
   const showEmpty = !isPending && !isError && videos.length === 0
 
+  const isList = viewMode === 'list'
+
+  // 窗口滚动的响应式网格虚拟化：只渲染可视区域 + overscan 行
+  const { containerRef, windowed, virtualItems, startIndex, paddingTop, paddingBottom } =
+    useVirtualGrid({
+      itemCount: videos.length,
+      minItemWidth: 280,
+      rowHeight: isList ? LIST_ROW_HEIGHT : estimateGridRowHeight,
+      gap: isList ? LIST_GAP : GRID_GAP,
+      overscan: 2,
+      fixedColumns: isList ? 1 : undefined,
+      layoutKey: viewMode,
+      onReachEnd: () => {
+        // 窗口化后底部哨兵可能不再进入视口，由“可见范围触达末尾”兜底触发加载
+        if (hasNextPage && !isFetchingNextPage) onLoadMore()
+      },
+    })
+
   const clearSearch = useCallback(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
@@ -57,12 +95,24 @@ export default function VideoGrid({
   return (
     <>
       {videos.length > 0 ? (
-        <div className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}>
-          {videos.map((video, i) => (
-            <div key={video.id} style={{ '--card-index': i } as React.CSSProperties}>
-              <VideoCardMemo video={video} eager={i < 4} />
-            </div>
-          ))}
+        <div
+          ref={containerRef}
+          className={`video-grid ${viewMode === 'list' ? 'list-view' : ''}`}
+          style={windowed ? { paddingTop, paddingBottom } : undefined}
+        >
+          {virtualItems.map((index) => {
+            const video = videos[index]
+            if (!video) return null
+            return (
+              <div
+                // 动画延迟用窗口内局部下标，避免深翻页后卡片等满 19 档延迟才出现
+                key={video.id}
+                style={{ '--card-index': index - startIndex } as React.CSSProperties}
+              >
+                <VideoCardMemo video={video} eager={index < 4} />
+              </div>
+            )
+          })}
         </div>
       ) : isPending ? (
         <div className="video-grid">

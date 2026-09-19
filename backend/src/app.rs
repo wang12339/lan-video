@@ -93,6 +93,46 @@ async fn csrf_self_heal(req: Request, next: axum_mw::Next) -> axum::response::Re
     resp
 }
 
+/// 等长常量时间比较，避免按字节短路造成的时序侧信道。
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// `/metrics` 与 `/metrics/prometheus` 的专用令牌鉴权：
+/// - `METRICS_TOKEN` 为空 → 404（端点默认关闭，不泄露存在性）；
+/// - Authorization: Bearer <token> 与配置等值 → 放行，否则 401。
+async fn metrics_auth(req: Request, next: axum_mw::Next) -> axum::response::Response {
+    let state = req.extensions().get::<Arc<AppState>>().cloned();
+    let Some(state) = state else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "server config error").into_response();
+    };
+    let expected = state.config.metrics_token.as_str();
+    if expected.is_empty() {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+    let provided = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
+        .unwrap_or("");
+    if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+        next.run(req).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
+    }
+}
+
 pub async fn build_router(config: AppConfig) -> Router {
     // 进程级安全/工具配置：优先使用 AppConfig 显式值（env 已由 from_env 收归）。
     crate::util::net::configure_trusted_proxy(config.trusted_proxy);
@@ -254,6 +294,27 @@ pub async fn build_router(config: AppConfig) -> Router {
                         }
                     }
                     Err(e) => tracing::error!("Failed to clean up expired tokens: {}", e),
+                }
+            }
+        });
+    }
+
+    // Periodic trending-score recompute every 10 minutes.
+    // calculate_trending_score depends on CURRENT_TIMESTAMP, so the score
+    // computed by the migration-037 trigger goes stale; this keeps the
+    // homepage "trending" ordering decaying with time.
+    {
+        let video_repo = state.repos.video.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(600)).await;
+                match video_repo.recompute_trending_scores().await {
+                    Ok(n) => {
+                        if n > 0 {
+                            tracing::debug!("Recomputed trending scores for {} videos", n);
+                        }
+                    }
+                    Err(e) => tracing::warn!("Failed to recompute trending scores: {}", e),
                 }
             }
         });
@@ -741,13 +802,21 @@ pub async fn build_router(config: AppConfig) -> Router {
     let internal_routes = with_timeout(
         Router::new()
             .route("/server/info", get(handlers::server::server_info))
+            .route_layer(axum_mw::from_fn(admin_auth))
+            .route_layer(axum_mw::from_fn(bearer_auth)),
+        30,
+    );
+
+    // Metrics routes: 专用只读令牌（METRICS_TOKEN），未配置时 404。
+    // 与 admin 路由分离，避免给 Prometheus 发放可登录的管理员 token。
+    let metrics_routes = with_timeout(
+        Router::new()
             .route("/metrics", get(handlers::server::metrics))
             .route(
                 "/metrics/prometheus",
                 get(handlers::server::metrics_prometheus),
             )
-            .route_layer(axum_mw::from_fn(admin_auth))
-            .route_layer(axum_mw::from_fn(bearer_auth)),
+            .route_layer(axum_mw::from_fn(metrics_auth)),
         30,
     );
 
@@ -877,6 +946,7 @@ pub async fn build_router(config: AppConfig) -> Router {
         .merge(upload_route)
         .merge(admin_routes)
         .merge(internal_routes)
+        .merge(metrics_routes)
         .merge(docs_routes)
         .route("/", root_redirect)
         // More specific nest wins: /webapp/assets/* gets immutable caching,
@@ -923,4 +993,18 @@ pub async fn build_router(config: AppConfig) -> Router {
         .layer(inject_state)
         .layer(axum_mw::from_fn(security_headers))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn constant_time_eq_matches_only_equal_bytes() {
+        assert!(constant_time_eq(b"secret-token", b"secret-token"));
+        assert!(!constant_time_eq(b"secret-token", b"secret-tokex"));
+        assert!(!constant_time_eq(b"secret-token", b"secret"));
+        assert!(!constant_time_eq(b"", b"x"));
+        assert!(constant_time_eq(b"", b""));
+    }
 }

@@ -182,6 +182,7 @@ export default function TagsTab() {
           danger
           onConfirm={() => deleteMut.mutate(confirmDelete.id)}
           onCancel={() => setConfirmDelete(null)}
+          onClosed={() => setConfirmDelete(null)}
         />
       )}
 

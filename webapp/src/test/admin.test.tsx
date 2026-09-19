@@ -57,6 +57,7 @@ function makeAdminUser(overrides: Partial<UserInfo> = {}): UserInfo {
     isAdmin: true,
     createdAt: '2025-01-01T00:00:00Z',
     emailVerified: true,
+    isGuest: false,
     ...overrides,
   }
 }
@@ -68,6 +69,7 @@ function makeNormalUser(overrides: Partial<UserInfo> = {}): UserInfo {
     isAdmin: false,
     createdAt: '2025-01-01T00:00:00Z',
     emailVerified: true,
+    isGuest: false,
     ...overrides,
   }
 }
@@ -105,8 +107,10 @@ beforeEach(() => {
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
   })
@@ -317,8 +321,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -343,8 +349,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -362,8 +370,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -381,8 +391,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -402,8 +414,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -427,8 +441,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -454,8 +470,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -475,8 +493,10 @@ describe('Admin 管理面板', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -505,21 +525,21 @@ describe('Admin 管理面板', () => {
       expect(screen.getByTestId('error-boundary')).toBeInTheDocument()
 
       // tabpanel 存在且有正确的 id
-      expect(screen.getByRole('tabpanel', { id: 'admin-panel-dashboard' })).toBeInTheDocument()
+      expect(document.getElementById('admin-panel-dashboard')).toBeInTheDocument()
     })
 
     it('切换标签时 tabpanel id 与 aria-controls 对应', async () => {
       renderAdmin()
 
       // 初始 dashboard
-      expect(screen.getByRole('tabpanel', { id: 'admin-panel-dashboard' })).toBeInTheDocument()
+      expect(document.getElementById('admin-panel-dashboard')).toBeInTheDocument()
       expect(screen.getByRole('tab', { name: /数据概览/ })).toHaveAttribute('aria-controls', 'admin-panel-dashboard')
 
       // 切换到 videos
       fireEvent.click(screen.getByRole('tab', { name: /内容管理/ }))
 
       await waitFor(() => {
-        expect(screen.getByRole('tabpanel', { id: 'admin-panel-videos' })).toBeInTheDocument()
+        expect(document.getElementById('admin-panel-videos')).toBeInTheDocument()
       })
       expect(screen.getByRole('tab', { name: /内容管理/ })).toHaveAttribute('aria-controls', 'admin-panel-videos')
     })

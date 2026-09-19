@@ -69,6 +69,19 @@ npm run build        # tsc + vite build → dist/
 
 前端构建产物由后端在 `/webapp/` 路径自动提供静态文件服务。
 
+### 5. Docker 部署（生产）
+
+CI 在 main 分支构建并推送镜像到 GHCR，服务器无需本地构建：
+
+```bash
+export IMAGE_NAME=<owner>/<repo>
+docker compose pull app
+docker compose up -d --wait --no-deps app
+# 回滚：IMAGE_TAG=previous docker compose up -d --no-deps app
+```
+
+详见 [部署指南](docs/DEPLOYMENT.md)。
+
 ## 🏗️ 架构
 
 ```
@@ -155,7 +168,7 @@ webapp/                     # React/Vite 前端
 | `CORS_ORIGIN` | (空) | 允许的跨域来源（逗号分隔） |
 | `COOKIE_SECURE` | `true` | 是否设置 Secure Cookie 标志 |
 | `SMTP_HOST` 等 `SMTP_*` | (空) | SMTP 邮件服务（密码重置、邮箱验证必需） |
-| `REDIS_URL` | (空) | 可选 Redis（未配置时回退到内存限流/缓存） |
+| `REDIS_URL` | (空) | 可选 Redis（未配置时回退到内存限流/缓存；生产多实例建议配置） |
 | `TRUSTED_PROXY` | `0` | 是否信任 `X-Forwarded-For` / `cf-connecting-ip` |
 | `HASHID_SALT` | 内置默认 | Hash ID 盐值，生产环境必须自定义 |
 | `TRANSCODE_TIMEOUT_SECS` | `3600` | 单次 ffmpeg 转码超时（秒） |

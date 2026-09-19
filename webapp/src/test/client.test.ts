@@ -130,7 +130,6 @@ describe('client request', () => {
 
   it('localizes server errors by status code', async () => {
     const originalSetTimeout = global.setTimeout as unknown as typeof setTimeout
-    // @ts-expect-error mock to make retries immediate
     global.setTimeout = (((fn: () => void) => { fn(); return 0 })) as typeof setTimeout
     try {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(500, { error: 'internal server error' })))

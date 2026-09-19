@@ -7,12 +7,16 @@ const mockObserve = vi.fn()
 const mockUnobserve = vi.fn()
 const mockDisconnect = vi.fn()
 
+/** 测试只需关心 isIntersecting/target 两个字段 */
+type LazyIntersectionEntry = Pick<IntersectionObserverEntry, 'isIntersecting' | 'target'>
+
 /** 取第 index 次 IntersectionObserver 构造时传入的回调。 */
-function observerCallbackAt(index: number): IntersectionObserverCallback {
+function observerCallbackAt(index: number): (entries: LazyIntersectionEntry[]) => void {
   const observer = global.IntersectionObserver as unknown as {
     mock: { calls: IntersectionObserverCallback[][] }
   }
-  return observer.mock.calls[index]![0]!
+  // 生产回调声明了完整参数，这里放宽为测试用的部分字段签名
+  return observer.mock.calls[index]![0]! as unknown as (entries: LazyIntersectionEntry[]) => void
 }
 
 beforeEach(() => {

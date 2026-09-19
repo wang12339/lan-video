@@ -2,8 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useNetworkState, useOfflineAlert } from '../hooks/useNetworkState'
 
+// TS DOM lib 未内置 Network Information API 的 connection 字段，这里补充最小类型
+interface NetworkInformationLike {
+  effectiveType?: string
+  downlink?: number
+  rtt?: number
+  addEventListener: () => void
+  removeEventListener: () => void
+}
+type NavigatorWithConnection = Navigator & { connection?: NetworkInformationLike }
+
 describe('useNetworkState', () => {
-  let originalNavigator: Navigator
+  let originalNavigator: NavigatorWithConnection
   
   beforeEach(() => {
     // 保存原始 navigator
@@ -236,7 +246,7 @@ describe('useNetworkState', () => {
 })
 
 describe('useOfflineAlert', () => {
-  let originalNavigator: Navigator
+  let originalNavigator: NavigatorWithConnection
   
   beforeEach(() => {
     vi.clearAllMocks()

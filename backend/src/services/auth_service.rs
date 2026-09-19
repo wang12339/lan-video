@@ -394,6 +394,25 @@ impl AuthService {
         );
     }
 
+    /// 敏感操作前的密码重认证（改邮箱等）。
+    ///
+    /// 复用登录路径的 Argon2id 校验逻辑：用户不存在时同样执行 dummy 验签，
+    /// 保持时序一致；任何失败（用户不存在/哈希不可用/密码错误）统一返回
+    /// `Ok(false)`，由调用方给出泛化错误，不泄露账号状态。
+    pub async fn verify_user_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<bool, ServiceError> {
+        let user_opt = self.user_repo.find_by_username(username).await?;
+        let hash: &str = match user_opt.as_ref() {
+            Some(u) => u.password_hash.as_str(),
+            None => DUMMY_ARGON2_HASH,
+        };
+        let password_ok = verify_in_blocking(password, hash).await;
+        Ok(user_opt.is_some() && password_ok)
+    }
+
     /// 重置密码
     ///
     /// # 参数
@@ -445,15 +464,16 @@ impl AuthService {
 
         let hash = hash_in_blocking(password).await?;
 
-        let updated = self.user_repo.update_password_hash(user_id, &hash).await?;
+        // 原子化：改密码 + 吊销全部 token 在同一事务内，避免“密码已改但
+        // 旧 token 仍有效”的中间态（旧实现第二步失败只记日志）。
+        let updated = self
+            .user_repo
+            .reset_password_and_revoke_tokens(user_id, &hash)
+            .await?;
 
         if !updated {
             // The user was deleted between token validation and the update.
             return Ok(ResetPasswordResult::InvalidToken);
-        }
-
-        if let Err(e) = self.user_repo.revoke_tokens_by_user_id(user_id).await {
-            tracing::error!("revoke_tokens_by_user_id after password reset: {}", e);
         }
 
         Ok(ResetPasswordResult::Ok)
@@ -522,7 +542,8 @@ impl AuthService {
     /// - 生成验证 token 并存储到数据库
     /// - 构造验证链接（包含 token 和公共 URL）
     /// - 通过邮件服务发送验证邮件
-    /// - SMTP 未配置时直接标记邮箱为已验证（开发/测试模式）
+    /// - SMTP 未配置时返回 `ok: false`，**不**改动 `email_verified`
+    ///   （旧行为会静默把邮箱标记为已验证，属于虚假验证）
     ///
     /// # 安全
     /// - 验证 token 有有效期（通常 24 小时）
@@ -573,14 +594,11 @@ impl AuthService {
                 message: "验证邮件已发送。如果您的邮箱没有收到，请稍后再试。".into(),
             })
         } else {
-            // SMTP 未配置时直接标记已验证（开发/测试模式）
-            if email.is_some() {
-                let _ = self.user_repo.verify_email(user_id).await;
-            }
-
+            // SMTP 未配置：绝不把 email_verified 置 true（那是虚假验证），
+            // 返回失败并提示联系管理员。
             Ok(SendVerificationEmailResult {
-                ok: true,
-                message: "验证邮件功能未配置。请联系管理员。".into(),
+                ok: false,
+                message: "邮件服务未配置。请联系管理员。".into(),
             })
         }
     }
@@ -932,6 +950,10 @@ pub(crate) fn is_valid_email(email: &str) -> bool {
     if email.is_empty() || email.len() > 254 {
         return false;
     }
+    // 只允许一个 @：`a@b@evil.com` 这类歧义地址会被不同解析器解读成不同收件人。
+    if email.matches('@').count() != 1 {
+        return false;
+    }
     let (local, domain) = match email.split_once('@') {
         Some((l, d)) => (l, d),
         None => return false,
@@ -1051,6 +1073,8 @@ mod tests {
         assert!(!is_valid_email("user@.com"));
         assert!(!is_valid_email("user@com."));
         assert!(!is_valid_email("user@dom..ain"));
+        assert!(!is_valid_email("user@example.com@evil.com"));
+        assert!(!is_valid_email("a@@example.com"));
         assert!(!is_valid_email("user name@example.com"));
         assert!(!is_valid_email("user\nname@example.com"));
     }

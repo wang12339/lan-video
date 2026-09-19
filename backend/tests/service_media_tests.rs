@@ -1469,6 +1469,7 @@ async fn upload_video_flow_with_database() {
         gateway_client_id: String::new(),
         gateway_client_secret: String::new(),
         gateway_redirect_uri: String::new(),
+        metrics_token: String::new(),
     };
     let svc = MediaService::new(repo.clone(), config);
 

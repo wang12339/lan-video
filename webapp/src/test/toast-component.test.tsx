@@ -62,9 +62,9 @@ describe('Toast', () => {
       </>
     )
     
-    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[0])
-    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[1])
-    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[2])
+    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[0]!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[1]!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'show' })[2]!)
     
     const success = screen.getByText('成功消息').closest('.toast')
     const error = screen.getByText('错误消息').closest('.toast')

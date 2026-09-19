@@ -42,6 +42,18 @@ fn svc_err(e: crate::util::error::ServiceError) -> (StatusCode, Json<ErrorRespon
 }
 
 /// GET /playlists
+#[utoipa::path(
+    get,
+    path = "/playlists",
+    tag = "playlists",
+    summary = "List current user's playlists",
+    description = "返回当前用户创建的所有播放列表（含封面与条目数）",
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Playlist list", body = PlaylistListResponse),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn list_my_playlists(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -61,6 +73,20 @@ pub async fn list_my_playlists(
 }
 
 /// POST /playlists
+#[utoipa::path(
+    post,
+    path = "/playlists",
+    tag = "playlists",
+    summary = "Create a playlist",
+    description = "创建播放列表，名称需为 1-100 字符",
+    security(("bearerAuth" = [])),
+    request_body = CreatePlaylistRequest,
+    responses(
+        (status = 201, description = "Playlist created", body = PlaylistResponse),
+        (status = 400, description = "Invalid playlist name or description"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn create_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -96,6 +122,20 @@ pub async fn create_playlist(
 }
 
 /// GET /playlists/{id}
+#[utoipa::path(
+    get,
+    path = "/playlists/{id}",
+    tag = "playlists",
+    summary = "Get a playlist",
+    description = "获取播放列表详情（本人、管理员或公开列表）。非公开的他人列表返回 404 避免泄露存在性",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "播放列表 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Playlist details", body = PlaylistResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Playlist not found")
+    )
+)]
 pub async fn get_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -112,6 +152,23 @@ pub async fn get_playlist(
     Ok(Json(to_playlist_response(&p, count)))
 }
 
+#[utoipa::path(
+    put,
+    path = "/playlists/{id}",
+    tag = "playlists",
+    summary = "Update a playlist",
+    description = "修改播放列表名称、描述或公开状态（仅所有者）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "播放列表 ID (hashid 或数字)")),
+    request_body = UpdatePlaylistRequest,
+    responses(
+        (status = 200, description = "Playlist updated", body = serde_json::Value),
+        (status = 400, description = "Invalid playlist name or description"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Playlist not found")
+    )
+)]
 pub async fn update_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -152,6 +209,21 @@ pub async fn update_playlist(
 }
 
 /// DELETE /playlists/{id}
+#[utoipa::path(
+    delete,
+    path = "/playlists/{id}",
+    tag = "playlists",
+    summary = "Delete a playlist",
+    description = "删除播放列表及其全部条目（仅所有者）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "播放列表 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Playlist deleted", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Playlist not found")
+    )
+)]
 pub async fn delete_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -169,6 +241,20 @@ pub async fn delete_playlist(
 }
 
 /// GET /playlists/{id}/videos — videos inside a playlist, in playlist order
+#[utoipa::path(
+    get,
+    path = "/playlists/{id}/videos",
+    tag = "playlists",
+    summary = "List videos in a playlist",
+    description = "按播放列表顺序返回其中的视频",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "播放列表 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Playlist videos", body = [PlaylistVideoItem]),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Playlist not found")
+    )
+)]
 pub async fn list_playlist_videos(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -188,6 +274,23 @@ pub async fn list_playlist_videos(
 }
 
 /// POST /playlists/{id}/videos
+#[utoipa::path(
+    post,
+    path = "/playlists/{id}/videos",
+    tag = "playlists",
+    summary = "Add a video to a playlist",
+    description = "向播放列表添加视频（仅所有者）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "播放列表 ID (hashid 或数字)")),
+    request_body = AddVideoRequest,
+    responses(
+        (status = 200, description = "Video added", body = serde_json::Value),
+        (status = 400, description = "Invalid video ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Playlist or video not found")
+    )
+)]
 pub async fn add_video_to_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -206,6 +309,25 @@ pub async fn add_video_to_playlist(
 }
 
 /// DELETE /playlists/{id}/videos/{video_id}
+#[utoipa::path(
+    delete,
+    path = "/playlists/{id}/videos/{video_id}",
+    tag = "playlists",
+    summary = "Remove a video from a playlist",
+    description = "从播放列表中移除指定视频（仅所有者）",
+    security(("bearerAuth" = [])),
+    params(
+        ("id" = String, Path, description = "播放列表 ID (hashid 或数字)"),
+        ("video_id" = String, Path, description = "视频 ID (hashid 或数字)")
+    ),
+    responses(
+        (status = 200, description = "Video removed", body = serde_json::Value),
+        (status = 400, description = "Invalid playlist or video ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Playlist or video not found")
+    )
+)]
 pub async fn remove_video_from_playlist(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

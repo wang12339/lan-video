@@ -23,6 +23,19 @@ fn sanitize_log_field(s: &str) -> String {
 }
 
 /// POST /admin/track — 记录用户操作
+#[utoipa::path(
+    post,
+    path = "/admin/track",
+    tag = "admin",
+    description = "记录用户操作日志（页面、动作、目标），仅返回 204",
+    security(("bearerAuth" = [])),
+    request_body = TrackRequest,
+    responses(
+        (status = 204, description = "Action recorded"),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn track_action(
     _state: State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -39,6 +52,19 @@ pub async fn track_action(
 }
 
 /// GET /admin/stats — 数据统计面板
+#[utoipa::path(
+    get,
+    path = "/admin/stats",
+    tag = "admin",
+    description = "返回视频/图片/用户数量、总播放量与观看时长、类型与分类分布等统计数据",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Dashboard stats", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -105,6 +131,18 @@ pub async fn get_stats(
 }
 
 /// GET /admin/config/registration — 查询注册开关状态
+#[utoipa::path(
+    get,
+    path = "/admin/config/registration",
+    tag = "admin",
+    description = "查询注册开关的当前状态",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Registration state", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn get_registration_enabled(
     State(state): State<Arc<AppState>>,
 ) -> Json<serde_json::Value> {
@@ -113,6 +151,21 @@ pub async fn get_registration_enabled(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/config/registration",
+    tag = "admin",
+    summary = "Toggle public registration",
+    description = "开启/关闭公开注册（持久化到数据库）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = RegistrationToggleRequest,
+    responses(
+        (status = 200, description = "Registration toggle updated", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn set_registration_enabled(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<RegistrationToggleRequest>,
@@ -139,6 +192,19 @@ pub async fn set_registration_enabled(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/system",
+    tag = "admin",
+    summary = "System monitoring info",
+    description = "返回媒体目录磁盘占用与数据库连接数等系统监控信息",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "System info", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn system_info(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let db_connections = state
         .repos

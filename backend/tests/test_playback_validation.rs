@@ -2,7 +2,10 @@
 // Tests for playback history request validation and deserialization
 // Run with: cargo test --test test_playback_validation -- --nocapture
 
+mod integration_test_helpers;
+
 use atmos_video_backend::models::playback::PlaybackHistoryRequest;
+use integration_test_helpers::*;
 
 // ── Deserialization tests ──
 
@@ -438,4 +441,121 @@ fn test_validation_position_equals_duration_plus_tolerance_exact_max() {
         duration_ms: max,
     };
     assert!(validate_playback_request(&req).is_ok());
+}
+
+// ── 并发切换点赞/收藏：响应必须与库中权威状态一致（需 DATABASE_URL） ──
+//
+// 修复前 toggle 用 “DELETE ... RETURNING / INSERT ... ON CONFLICT”
+// 的多语句 CTE：并发请求可能同时看到“未点赞”，其中一个 INSERT 撞唯一
+// 约束后 `ON CONFLICT DO NOTHING` 使 `ins` 为空，于是响应 false 而库里
+// 实际已点赞。修复后事务内先取 `(username, video_id)` advisory lock 串行化，
+// 并同事务读回 EXISTS —— 串行切换从初始 false 开始必然严格交替，
+// 因此偶数次并发后 true 响应数恰为 N/2，且最终状态为 false。
+
+#[tokio::test]
+async fn test_toggle_like_concurrent_responses_match_db_state() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let username = unique_username("like_race");
+    let video_id = create_test_video(&state, "like_race").await;
+
+    const N: usize = 8;
+    let mut handles = Vec::with_capacity(N);
+    for _ in 0..N {
+        let playback = state.services.playback.clone();
+        let user = username.clone();
+        handles.push(tokio::spawn(async move {
+            playback
+                .toggle_like(&user, video_id)
+                .await
+                .expect("toggle_like")
+        }));
+    }
+
+    let mut on_count = 0usize;
+    for handle in handles {
+        if handle.await.expect("join toggle task") {
+            on_count += 1;
+        }
+    }
+
+    assert_eq!(
+        on_count,
+        N / 2,
+        "serialized toggles must alternate on/off (response/library mismatch)"
+    );
+    let final_state = state
+        .services
+        .playback
+        .is_liked(&username, video_id)
+        .await
+        .expect("is_liked");
+    assert!(
+        !final_state,
+        "even number of serialized toggles must end un-liked"
+    );
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+    cleanup_test_video(state.repos.video.pool(), video_id).await;
+}
+
+#[tokio::test]
+async fn test_toggle_favorite_concurrent_responses_match_db_state() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let username = unique_username("fav_race");
+    let video_id = create_test_video(&state, "fav_race").await;
+
+    const N: usize = 6;
+    let mut handles = Vec::with_capacity(N);
+    for _ in 0..N {
+        let playback = state.services.playback.clone();
+        let user = username.clone();
+        handles.push(tokio::spawn(async move {
+            playback
+                .toggle_favorite(&user, video_id)
+                .await
+                .expect("toggle_favorite")
+        }));
+    }
+
+    let mut on_count = 0usize;
+    for handle in handles {
+        if handle.await.expect("join toggle task") {
+            on_count += 1;
+        }
+    }
+
+    assert_eq!(
+        on_count,
+        N / 2,
+        "serialized favorite toggles must alternate"
+    );
+    let final_state = state
+        .services
+        .playback
+        .is_favorited(&username, video_id)
+        .await
+        .expect("is_favorited");
+    assert!(!final_state, "even number of toggles ends un-favorited");
+
+    // 不存在的视频：幂等返回 false，且不留下任何行
+    let ghost = state
+        .services
+        .playback
+        .toggle_favorite(&username, i64::MAX - 1)
+        .await
+        .expect("ghost favorite");
+    assert!(!ghost, "favoriting a nonexistent video must be a no-op");
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+    cleanup_test_video(state.repos.video.pool(), video_id).await;
 }

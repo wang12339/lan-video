@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 // ── Search ──
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SearchQuery {
     pub q: String,
     pub page: Option<i64>,
     pub size: Option<i64>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ToSchema)]
 pub struct SearchResponse {
     pub items: Vec<SearchResultItem>,
     pub total: i64,
@@ -17,7 +18,7 @@ pub struct SearchResponse {
     pub size: i64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ToSchema)]
 pub struct SearchResultItem {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
@@ -30,7 +31,7 @@ pub struct SearchResultItem {
 
 // ── Video variants ──
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoVariantResponse {
     pub resolution: String,
@@ -42,7 +43,7 @@ pub struct VideoVariantResponse {
 
 // ── Video item & list ──
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoItem {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
@@ -67,7 +68,7 @@ pub struct VideoItem {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct PagedVideoResponse {
     pub items: Vec<VideoItem>,
     pub total: i64,
@@ -75,7 +76,7 @@ pub struct PagedVideoResponse {
     pub size: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct VideoQuery {
     pub query: Option<String>,
     #[serde(rename = "type")]
@@ -87,7 +88,7 @@ pub struct VideoQuery {
     pub sort: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ExternalVideoRequest {
     pub title: String,
     pub description: Option<String>,
@@ -96,20 +97,20 @@ pub struct ExternalVideoRequest {
     pub cover_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct VideoUpdateRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub category: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IdResponse {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct OkResponse {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,23 +119,23 @@ pub struct OkResponse {
     pub deleted: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CheckHashesResponse {
     pub existing: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CheckHashesRequest {
     pub hashes: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct FileCheckItem {
     pub name: String,
     pub size: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CheckFilesResponse {
     pub existing_indices: Vec<usize>,
 }

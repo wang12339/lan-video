@@ -217,7 +217,10 @@ impl PlaybackRepository {
 
     /// 切换用户对指定视频的点赞状态。
     ///
-    /// 若已点赞则取消点赞，若未点赞则添加点赞（原子操作）。
+    /// 若已点赞则取消点赞，若未点赞则添加点赞。整个切换在一个事务内完成：
+    /// 先取 `(username, video_id)` 的事务级 advisory lock 串行化同一键上的
+    /// 并发请求（消灭“两个请求都先读后写”的竞态），再执行删除/插入，最后
+    /// 在同一事务内读回权威状态返回——返回值与库中最终状态必然一致。
     ///
     /// # 参数
     /// - `username`: 用户名。
@@ -226,20 +229,41 @@ impl PlaybackRepository {
     /// # 返回
     /// 操作后的点赞状态：`true` 表示已点赞，`false` 表示已取消。
     pub async fn toggle_like(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        let (liked,): (bool,) = sqlx::query_as(
-            "WITH del AS (
-                DELETE FROM user_likes WHERE username = $1 AND video_id = $2 RETURNING 1
-            ), ins AS (
-                INSERT INTO user_likes (username, video_id)
-                SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM del)
-                ON CONFLICT DO NOTHING RETURNING 1
+        let mut tx = self.pool.begin().await?;
+
+        // 事务级 advisory lock：键为 hashtextextended("username:video_id")。
+        // 锁随事务提交/回滚自动释放，不会泄漏。
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))")
+            .bind(username)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let deleted = sqlx::query("DELETE FROM user_likes WHERE username = $1 AND video_id = $2")
+            .bind(username)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await?;
+        if deleted.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO user_likes (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             )
-            SELECT EXISTS (SELECT 1 FROM ins)",
+            .bind(username)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // 同事务内读回权威状态（并发被锁串行化，这里即最终状态）
+        let (liked,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_likes WHERE username = $1 AND video_id = $2)",
         )
         .bind(username)
         .bind(video_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+        tx.commit().await?;
         Ok(liked)
     }
 
@@ -264,7 +288,9 @@ impl PlaybackRepository {
 
     /// 切换用户对指定视频的收藏状态。
     ///
-    /// 若已收藏则取消收藏，若未收藏则添加收藏（原子操作）。
+    /// 若已收藏则取消收藏，若未收藏则添加收藏。与 [`toggle_like`] 相同：
+    /// 同一事务内先取 `(username, video_id)` advisory lock，再删除/插入，
+    /// 最后同事务读回权威状态返回，消灭并发下的响应-库不一致。
     ///
     /// # 参数
     /// - `username`: 用户名。
@@ -277,30 +303,51 @@ impl PlaybackRepository {
         username: &str,
         video_id: i64,
     ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
         // M1 修复：视频不存在时 FK 违反会变成 500。先校验存在性，
         // 不存在时静默返回 false（幂等：收藏不存在的视频无效果）。
         let video_exists =
             sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM videos WHERE id = $1)")
                 .bind(video_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await?;
         if !video_exists {
+            tx.rollback().await?;
             return Ok(false);
         }
-        let (favorited,): (bool,) = sqlx::query_as(
-            "WITH del AS (
-                DELETE FROM user_favorites WHERE username = $1 AND video_id = $2 RETURNING 1
-            ), ins AS (
-                INSERT INTO user_favorites (username, video_id)
-                SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM del)
-                ON CONFLICT DO NOTHING RETURNING 1
+
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))")
+            .bind(username)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let deleted =
+            sqlx::query("DELETE FROM user_favorites WHERE username = $1 AND video_id = $2")
+                .bind(username)
+                .bind(video_id)
+                .execute(&mut *tx)
+                .await?;
+        if deleted.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO user_favorites (username, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
             )
-            SELECT EXISTS (SELECT 1 FROM ins)",
+            .bind(username)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let (favorited,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_favorites WHERE username = $1 AND video_id = $2)",
         )
         .bind(username)
         .bind(video_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+        tx.commit().await?;
         Ok(favorited)
     }
 

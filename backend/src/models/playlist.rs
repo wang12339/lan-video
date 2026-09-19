@@ -1,32 +1,33 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CreatePlaylistRequest {
     pub name: String,
     pub description: Option<String>,
     pub is_public: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct UpdatePlaylistRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub is_public: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddVideoRequest {
     #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]
     pub video_id: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ReorderRequest {
     #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_vec_ids")]
     pub video_ids: Vec<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistResponse {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
@@ -40,13 +41,13 @@ pub struct PlaylistResponse {
     pub updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistListResponse {
     pub playlists: Vec<PlaylistResponse>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistVideoItem {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]

@@ -1329,6 +1329,61 @@ impl VideoRepository {
         .await?;
         Ok(result.rows_affected())
     }
+
+    // ── Trending ──
+
+    /// 按当前时间重算所有 `views > 0` 视频的热度分数。
+    ///
+    /// # SQL（keyset 分批，每批 1000 行）
+    /// ```sql
+    /// UPDATE videos SET trending_score = calculate_trending_score(views, created_at)
+    /// WHERE id IN (
+    ///     SELECT id FROM videos WHERE views > 0 AND id > $1 ORDER BY id LIMIT $2
+    /// )
+    /// RETURNING id
+    /// ```
+    ///
+    /// # 用途
+    /// 迁移 037 的触发器只在 INSERT/UPDATE views/created_at 时计算一次分数，
+    /// 而 `calculate_trending_score` 依赖 `CURRENT_TIMESTAMP`，分数会随
+    /// 时间衰减失效。后台任务定期调用本方法即可让热度随时间自然衰减。
+    ///
+    /// # 性能
+    /// 单条 `UPDATE ... WHERE views > 0` 在数据量大时会长时间持锁；这里用
+    /// keyset（`id > last_id`）分批，每批独立提交，锁持有时间可控。
+    ///
+    /// # 返回
+    /// 实际更新的行数（所有批次之和）。
+    pub async fn recompute_trending_scores(&self) -> Result<u64, sqlx::Error> {
+        const BATCH_SIZE: i64 = 1000;
+        let mut last_id: i64 = 0;
+        let mut total: u64 = 0;
+        loop {
+            let ids: Vec<i64> = sqlx::query_scalar(
+                r#"
+                UPDATE videos
+                   SET trending_score = calculate_trending_score(views, created_at)
+                 WHERE id IN (
+                     SELECT id FROM videos
+                      WHERE views > 0 AND id > $1
+                      ORDER BY id
+                      LIMIT $2
+                 )
+                RETURNING id
+                "#,
+            )
+            .bind(last_id)
+            .bind(BATCH_SIZE)
+            .fetch_all(&self.pool)
+            .await?;
+            if ids.is_empty() {
+                break;
+            }
+            total += ids.len() as u64;
+            last_id = ids.into_iter().max().unwrap_or(last_id);
+        }
+        Ok(total)
+    }
 }
 
 /// 视频转码变体行结构（对应 `video_variants` 表）。

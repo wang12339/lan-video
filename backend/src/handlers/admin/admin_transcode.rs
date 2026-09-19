@@ -11,6 +11,25 @@ use crate::util::response::{error_response, internal_error_log, ErrorResponse, S
 /// POST /admin/videos/{id}/transcode
 ///
 /// Start transcoding a video to multiple resolutions
+#[utoipa::path(
+    post,
+    path = "/admin/videos/{id}/transcode",
+    tag = "admin",
+    description = "Queue a video for background transcoding into multiple quality variants (2160p/1080p/720p/480p/360p)",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    request_body = TranscodeRequest,
+    responses(
+        (status = 200, description = "Transcoding started", body = TranscodeResponse),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Video not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn transcode_video(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -78,6 +97,24 @@ pub async fn transcode_video(
 /// GET /admin/videos/{id}/transcode/status
 ///
 /// Get transcoding status for a video
+#[utoipa::path(
+    get,
+    path = "/admin/videos/{id}/transcode/status",
+    tag = "admin",
+    description = "获取视频的转码状态与可用转码分片列表",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    responses(
+        (status = 200, description = "Transcode status", body = TranscodeStatusResponse),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Video not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn transcode_status(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -109,6 +146,24 @@ pub async fn transcode_status(
 /// DELETE /admin/videos/{id}/transcode/{resolution}
 ///
 /// Delete a specific variant of a video
+#[utoipa::path(
+    delete,
+    path = "/admin/videos/{id}/transcode/{resolution}",
+    tag = "admin",
+    description = "Delete a specific transcoded variant and its physical file",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）"),
+        ("resolution" = String, Path, description = "清晰度（2160p/1080p/720p/480p/360p）")
+    ),
+    responses(
+        (status = 200, description = "Variant deleted", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn delete_variant(
     State(state): State<Arc<AppState>>,
     Path((id, resolution)): Path<(String, String)>,
@@ -174,6 +229,23 @@ pub async fn delete_variant(
 /// POST /admin/videos/{id}/transcode/cancel
 ///
 /// Cancel ongoing transcoding for a video
+#[utoipa::path(
+    post,
+    path = "/admin/videos/{id}/transcode/cancel",
+    tag = "admin",
+    description = "Cancel all pending/running transcoding jobs for a video",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    responses(
+        (status = 200, description = "Jobs cancelled", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn cancel_transcode(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -207,6 +279,24 @@ pub async fn cancel_transcode(
 /// POST /admin/videos/{id}/hls
 ///
 /// Start HLS transcoding for adaptive streaming
+#[utoipa::path(
+    post,
+    path = "/admin/videos/{id}/hls",
+    tag = "admin",
+    description = "Start HLS transcoding for adaptive streaming (local videos only)",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    responses(
+        (status = 200, description = "HLS transcoding started", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Video not found"),
+        (status = 409, description = "HLS transcoding already in progress")
+    )
+)]
 pub async fn transcode_to_hls(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -278,6 +368,22 @@ pub async fn transcode_to_hls(
 /// GET /admin/videos/{id}/hls/status
 ///
 /// Get HLS transcoding status
+#[utoipa::path(
+    get,
+    path = "/admin/videos/{id}/hls/status",
+    tag = "admin",
+    description = "Get HLS transcoding status (ready/processing/not_started)",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    responses(
+        (status = 200, description = "HLS status", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn hls_status(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

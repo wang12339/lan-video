@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CreateShareRequest {
     pub expires_in_days: Option<i32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateShareResponse {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
@@ -19,7 +20,7 @@ pub struct CreateShareResponse {
     pub created_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ShareListItem {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]

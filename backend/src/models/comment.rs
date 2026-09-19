@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CreateCommentRequest {
     pub content: String,
     #[serde(
@@ -10,13 +11,13 @@ pub struct CreateCommentRequest {
     pub parent_id: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CommentQuery {
     pub page: Option<i64>,
     pub size: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentResponse {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
@@ -33,7 +34,7 @@ pub struct CommentResponse {
     pub created_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentListResponse {
     pub comments: Vec<CommentResponse>,

@@ -298,6 +298,7 @@ export default function LogsTab() {
         confirmText={t('admin.logs.clearBtn')}
         onConfirm={handleClear}
         onCancel={() => setShowClearConfirm(false)}
+        onClosed={() => setShowClearConfirm(false)}
       />
     </div>
   )

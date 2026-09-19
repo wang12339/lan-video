@@ -38,6 +38,70 @@ struct CachedAuthUser {
 
 const MEDIA_AUTH_CACHE_TTL_SECS: u64 = 10;
 
+/// `/media/chat/*` 是否被聊天消息引用的进程内缓存（60 秒）。
+///
+/// 只缓存“已引用 = true”的结论：Range 请求风暴命中同一条正结果；
+/// 负结果不缓存，避免“上传完成但消息尚未入库”的时间窗内把该路径
+/// 钉死为未引用，导致消息广播后图片/视频 403。
+static CHAT_MEDIA_REF_CACHE: std::sync::OnceLock<Cache<String, bool>> = std::sync::OnceLock::new();
+
+const CHAT_MEDIA_REF_CACHE_TTL_SECS: u64 = 60;
+
+#[inline]
+fn chat_media_ref_cache() -> &'static Cache<String, bool> {
+    CHAT_MEDIA_REF_CACHE.get_or_init(|| {
+        Cache::builder()
+            .time_to_live(Duration::from_secs(CHAT_MEDIA_REF_CACHE_TTL_SECS))
+            .max_capacity(10_000)
+            .build()
+    })
+}
+
+/// 失效某个 token 的媒体鉴权缓存（登出时调用，立即生效）。
+///
+/// 本地 moka 精确清除该 token；配置了 Redis 时同时 `DEL media:auth:{token}`，
+/// 让多实例部署下其他进程的缓存也失效。Redis 不可用时静默降级。
+pub async fn invalidate_media_auth_token(state: &Arc<AppState>, token: &str) {
+    media_auth_cache().invalidate(token);
+    let Some(conn) = state.redis.as_ref() else {
+        return;
+    };
+    let key = format!("media:auth:{}", token);
+    let mut conn = conn.clone();
+    let _ = redis::cmd("DEL")
+        .arg(&key)
+        .query_async::<()>(&mut conn)
+        .await;
+}
+
+/// 失效某个用户全部 token 的媒体鉴权缓存（踢人/删除/重置密码/改邮箱时
+/// 调用）。
+///
+/// Redis 侧维护 `media:auth:user:{uid}` 集合（`media_auth_cache_put_redis`
+/// 写入），这里读取成员逐个删除 `media:auth:{token}` 后删除集合。本地
+/// moka 无法按 user 反向枚举，无 Redis 时仅靠 10 秒 TTL 兜底（与
+/// `TOKEN_CACHE` 的 TTL 有界吊销策略一致）。
+pub async fn invalidate_media_auth_user(state: &Arc<AppState>, user_id: i64) {
+    let Some(conn) = state.redis.as_ref() else {
+        return;
+    };
+    let set_key = format!("media:auth:user:{}", user_id);
+    let mut conn = conn.clone();
+    let members: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&set_key)
+        .query_async(&mut conn)
+        .await
+        .unwrap_or_default();
+    let mut pipe = redis::pipe();
+    for token in &members {
+        pipe.cmd("DEL")
+            .arg(format!("media:auth:{}", token))
+            .ignore();
+    }
+    pipe.cmd("DEL").arg(&set_key).ignore();
+    let _ = pipe.query_async::<()>(&mut conn).await;
+}
+
 /// 从共享 Redis 读取 media 鉴权缓存（未配置 Redis 或读取失败则视为 miss）。
 /// 缓存值格式：`{user_id}|{is_admin}|{username}`（username 不含 `|`）。
 async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Option<CachedAuthUser> {
@@ -62,22 +126,32 @@ async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Optio
 }
 
 async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &CachedAuthUser) {
-    if let Some(conn) = state.redis.as_ref() {
-        let key = format!("media:auth:{}", token);
-        let val = format!(
-            "{}|{}|{}",
-            user.user_id,
-            if user.is_admin { 1 } else { 0 },
-            user.username
-        );
-        let mut conn = conn.clone();
-        let _ = redis::cmd("SETEX")
-            .arg(&key)
-            .arg(MEDIA_AUTH_CACHE_TTL_SECS)
-            .arg(&val)
-            .query_async::<()>(&mut conn)
-            .await;
-    }
+    let Some(conn) = state.redis.as_ref() else {
+        return;
+    };
+    let key = format!("media:auth:{}", token);
+    let val = format!(
+        "{}|{}|{}",
+        user.user_id,
+        if user.is_admin { 1 } else { 0 },
+        user.username
+    );
+    // 同时登记 user → tokens 集合，供按用户批量吊销（invalidate_media_auth_user）
+    // 使用；EXPIRE 随每次写入续期，用户持续活跃期间集合不会提前过期。
+    let set_key = format!("media:auth:user:{}", user.user_id);
+    let mut conn = conn.clone();
+    let mut pipe = redis::pipe();
+    pipe.cmd("SETEX")
+        .arg(&key)
+        .arg(MEDIA_AUTH_CACHE_TTL_SECS)
+        .arg(&val)
+        .ignore();
+    pipe.cmd("SADD").arg(&set_key).arg(token).ignore();
+    pipe.cmd("EXPIRE")
+        .arg(&set_key)
+        .arg(MEDIA_AUTH_CACHE_TTL_SECS)
+        .ignore();
+    let _ = pipe.query_async::<()>(&mut conn).await;
 }
 
 /// Media file authentication middleware.
@@ -96,8 +170,9 @@ async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &C
 ///   path-derived video_id. A share token is no longer a global pass.
 /// - M-03: media files that do not resolve to a registered video are denied
 ///   even to logged-in users (orphan files, in-progress `.upload_*` temp
-///   files). The only exemption is `/media/avatars/*`, a public static asset
-///   by design (never video content).
+///   files). The only exemptions are `/media/avatars/*` (public static asset
+///   by design, never video content) and `/media/chat/*` (strict single-layer
+///   filename + must be referenced by a chat_messages row).
 pub async fn media_auth(req: Request, next: Next) -> Response {
     let state = req.extensions().get::<Arc<AppState>>().cloned();
     let Some(state) = state else {
@@ -147,10 +222,29 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                 // user read unregistered files (.upload_* temp files, orphan
                 // files). The only exempt layout is /media/avatars/*, which
                 // is public static media by design.
-                // 聊天室图片：登录即可（无需 playback session/归属校验），
-                // 复用 60s 的视频详情缓存不可用——chat 图片不对应 videos 行。
+                // 聊天室媒体：登录即可，但必须同时满足两个条件：
+                // 1) 路径是严格的公开文件名格式（拒绝目录穿越/.开头/子路径/
+                //    其他扩展名——上传端只会生成 `{uuid}.{ext}` 单层文件名）；
+                // 2) 该路径确实被某条聊天消息引用（防遍历/读取孤儿文件），
+                //    用 60s 进程内缓存吸收 <video>/<img> 的 Range 请求。
                 if is_chat_media_path(path) {
-                    return next.run(req).await;
+                    if !is_valid_chat_media_path(path) {
+                        tracing::warn!(
+                            username = %username,
+                            path = %path,
+                            "media_auth: denying malformed chat media path"
+                        );
+                        return error_response_response(StatusCode::FORBIDDEN, "无权访问该媒体");
+                    }
+                    if chat_media_is_referenced(&state, path).await {
+                        return next.run(req).await;
+                    }
+                    tracing::warn!(
+                        username = %username,
+                        path = %path,
+                        "media_auth: denying unreferenced chat media path"
+                    );
+                    return error_response_response(StatusCode::FORBIDDEN, "无权访问该媒体");
                 }
 
                 let video_item = if let Some(id) = path_video_id {
@@ -527,10 +621,64 @@ fn is_public_static_media_path(path: &str) -> bool {
 }
 
 /// 聊天室图片：对已登录用户（含访客）公开——聊天室内容本质公共；
-/// 未登录仍拒绝（分享 token 用户不涉及聊天）。
+/// 未登录仍拒绝（分享 token 用户不涉及聊天）。仅做前缀识别，真正放行
+/// 还要过 `is_valid_chat_media_path` + `media_is_referenced` 两道校验。
 #[inline]
 fn is_chat_media_path(path: &str) -> bool {
     path.starts_with("/media/chat/")
+}
+
+/// 严格校验 `/media/chat/{basename}.{ext}`：
+/// - basename 为 1-64 位 `[A-Za-z0-9_-]`（拒绝空 basename、`.` 开头、
+///   含 `/` 的子路径、`..` 穿越、查询串等）
+/// - 扩展名仅允许 jpg/jpeg/png/webp/gif/mp4/webm（大小写不敏感）
+///
+/// 上传端（handlers::chat）只会返回这种单层文件名，其余一律视为伪造。
+#[inline]
+fn is_valid_chat_media_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/media/chat/") else {
+        return false;
+    };
+    // 只允许单层文件名：出现任何 '/' 都拒绝（含子目录与 ../ 穿越）
+    if rest.contains('/') {
+        return false;
+    }
+    let Some((stem, ext)) = rest.rsplit_once('.') else {
+        return false;
+    };
+    if stem.is_empty() || stem.len() > 64 {
+        return false;
+    }
+    if !stem
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return false;
+    }
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "mp4" | "webm"
+    )
+}
+
+/// 查询聊天媒体是否被消息引用；正结果进 60s moka 缓存，负结果每次都查库
+/// （避免把“尚未发消息的新上传文件”缓存成未引用）。DB 错误按未引用处理
+/// （拒绝优先），并记录日志。
+async fn chat_media_is_referenced(state: &Arc<AppState>, path: &str) -> bool {
+    if let Some(hit) = chat_media_ref_cache().get(path) {
+        return hit;
+    }
+    match state.repos.chat.media_is_referenced(path).await {
+        Ok(true) => {
+            chat_media_ref_cache().insert(path.to_string(), true);
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            tracing::error!("DB error checking chat media reference: {}", e);
+            false
+        }
+    }
 }
 
 #[inline]
@@ -847,5 +995,46 @@ mod tests {
         assert!(!is_chat_media_path("/media/chat"));
         assert!(!is_chat_media_path("/media/chatfoo/x.jpg"));
         assert!(!is_chat_media_path("/media/videos/x.jpg"));
+    }
+
+    #[test]
+    fn chat_media_path_strict_validation() {
+        // 合法：单层 1-64 位 [A-Za-z0-9_-] basename + 白名单扩展名
+        for ok in [
+            "/media/chat/abc123.jpg",
+            "/media/chat/clip-ab12.webm",
+            "/media/chat/a_b-c.mp4",
+            "/media/chat/UPPER.PNG",
+            "/media/chat/x.gif",
+            "/media/chat/x.jpeg",
+        ] {
+            assert!(is_valid_chat_media_path(ok), "{ok} should be valid");
+        }
+
+        // 非法：空 basename / 以 . 开头 / 子路径 / .. 穿越 / 其他扩展名
+        for bad in [
+            "/media/chat/",
+            "/media/chat/.hidden.jpg",
+            "/media/chat/.tmp-42.webp",
+            "/media/chat/sub/x.jpg",
+            "/media/chat/../secret.png",
+            "/media/chat/a/../../b.jpg",
+            "/media/chat/abc123.svg",
+            "/media/chat/abc123",
+            "/media/chat/abc123.jpg/",
+            "/media/chat/abc123.jpg?x=1",
+            "/media/chat/abc 123.jpg",
+            "/media/chat/abc%2f123.jpg",
+            "/media/chatfoo/x.jpg",
+            "/media/videos/x.jpg",
+        ] {
+            assert!(!is_valid_chat_media_path(bad), "{bad} should be invalid");
+        }
+
+        // 超过 64 字节的 basename 拒绝
+        let long = format!("/media/chat/{}.jpg", "a".repeat(65));
+        assert!(!is_valid_chat_media_path(&long));
+        let boundary = format!("/media/chat/{}.jpg", "a".repeat(64));
+        assert!(is_valid_chat_media_path(&boundary));
     }
 }

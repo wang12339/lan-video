@@ -1,20 +1,21 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Query parameter for list endpoints (e.g. playback history limit).
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ListQuery {
     pub limit: Option<i64>,
 }
 
 /// Pagination query parameters shared by favorites and playback history.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct PaginationQuery {
     pub page: Option<i64>,
     pub size: Option<i64>,
 }
 
 /// Paginated response wrapper for `RecentWatchItem` lists.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PagedRecentWatchResponse {
     pub items: Vec<RecentWatchItem>,
     pub total: i64,
@@ -23,13 +24,13 @@ pub struct PagedRecentWatchResponse {
 }
 
 /// Request body for playback session start/heartbeat/stop.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SessionRequest {
     #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]
     pub video_id: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PlaybackHistoryRequest {
     #[serde(deserialize_with = "crate::util::hashid_serde::deserialize_id")]
     pub video_id: i64,
@@ -37,7 +38,7 @@ pub struct PlaybackHistoryRequest {
     pub duration_ms: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PlaybackHistoryResponse {
     #[serde(
         rename = "videoId",
@@ -50,7 +51,7 @@ pub struct PlaybackHistoryResponse {
     pub duration_ms: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RecentWatchItem {
     #[serde(
         rename = "videoId",

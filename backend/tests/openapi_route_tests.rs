@@ -55,11 +55,6 @@ const INTENTIONALLY_OMITTED: &[IntentionallyOmitted] = &[
         path_prefix: "/media",
         reason: "媒体文件流（ServeDir + media_auth，非 REST API）",
     },
-    IntentionallyOmitted {
-        method: "GET",
-        path_prefix: "/docs",
-        reason: "OpenAPI 文档页面自身（/docs、/docs/openapi.json）",
-    },
 ];
 
 /// app.rs 路由注册清单（镜像，须随 app.rs 同步维护）。
@@ -131,6 +126,7 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/videos/search/suggest"),
         ("GET", "/videos/{id}"),
         ("GET", "/videos/{id}/variants"),
+        ("GET", "/videos/{id}/hls"),
         ("GET", "/videos/{id}/danmaku"),
         ("POST", "/videos/{id}/danmaku"),
         ("POST", "/videos/{id}/view"),
@@ -205,6 +201,9 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/admin/videos/{id}/transcode/status"),
         ("DELETE", "/admin/videos/{id}/transcode/{resolution}"),
         ("POST", "/admin/videos/{id}/transcode/cancel"),
+        ("POST", "/admin/videos/{id}/hls"),
+        ("GET", "/admin/videos/{id}/hls/status"),
+        ("GET", "/admin/tags"),
         ("POST", "/admin/tags"),
         ("PUT", "/admin/tags/{id}"),
         ("DELETE", "/admin/tags/{id}"),
@@ -219,6 +218,8 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("GET", "/admin/system"),
         ("GET", "/admin/logs"),
         ("DELETE", "/admin/logs"),
+        ("GET", "/admin/performance/metrics"),
+        ("POST", "/admin/performance/reset"),
     ] {
         routes.push((m, p));
     }
@@ -419,6 +420,16 @@ fn openapi_spec_is_parseable() {
     assert!(
         spec.get("paths").and_then(|p| p.as_object()).is_some(),
         "spec 必须包含 paths 对象"
+    );
+}
+
+/// spec() 使用进程级缓存：连续调用必须返回同一实例，而不是每次重建
+/// 约 3800 行的 JSON 树。
+#[test]
+fn openapi_spec_is_cached() {
+    assert!(
+        std::ptr::eq(openapi::spec(), openapi::spec()),
+        "spec() 必须返回缓存的同一实例"
     );
 }
 

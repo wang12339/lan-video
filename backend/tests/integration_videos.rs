@@ -480,11 +480,16 @@ async fn create_test_video(state: &atmos_video_backend::state::AppState, prefix:
         .expect("create test video")
 }
 
-/// 本地开发库通常没有安装 zhparser 扩展，而迁移 021 的触发器在每次
-/// INSERT/UPDATE videos 时调用 to_tsvector('chinese', ...)，会报
-/// "text search configuration chinese does not exist"。幂等地从内置 simple
-/// 配置复制一个 chinese 配置即可让测试运行；生产库装有 zhparser，此调用
-/// 是 no-op。DO 块保证重复执行安全（PG 不支持 CREATE TS CONFIG IF NOT EXISTS，
+/// 幂等地创建一个 `chinese` 占位文本搜索配置（COPY = simple）。
+///
+/// 历史背景：迁移 021 的触发器曾调用 `to_tsvector('chinese', ...)`，在无
+/// zhparser 的库里会导致 INSERT/UPDATE videos 报 "text search configuration
+/// chinese does not exist"；039 已把触发器改回 `simple`，此占位配置如今主要
+/// 是为了兼容遗留调用。注意它使用 default parser 而非 zhparser，而
+/// search_service 的运行时探测要求 parser = zhparser，因此它不会触发原生
+/// 中文分词分支——中文仍走 pg_trgm（见
+/// test_video_search_chinese_uses_trigram_branch）。
+/// DO 块保证重复执行安全（PG 不支持 CREATE TS CONFIG IF NOT EXISTS，
 /// 且已存在时抛的是 unique_violation 而非 duplicate_object）。
 async fn ensure_chinese_ts_config(pool: &sqlx::PgPool) {
     sqlx::raw_sql(
@@ -1001,6 +1006,96 @@ async fn test_video_search_edge_queries() {
     cleanup_test_video(state.repos.video.pool(), id).await;
 }
 
+// ── Search: 中文（CJK）走 pg_trgm 分支 ──
+
+/// 'simple' 词典不会对中文分词，中文查询必须走 pg_trgm 的 ILIKE 模糊
+/// 匹配分支才能命中；同时 LIKE 通配符（%）必须按字面处理。
+#[tokio::test]
+async fn test_video_search_chinese_uses_trigram_branch() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    ensure_chinese_ts_config(state.repos.video.pool()).await;
+    // 进程内唯一的中文关键词，避免与其它测试数据串扰
+    let kw = format!("星河{}", std::process::id());
+
+    // 标题命中
+    let title_id = state
+        .services
+        .video
+        .add_external_video(
+            &format!("探索{}之旅", kw),
+            Some("中文搜索测试"),
+            Some("cntest"),
+            "https://example.com/cn_title.mp4",
+            None,
+            None,
+        )
+        .await
+        .expect("add title video");
+
+    // 仅 description 命中（验证 description ILIKE 分支）
+    let desc_id = state
+        .services
+        .video
+        .add_external_video(
+            &format!("无关标题 {}", unique_username("cn_desc")),
+            Some(&format!("描述里也提到{}", kw)),
+            Some("cntest"),
+            "https://example.com/cn_desc.mp4",
+            None,
+            None,
+        )
+        .await
+        .expect("add desc video");
+
+    let (results, total) = state
+        .services
+        .search
+        .full_text_search(None, &kw, 0, 10)
+        .await
+        .expect("中文搜索不应报错");
+    assert!(total >= 2, "中文关键词应命中标题与描述，total={total}");
+    let ids: Vec<i64> = results.iter().map(|r| r.video_id).collect();
+    assert!(ids.contains(&title_id), "标题含关键词的视频应命中: {ids:?}");
+    assert!(ids.contains(&desc_id), "描述含关键词的视频应命中: {ids:?}");
+    for r in &results {
+        if let Some(h) = &r.headline {
+            assert!(
+                !h.contains("<mark>") && !h.contains("</mark>"),
+                "headline 不得残留标记: {h}"
+            );
+        }
+    }
+
+    // CJK + LIKE 通配符：% 必须按字面处理，否则 "星%河<pid>" 会误命中
+    let (wild, _) = state
+        .services
+        .search
+        .full_text_search(None, &format!("星%河{}", std::process::id()), 0, 10)
+        .await
+        .expect("含通配符的中文查询不应报错");
+    assert!(
+        !wild.iter().any(|r| r.video_id == title_id),
+        "LIKE 通配符必须被转义，不得命中不含 % 的标题"
+    );
+
+    // 空查询仍然短路（不回归）
+    let (empty, empty_total) = state
+        .services
+        .search
+        .full_text_search(None, "   ", 0, 10)
+        .await
+        .expect("空查询");
+    assert!(empty.is_empty() && empty_total == 0);
+
+    cleanup_test_video(state.repos.video.pool(), title_id).await;
+    cleanup_test_video(state.repos.video.pool(), desc_id).await;
+}
+
 // ── Detail: nonexistent / invalid ids ──
 
 #[tokio::test]
@@ -1114,6 +1209,85 @@ async fn test_increment_views_multiple_and_missing() {
         .expect("increment on missing id should be a no-op");
 
     cleanup_test_video(state.repos.video.pool(), video_id).await;
+}
+
+// ── Trending score recompute ──
+
+/// 迁移 037 的触发器只在 INSERT/UPDATE views/created_at 时计算一次
+/// trending_score，分数依赖 CURRENT_TIMESTAMP 会随时间失效；
+/// `recompute_trending_scores` 必须能按 views 重算并按分数排序。
+#[tokio::test]
+async fn test_recompute_trending_scores_ranks_by_views() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    ensure_chinese_ts_config(state.repos.video.pool()).await;
+    let low = create_test_video(&state, "trend_low").await;
+    let high = create_test_video(&state, "trend_high").await;
+    let pool = state.repos.video.pool();
+
+    // 让两条视频进入 trending 候选（source_type = local_video），
+    // views 拉开差距；UPDATE OF views 会先触发 037 的触发器算一次分数。
+    for (id, views) in [(low, 10_i64), (high, 100_000_i64)] {
+        sqlx::query("UPDATE videos SET source_type = 'local_video', views = $1 WHERE id = $2")
+            .bind(views)
+            .bind(id)
+            .execute(pool)
+            .await
+            .expect("set views");
+    }
+
+    // 人为清零分数，证明 recompute 真的重算而不是沿用触发器结果
+    sqlx::query("UPDATE videos SET trending_score = 0 WHERE id = ANY($1)")
+        .bind(vec![low, high])
+        .execute(pool)
+        .await
+        .expect("zero scores");
+
+    let affected = state
+        .repos
+        .video
+        .recompute_trending_scores()
+        .await
+        .expect("recompute trending scores");
+    assert!(affected >= 2, "应至少重算两条测试视频，实际 {affected}");
+
+    // 排名：高播放量在前且分数严格更大
+    let ranked: Vec<(i64, f64)> = sqlx::query_as(
+        "SELECT id, trending_score FROM videos WHERE id = ANY($1) \
+         ORDER BY trending_score DESC, id DESC",
+    )
+    .bind(vec![low, high])
+    .fetch_all(pool)
+    .await
+    .expect("read recomputed scores");
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].0, high, "高播放量视频应排在前面");
+    assert!(
+        ranked[0].1 > ranked[1].1,
+        "重算后高分应严格大于低分: {:?}",
+        ranked
+    );
+
+    // 消费路径：recommendation 的 ORDER BY trending_score DESC
+    let (items, _) = state
+        .services
+        .recommendation
+        .get_trending_videos(None, 0, 100)
+        .await
+        .expect("get trending videos");
+    let pos_high = items.iter().position(|v| v.id == high);
+    let pos_low = items.iter().position(|v| v.id == low);
+    match (pos_high, pos_low) {
+        (Some(h), Some(l)) => assert!(h < l, "trending 列表高播放量应在前: high={h}, low={l}"),
+        _ => assert!(pos_high.is_some(), "高播放量视频应出现在 trending 列表中"),
+    }
+
+    cleanup_test_video(pool, low).await;
+    cleanup_test_video(pool, high).await;
 }
 
 #[tokio::test]

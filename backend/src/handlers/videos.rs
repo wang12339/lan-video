@@ -24,6 +24,24 @@ use crate::models::danmaku::{DanmakuListResponse, SendDanmakuRequest, SendDanmak
 
 const MAX_SEARCH_QUERY_LEN: usize = 200;
 
+#[utoipa::path(
+    get,
+    path = "/videos",
+    tag = "videos",
+    summary = "List videos (paginated)",
+    description = "Retrieve a paginated list of videos with optional filters. Results are cached for 10 seconds.",
+    security(("bearerAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (0-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-1000)"),
+        ("query" = Option<String>, Query, description = "Search query — matches title and category (case-insensitive)"),
+        ("type" = Option<String>, Query, description = "Filter by source_type (prefix with ! to exclude, e.g. '!external')"),
+        ("category" = Option<String>, Query, description = "Filter by category name"),
+        ("uploader_id" = Option<String>, Query, description = "Filter by uploader ID (admin only)"),
+        ("sort" = Option<String>, Query, description = "Sort order")
+    ),
+    responses((status = 200, description = "Paginated video list", body = PagedVideoResponse))
+)]
 pub async fn list_videos(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -118,6 +136,19 @@ pub async fn list_videos(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}",
+    tag = "videos",
+    summary = "Get single video details",
+    description = "Retrieve details for a single video by ID",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 200, description = "Video details", body = VideoItem),
+        (status = 404, description = "视频不存在")
+    )
+)]
 /// GET /videos/{id}
 pub async fn get_video(
     State(state): State<Arc<AppState>>,
@@ -160,6 +191,16 @@ fn require_video_owner(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/variants",
+    tag = "videos",
+    summary = "List transcoded variants for a video",
+    description = "返回视频可用的转码分片（分辨率、播放地址、大小等）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "Variant list", body = [VideoVariantResponse]))
+)]
 /// GET /videos/{id}/variants — available transcoded resolutions for playback
 pub async fn get_video_variants(
     State(state): State<Arc<AppState>>,
@@ -203,6 +244,16 @@ pub async fn get_video_variants(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/hls",
+    tag = "videos",
+    summary = "Get HLS playback status",
+    description = "返回视频 HLS 主播放列表是否已生成；未生成时提示先转码",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "HLS availability", body = serde_json::Value))
+)]
 pub async fn get_hls_playlist(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -229,6 +280,16 @@ pub async fn get_hls_playlist(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/like",
+    tag = "videos",
+    summary = "Toggle like",
+    description = "Toggle like status for the current user on this video",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "New like status", body = serde_json::Value))
+)]
 /// POST /videos/{id}/like
 pub async fn toggle_like(
     State(state): State<Arc<AppState>>,
@@ -247,6 +308,16 @@ pub async fn toggle_like(
     Ok(Json(serde_json::json!({"liked": liked})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/like",
+    tag = "videos",
+    summary = "Get like status",
+    description = "Check if the current user has liked this video",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "Like status", body = serde_json::Value))
+)]
 /// GET /videos/{id}/like
 pub async fn get_like_status(
     State(state): State<Arc<AppState>>,
@@ -264,6 +335,16 @@ pub async fn get_like_status(
     Ok(Json(serde_json::json!({"liked": liked})))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/favorite",
+    tag = "videos",
+    summary = "Toggle favorite",
+    description = "Toggle favorite status for the current user on this video",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "New favorite status", body = serde_json::Value))
+)]
 /// POST /videos/{id}/favorite
 pub async fn toggle_favorite(
     State(state): State<Arc<AppState>>,
@@ -282,6 +363,16 @@ pub async fn toggle_favorite(
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/favorite",
+    tag = "videos",
+    summary = "Get favorite status",
+    description = "Check if the current user has favorited this video",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses((status = 200, description = "Favorite status", body = serde_json::Value))
+)]
 /// GET /videos/{id}/favorite
 pub async fn get_favorite_status(
     State(state): State<Arc<AppState>>,
@@ -299,6 +390,20 @@ pub async fn get_favorite_status(
     Ok(Json(serde_json::json!({"favorited": favorited})))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/burn",
+    tag = "videos",
+    summary = "Burn video or image after view",
+    description = "阅后即焚（平台全局行为）：永久删除该视频/图片（物理文件 + 数据库记录）。视频要求调用者播放进度 ≥ 90%，未完整观看返回 403；图片无进度要求，仅上传者本人或管理员可焚毁。",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 204, description = "Video permanently deleted"),
+        (status = 403, description = "Caller has not fully watched the video"),
+        (status = 404, description = "Video not found")
+    )
+)]
 /// POST /videos/{id}/burn — 阅后即焚：永久删除视频或图片
 ///
 /// 平台全局行为：适用于所有视频/图片、所有用户（含上传者与存量内容）。
@@ -331,6 +436,19 @@ pub async fn burn_video(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/favorites",
+    tag = "videos",
+    summary = "List current user's favorites (paginated)",
+    description = "返回当前用户收藏的视频列表（分页）",
+    security(("bearerAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (1-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100)")
+    ),
+    responses((status = 200, description = "Paginated favorite video list", body = serde_json::Value))
+)]
 /// GET /videos/favorites
 pub async fn list_favorites(
     State(state): State<Arc<AppState>>,
@@ -356,6 +474,19 @@ pub async fn list_favorites(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/view",
+    tag = "videos",
+    summary = "Increment view count",
+    description = "Increment the view counter for a video. Rate-limited to 30 views per IP per 60 seconds per video.",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 200, description = "View recorded", body = serde_json::Value),
+        (status = 429, description = "Rate limited")
+    )
+)]
 /// POST /videos/{id}/view
 pub async fn increment_views(
     State(state): State<Arc<AppState>>,
@@ -385,6 +516,23 @@ pub async fn increment_views(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/search",
+    tag = "videos",
+    summary = "Full-text search videos",
+    description = "Search videos using PostgreSQL full-text search with ranking. Supports Chinese tokenization.",
+    security(("bearerAuth" = [])),
+    params(
+        ("q" = String, Query, description = "Search query"),
+        ("page" = Option<i64>, Query, description = "Page number (0-indexed)"),
+        ("size" = Option<i64>, Query, description = "Results per page")
+    ),
+    responses(
+        (status = 200, description = "Search results", body = SearchResponse),
+        (status = 400, description = "Bad request")
+    )
+)]
 pub async fn search_videos(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -439,6 +587,23 @@ pub async fn search_videos(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/search/suggest",
+    tag = "videos",
+    summary = "Search suggestions",
+    description = "Get search suggestions based on partial query",
+    security(("bearerAuth" = [])),
+    params(
+        ("q" = String, Query, description = "Partial search query"),
+        ("page" = Option<i64>, Query, description = "Page number"),
+        ("size" = Option<i64>, Query, description = "Max suggestions")
+    ),
+    responses(
+        (status = 200, description = "Search suggestions", body = [String]),
+        (status = 400, description = "Bad request")
+    )
+)]
 /// GET /videos/search/suggest
 pub async fn search_suggest(
     State(state): State<Arc<AppState>>,
@@ -469,6 +634,19 @@ pub async fn search_suggest(
     Ok(Json(suggestions))
 }
 
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/danmaku",
+    tag = "videos",
+    summary = "List danmaku for a video",
+    description = "返回视频的全部弹幕（按出现时间升序）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 200, description = "Danmaku list", body = serde_json::Value),
+        (status = 400, description = "Bad request")
+    )
+)]
 /// GET /videos/{id}/danmaku
 ///
 /// 返回某视频的全部弹幕（按出现时间升序）。该路由位于统一的 `bearer_auth`
@@ -490,6 +668,20 @@ pub async fn list_danmaku(
     Ok(Json(DanmakuListResponse { items }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/danmaku",
+    tag = "videos",
+    summary = "Send a danmaku",
+    description = "发送一条弹幕（需登录）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID")),
+    responses(
+        (status = 201, description = "Danmaku created", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 404, description = "视频不存在")
+    )
+)]
 /// POST /videos/{id}/danmaku
 ///
 /// 发送一条弹幕。调用方需登录（由 `bearer_auth` 保证 `AuthUser` 存在）。

@@ -320,6 +320,8 @@
 .video-grid.list-view .video-card {
   display: flex;
   flex-direction: row;
+  /* 列表视图卡片高度约 135px，占位高度随之调整，避免滚动条跳动 */
+  contain-intrinsic-size: auto 150px;
 }
 
 .video-grid.list-view .thumb-wrap {
@@ -345,6 +347,13 @@
 }
 
 .video-card {
+  /* 长列表性能：视口外的卡片跳过渲染（content-visibility: auto）；
+     contain-intrinsic-size 提供估算占位高度，防止滚动条因高度未知而跳动。
+     占位值按网格视图最大列宽下的卡片高度估算（缩略图 16:9 + 信息区）。
+     注：网格为响应式 auto-fill 多列、卡片高度随标题换行变化，
+     不适用固定行高的 useVirtualList，故采用该方案而非虚拟滚动。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
   contain: layout style paint;
 }
 

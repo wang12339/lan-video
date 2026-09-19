@@ -44,6 +44,9 @@ pub struct AppConfig {
     pub gateway_client_id: String,
     pub gateway_client_secret: String,
     pub gateway_redirect_uri: String,
+    /// Prometheus /metrics* 专用只读令牌（`METRICS_TOKEN`）。
+    /// 为空时这两个端点直接 404（默认关闭），避免指标裸奔。
+    pub metrics_token: String,
 }
 
 impl fmt::Debug for AppConfig {
@@ -175,6 +178,7 @@ impl AppConfig {
         let smtp_from = std::env::var("SMTP_FROM").unwrap_or_default();
 
         let redis_url = std::env::var("REDIS_URL").unwrap_or_default();
+        let metrics_token = std::env::var("METRICS_TOKEN").unwrap_or_default();
 
         // ADMIN_IP_WHITELIST: 逗号分隔的 IP 列表（opt-in）。为空则不对
         // /admin/* 做来源限制；非空时仅白名单内的 IP 可访问管理接口。
@@ -234,6 +238,14 @@ impl AppConfig {
                 "HASHID_SALT 未安全配置（APP_ENV={app_env}）：必须设置至少 32 字符的随机盐，\
                  不能为空、不能使用内置默认值 atmos-video-default-salt 或占位符 \
                  change-me-to-a-long-random-string。生成命令：openssl rand -hex 32"
+            );
+        }
+        // Redis 为可选依赖：未配置时限流/缓存退化为进程内实现。生产多实例
+        // 部署下各实例状态不共享，限流可被绕过，仅告警不阻断启动。
+        if !is_dev_env && redis_url.trim().is_empty() {
+            tracing::warn!(
+                "REDIS_URL 未配置（APP_ENV={app_env}）：多实例部署时限流/缓存将退化为\
+                 进程内实现，实例间不共享状态；建议生产环境配置 Redis。"
             );
         }
         let transcode_timeout_secs = std::env::var("TRANSCODE_TIMEOUT_SECS")
@@ -313,6 +325,7 @@ impl AppConfig {
             gateway_client_id,
             gateway_client_secret,
             gateway_redirect_uri,
+            metrics_token,
         }
     }
 }
@@ -502,6 +515,30 @@ mod tests {
         restore_env("HASHID_SALT", saved_hashid_salt);
     }
 
+    /// 生产环境未配置 REDIS_URL 时仅告警，不 panic（Redis 为可选依赖）。
+    #[test]
+    fn from_env_production_without_redis_only_warns() {
+        let _env_guard = lock_from_env_env();
+        let saved_app_env = std::env::var("APP_ENV").ok();
+        let saved_public_url = std::env::var("PUBLIC_URL").ok();
+        let saved_hashid_salt = std::env::var("HASHID_SALT").ok();
+        let saved_redis_url = std::env::var("REDIS_URL").ok();
+
+        std::env::set_var("APP_ENV", "production");
+        std::env::set_var("PUBLIC_URL", "https://video.example.com");
+        std::env::set_var("HASHID_SALT", "0123456789abcdef0123456789abcdef");
+        std::env::remove_var("REDIS_URL");
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(AppConfig::from_env));
+        let config = result.expect("生产环境缺失 REDIS_URL 应仅告警而非 panic");
+        assert!(config.redis_url.is_empty());
+
+        restore_env("APP_ENV", saved_app_env);
+        restore_env("PUBLIC_URL", saved_public_url);
+        restore_env("HASHID_SALT", saved_hashid_salt);
+        restore_env("REDIS_URL", saved_redis_url);
+    }
+
     #[test]
     fn debug_impl_redacts_database_url() {
         let config = AppConfig {
@@ -543,6 +580,7 @@ mod tests {
             gateway_client_id: String::new(),
             gateway_client_secret: String::new(),
             gateway_redirect_uri: String::new(),
+            metrics_token: String::new(),
         };
         let debug = format!("{:?}", config);
         assert!(!debug.contains("secret123"), "密码必须被脱敏");
@@ -591,6 +629,7 @@ mod tests {
             gateway_client_id: String::new(),
             gateway_client_secret: String::new(),
             gateway_redirect_uri: String::new(),
+            metrics_token: String::new(),
         };
         assert!(!config.registration_enabled());
         config.set_registration_enabled(true);

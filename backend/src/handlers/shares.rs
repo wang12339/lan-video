@@ -27,6 +27,23 @@ fn build_share_url(config: &crate::config::AppConfig, token: &str) -> String {
 const SHARE_COOKIE_MAX_AGE_SECS: i64 = 31_536_000;
 
 /// POST /videos/{id}/share
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/share",
+    tag = "shares",
+    summary = "Create a share link for a video",
+    description = "为视频创建分享链接，返回一次性展示的分享令牌（token 仅创建时返回）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID (hashid or numeric)")),
+    request_body = CreateShareRequest,
+    responses(
+        (status = 201, description = "Share link created", body = CreateShareResponse),
+        (status = 400, description = "Invalid video ID or expiry"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Not the video owner"),
+        (status = 404, description = "Video not found")
+    )
+)]
 pub async fn create_share_link(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -94,6 +111,20 @@ pub async fn create_share_link(
 }
 
 /// GET /share/{token}
+#[utoipa::path(
+    get,
+    path = "/share/{token}",
+    tag = "shares",
+    summary = "Resolve a shared video",
+    description = "Resolve a share token to the shared video. Public — no auth required, but rate-limited per IP to prevent token enumeration. On success a share_token HttpOnly cookie is set so media requests authenticate.",
+    params(("token" = String, Path, description = "Un-guessable share token")),
+    responses(
+        (status = 200, description = "Shared video details", body = serde_json::Value),
+        (status = 400, description = "Malformed share token"),
+        (status = 404, description = "Share link invalid or expired"),
+        (status = 429, description = "Rate limited")
+    )
+)]
 pub async fn get_share_video(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -164,6 +195,18 @@ pub async fn get_share_video(
 }
 
 /// GET /auth/user/shares
+#[utoipa::path(
+    get,
+    path = "/auth/user/shares",
+    tag = "shares",
+    summary = "List current user's share links",
+    description = "返回当前用户创建的全部分享链接及其有效状态",
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Share link list", body = [ShareListItem]),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn list_my_shares(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -196,6 +239,25 @@ pub async fn list_my_shares(
 }
 
 /// DELETE /videos/{id}/share/{share_id}
+#[utoipa::path(
+    delete,
+    path = "/videos/{id}/share/{share_id}",
+    tag = "shares",
+    summary = "Delete a share link",
+    description = "删除指定分享链接（创建者本人或管理员）",
+    security(("bearerAuth" = [])),
+    params(
+        ("id" = String, Path, description = "Video ID (hashid or numeric)"),
+        ("share_id" = String, Path, description = "分享链接 ID (hashid 或数字)")
+    ),
+    responses(
+        (status = 200, description = "Share link deleted", body = serde_json::Value),
+        (status = 400, description = "Invalid video or share ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Share link not found")
+    )
+)]
 pub async fn delete_share_link(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -226,6 +288,21 @@ pub async fn delete_share_link(
 }
 
 /// DELETE /auth/user/shares/{share_id}
+#[utoipa::path(
+    delete,
+    path = "/auth/user/shares/{share_id}",
+    tag = "shares",
+    summary = "Revoke one of current user's share links",
+    description = "撤销当前用户创建的指定分享链接",
+    security(("bearerAuth" = [])),
+    params(("share_id" = String, Path, description = "分享链接 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Share link revoked", body = serde_json::Value),
+        (status = 400, description = "Invalid share ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Share link not found")
+    )
+)]
 pub async fn revoke_my_share(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

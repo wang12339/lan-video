@@ -31,6 +31,22 @@ pub struct ChatHistoryQuery {
 }
 
 /// GET /chat/messages — 历史分页（id 倒序游标，前端反转拼接）
+#[utoipa::path(
+    get,
+    path = "/chat/messages",
+    tag = "chat",
+    summary = "Chat history (paged, newest first)",
+    description = "公共聊天室历史分页。按消息 id 倒序游标翻页（before_id），前端反转拼接。",
+    security(("bearerAuth" = [])),
+    params(
+        ("before_id" = Option<i64>, Query, description = "游标：返回 id 小于该值的消息"),
+        ("limit" = Option<i64>, Query, description = "Page size (default 50, max 100)")
+    ),
+    responses(
+        (status = 200, description = "Chat history page", body = ChatHistoryResponse),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn get_chat_history(
     State(state): State<Arc<AppState>>,
     Query(q): Query<ChatHistoryQuery>,
@@ -49,6 +65,18 @@ pub async fn get_chat_history(
 /// - 客户端 → 服务端：`{"type":"msg","content":"..."}`
 /// - 服务端 → 客户端：`{"type":"message",...}` / `{"type":"online",...}` /
 ///   `{"type":"deleted",...}` / `{"type":"error","message":"..."}`
+#[utoipa::path(
+    get,
+    path = "/ws/chat",
+    tag = "chat",
+    summary = "Public chat room (WebSocket)",
+    description = "公共聊天室 WebSocket 升级端点（需登录，role ≥ 1，访客可参与）。JSON 文本帧协议——客户端 → 服务端：{\"type\":\"msg\",\"content\":\"...\"}（≤500 字符）或 {\"type\":\"img\",\"imageUrl\":\"...\"} 或 {\"type\":\"video\",\"videoUrl\":\"...\"}；服务端 → 客户端：{\"type\":\"message\",...}、{\"type\":\"online\",...}、{\"type\":\"deleted\",...}、{\"type\":\"cleared\"}、{\"type\":\"error\",\"message\":\"...\"}。文本/图片/视频共用发言限速 5 条/10 秒。",
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 101, description = "Switching Protocols — WebSocket upgrade"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn ws_chat(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -270,6 +298,21 @@ async fn handle_client_text(chat: &ChatService, user: &AuthUser, text: &str) -> 
 ///
 /// ≤10MB，magic bytes 校验（jpg/png/webp/gif），存 `media_root/chat/{uuid}.{ext}`，
 /// 返回 `/media/chat/{file}`。计入发言限速（发图也占一条消息额度）。
+#[utoipa::path(
+    post,
+    path = "/chat/image",
+    tag = "chat",
+    summary = "Upload a chat image",
+    description = "聊天室图片上传。multipart 字段 file，≤10MB，magic bytes 校验（JPG/PNG/WebP/GIF）。返回 /media/chat/{file}。计入发言限速（5 张/10 秒）。",
+    security(("bearerAuth" = [])),
+    request_body(content_type = "multipart/form-data", content = serde_json::Value),
+    responses(
+        (status = 200, description = "Upload succeeded", body = serde_json::Value),
+        (status = 400, description = "Invalid or oversized image"),
+        (status = 401, description = "Unauthorized"),
+        (status = 429, description = "Rate limited")
+    )
+)]
 pub async fn upload_chat_image(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -335,6 +378,21 @@ pub async fn upload_chat_image(
 /// 非 WebM 统一转为浏览器可播的 H.264/AAC MP4（H.264 源仅 remux，不重编码）；
 /// 输出存 `media_root/chat/{uuid}.{mp4|webm}`，返回 `/media/chat/{file}`。
 /// 计入发言限速（发视频也占一条消息额度）。
+#[utoipa::path(
+    post,
+    path = "/chat/video",
+    tag = "chat",
+    summary = "Upload a chat video",
+    description = "聊天室视频上传。multipart 字段 file，≤50MB，时长 ≤5 分钟，接受 MP4/MOV/M4V/WebM/MKV/AVI（magic bytes 校验），非 WebM 转 H.264/AAC MP4。返回 /media/chat/{file}。计入发言限速（5 条/10 秒）。",
+    security(("bearerAuth" = [])),
+    request_body(content_type = "multipart/form-data", content = serde_json::Value),
+    responses(
+        (status = 200, description = "Upload succeeded", body = serde_json::Value),
+        (status = 400, description = "Invalid or oversized video"),
+        (status = 401, description = "Unauthorized"),
+        (status = 429, description = "Rate limited")
+    )
+)]
 pub async fn upload_chat_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -488,6 +546,22 @@ pub async fn upload_chat_video(
 }
 
 /// DELETE /admin/chat/messages/{id} — 管理员删言（并广播让在线客户端移除）
+#[utoipa::path(
+    delete,
+    path = "/admin/chat/messages/{id}",
+    tag = "chat",
+    summary = "Delete a chat message (admin)",
+    description = "管理员删除单条聊天消息并广播 deleted 事件让在线客户端移除。",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(("id" = i64, Path, description = "消息 ID")),
+    responses(
+        (status = 200, description = "Deleted", body = serde_json::Value),
+        (status = 400, description = "Invalid message ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Message not found")
+    )
+)]
 pub async fn admin_delete_chat_message(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
@@ -506,6 +580,19 @@ pub async fn admin_delete_chat_message(
 }
 
 /// GET /admin/chat/stats — 聊天室消息统计（管理后台）
+#[utoipa::path(
+    get,
+    path = "/admin/chat/stats",
+    tag = "chat",
+    summary = "Chat message stats (admin)",
+    description = "本租户聊天室消息总数。",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Message count", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn admin_chat_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -517,6 +604,19 @@ pub async fn admin_chat_stats(
 }
 
 /// DELETE /admin/chat/messages — 管理员清空聊天室（并广播 Cleared 让在线客户端清屏）
+#[utoipa::path(
+    delete,
+    path = "/admin/chat/messages",
+    tag = "chat",
+    summary = "Clear all chat messages (admin)",
+    description = "清空聊天室全部消息，并广播 cleared 事件让所有在线客户端立即清空消息列表。",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Cleared", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn admin_clear_chat_messages(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {

@@ -120,9 +120,8 @@ impl TagRepository {
         if tag_ids.is_empty() {
             return Ok(());
         }
-        let mut builder = sqlx::QueryBuilder::new(
-            "WITH inserted AS (INSERT INTO video_tags (video_id, tag_id) VALUES ",
-        );
+        let mut builder =
+            sqlx::QueryBuilder::new("WITH inserted AS (INSERT INTO video_tags (video_id, tag_id) ");
         builder.push_values(tag_ids, |mut b, &tag_id| {
             b.push_bind(video_id).push_bind(tag_id);
         });

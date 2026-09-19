@@ -279,6 +279,8 @@
     "verifySent": "验证邮件已发送",
     "sendFailed": "发送失败",
     "emailUpdated": "邮箱已更新，请发送验证邮件",
+    "emailPasswordPrompt": "当前密码",
+    "emailPasswordRequired": "请输入当前密码",
     "deletePlaylistTitle": "删除播放列表",
     "deletePlaylistConfirm": "确定要删除播放列表「{{name}}」吗？",
     "playlistNamePlaceholder": "播放列表名称",

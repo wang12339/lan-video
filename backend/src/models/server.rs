@@ -1,12 +1,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ServerInfo {
     pub version: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct HealthCheckResponse {
     pub status: String,
     pub version: String,
@@ -15,21 +16,21 @@ pub struct HealthCheckResponse {
     pub system_info: SystemInfo,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CheckStatus {
     pub status: String,
     pub message: Option<String>,
     pub response_time_ms: Option<u64>,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, ToSchema)]
 pub struct SystemInfo {
     pub uptime_secs: u64,
     pub disk_usage: DiskUsage,
     pub memory_usage: Option<MemoryUsage>,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, ToSchema)]
 pub struct DiskUsage {
     pub total_bytes: u64,
     pub used_bytes: u64,
@@ -37,7 +38,7 @@ pub struct DiskUsage {
     pub usage_percent: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MemoryUsage {
     pub total_bytes: u64,
     pub used_bytes: u64,
@@ -45,7 +46,7 @@ pub struct MemoryUsage {
     pub usage_percent: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MetricsResponse {
     pub uptime_secs: u64,
     pub http_requests_total: u64,

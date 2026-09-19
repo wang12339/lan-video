@@ -1,9 +1,9 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, type Mock } from 'vitest'
 import { cleanupVideoElement, safeGetDuration } from '../utils/videoUtils'
 
 class MockMediaStream {
-  private tracks: Array<{ stop: vi.Mock }> = []
-  constructor(tracks: Array<{ stop: vi.Mock }> = []) {
+  private tracks: Array<{ stop: Mock }> = []
+  constructor(tracks: Array<{ stop: Mock }> = []) {
     this.tracks = tracks
   }
   getTracks() { return this.tracks }

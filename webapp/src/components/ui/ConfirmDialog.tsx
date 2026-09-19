@@ -31,7 +31,10 @@ interface ConfirmDialogProps {
   /** 点击遮罩层是否可关闭（默认 true） */
   closeOnOverlay?: boolean
   onConfirm: () => void | Promise<void>
+  /** 用户取消（取消按钮/遮罩/Esc）时调用；确认成功后不会再调用 */
   onCancel: () => void
+  /** 关闭动画结束后调用（无论取消还是确认成功），用于区分「取消」与「已关闭」 */
+  onClosed?: () => void
 }
 
 export default function ConfirmDialog({
@@ -48,6 +51,7 @@ export default function ConfirmDialog({
   closeOnOverlay = true,
   onConfirm,
   onCancel,
+  onClosed,
 }: ConfirmDialogProps) {
   const [loading, setLoading] = useState(false)
   const [extraLoading, setExtraLoading] = useState<Record<number, boolean>>({})
@@ -60,31 +64,37 @@ export default function ConfirmDialog({
 
   const onConfirmRef = useRef(onConfirm)
   const onCancelRef = useRef(onCancel)
+  const onClosedRef = useRef(onClosed)
   useEffect(() => { onConfirmRef.current = onConfirm }, [onConfirm])
   useEffect(() => { onCancelRef.current = onCancel }, [onCancel])
+  useEffect(() => { onClosedRef.current = onClosed }, [onClosed])
 
-  // 关闭动画
-  const handleClose = useCallback(() => {
+  // 关闭动画；notifyCancel=false 用于确认成功路径——此时不能调用 onCancel，
+  // 否则调用方无法区分「用户取消」与「确认成功」
+  const closeWithNotify = useCallback((notifyCancel: boolean) => {
     if (loading) return
     setClosing(true)
     setTimeout(() => {
       setClosing(false)
-      onCancelRef.current()
+      if (notifyCancel) onCancelRef.current()
+      onClosedRef.current?.()
     }, 200)
   }, [loading])
+
+  const handleClose = useCallback(() => closeWithNotify(true), [closeWithNotify])
 
   const handleConfirm = useCallback(async () => {
     if (loading) return
     setLoading(true)
     try {
       await onConfirmRef.current()
-      handleClose()
+      closeWithNotify(false)
     } catch (e) {
       console.error('ConfirmDialog action failed:', e)
     } finally {
       setLoading(false)
     }
-  }, [loading, handleClose])
+  }, [loading, closeWithNotify])
 
   const handleExtraClick = async (index: number, btn: CustomButton) => {
     if (btn.disabled || extraLoading[index]) return

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// 单条弹幕的对外响应
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DanmakuItemResponse {
     /// 弹幕 ID（hashid 字符串）
     pub id: String,
@@ -17,13 +18,13 @@ pub struct DanmakuItemResponse {
 }
 
 /// 视频弹幕列表响应
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DanmakuListResponse {
     pub items: Vec<DanmakuItemResponse>,
 }
 
 /// 发送弹幕请求体
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct SendDanmakuRequest {
     pub text: String,
     pub time: f64,
@@ -33,7 +34,7 @@ pub struct SendDanmakuRequest {
 }
 
 /// 发送弹幕响应
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SendDanmakuResponse {
     pub id: String,
 }

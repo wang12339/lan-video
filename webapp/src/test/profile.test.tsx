@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -97,6 +97,7 @@ const mockUser = {
   createdAt: '2024-01-15T00:00:00Z',
   email: 'test@example.com',
   emailVerified: true,
+  isGuest: false,
 }
 
 const mockUserProfile: UserProfile = {
@@ -200,8 +201,10 @@ function makeAuthReturn(overrides: Partial<ReturnType<typeof useAuth>> = {}) {
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
     ...overrides,
@@ -222,8 +225,8 @@ beforeEach(() => {
   mockCreatePlaylist.mockResolvedValue(makePlaylist())
   mockDeletePlaylist.mockResolvedValue(undefined as never)
   mockRevokeMyShare.mockResolvedValue(undefined as never)
-  mockSendVerificationEmail.mockResolvedValue({ message: '验证邮件已发送' })
-  mockUpdateEmail.mockResolvedValue(undefined as never)
+  mockSendVerificationEmail.mockResolvedValue({ ok: true, message: '验证邮件已发送' })
+  mockUpdateEmail.mockResolvedValue({ ok: true, message: '邮箱已更新' })
 
   // mapVideo / mapHistory 透传
   mockMapVideo.mockImplementation((v: unknown) => v as MappedVideo)
@@ -596,11 +599,56 @@ describe('Profile 页面', () => {
       fireEvent.click(screen.getByRole('button', { name: '修改' }))
       const emailInput = screen.getByPlaceholderText('邮箱地址')
       fireEvent.change(emailInput, { target: { value: 'new@example.com' } })
+      const passwordInput = screen.getByPlaceholderText('当前密码')
+      fireEvent.change(passwordInput, { target: { value: 'secret123' } })
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: '保存' }))
       })
       await waitFor(() => {
-        expect(mockUpdateEmail).toHaveBeenCalledWith('new@example.com')
+        expect(mockUpdateEmail).toHaveBeenCalledWith('new@example.com', 'secret123')
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('alert-message')).toHaveTextContent('邮箱已更新，请发送验证邮件')
+      })
+    })
+
+    it('修改邮箱未输入密码时提示且不调用接口', async () => {
+      renderProfile()
+      await waitFor(() => {
+        expect(screen.getByText('testuser')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('tab', { name: /设置/ }))
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '修改' })).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('button', { name: '修改' }))
+      const emailInput = screen.getByPlaceholderText('邮箱地址')
+      fireEvent.change(emailInput, { target: { value: 'new@example.com' } })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '保存' }))
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('alert-message')).toHaveTextContent('请输入当前密码')
+      })
+      expect(mockUpdateEmail).not.toHaveBeenCalled()
+    })
+
+    it('修改邮箱接口返回 token 时不影响页面流程', async () => {
+      // updateEmail 在 api 层负责持久化新 token（saveToken），页面只需正常完成
+      mockUpdateEmail.mockResolvedValue({ ok: true, message: 'ok', token: 'new-token' })
+      renderProfile()
+      await waitFor(() => {
+        expect(screen.getByText('testuser')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('tab', { name: /设置/ }))
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '修改' })).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('button', { name: '修改' }))
+      fireEvent.change(screen.getByPlaceholderText('邮箱地址'), { target: { value: 'new@example.com' } })
+      fireEvent.change(screen.getByPlaceholderText('当前密码'), { target: { value: 'secret123' } })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '保存' }))
       })
       await waitFor(() => {
         expect(screen.getByTestId('alert-message')).toHaveTextContent('邮箱已更新，请发送验证邮件')

@@ -1475,6 +1475,143 @@ async fn test_password_reset_full_flow() {
 }
 
 #[tokio::test]
+async fn test_reset_password_and_revoke_tokens_is_atomic() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let svc = auth_service(&state);
+    let username = unique_username("reset_atomic");
+
+    register_user(&svc, &username, STRONG_PASSWORD).await;
+    let user_id = approve_user(&state, &username).await;
+
+    let old_token = state
+        .repos
+        .user
+        .create_token(user_id)
+        .await
+        .expect("create token");
+    // 先经 find_user_by_token 把旧 token 放进进程内缓存，验证原子方法
+    // 提交后会立即清除缓存（不只是 DB 里 revoked=true）
+    assert!(state
+        .repos
+        .user
+        .find_user_by_token(&old_token)
+        .await
+        .expect("query")
+        .is_some());
+
+    let new_password = "NewStr0ng!Pass";
+    let hash = password::hash(new_password).expect("hash");
+    let updated = state
+        .repos
+        .user
+        .reset_password_and_revoke_tokens(user_id, &hash)
+        .await
+        .expect("atomic reset");
+    assert!(updated, "existing user should be updated");
+
+    let stale = state
+        .repos
+        .user
+        .find_user_by_token(&old_token)
+        .await
+        .expect("query");
+    assert!(
+        stale.is_none(),
+        "old token must be invalid immediately after atomic reset"
+    );
+
+    // 不存在的用户：整体回滚并返回 false，不产生任何副作用
+    let ghost = state
+        .repos
+        .user
+        .reset_password_and_revoke_tokens(i64::MAX, &hash)
+        .await
+        .expect("ghost reset");
+    assert!(!ghost, "nonexistent user must return false");
+
+    // 服务层当前密码重认证（改邮箱等敏感操作复用）
+    assert!(svc
+        .verify_user_password(&username, new_password)
+        .await
+        .expect("verify new password"));
+    assert!(!svc
+        .verify_user_password(&username, STRONG_PASSWORD)
+        .await
+        .expect("verify old password"));
+    assert!(!svc
+        .verify_user_password(&unique_username("ghost_verify"), "whatever")
+        .await
+        .expect("verify ghost"));
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
+
+#[tokio::test]
+async fn test_admin_reset_password_revokes_cached_tokens() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let admin =
+        atmos_video_backend::services::admin_service::AdminService::new(state.repos.user.clone());
+    let username = unique_username("admin_reset");
+
+    let user_id = state
+        .repos
+        .user
+        .create_user(&username, &password::hash(STRONG_PASSWORD).unwrap(), 1)
+        .await
+        .expect("create viewer");
+    state
+        .repos
+        .user
+        .approve_user(user_id, true)
+        .await
+        .expect("approve");
+
+    let token = state
+        .repos
+        .user
+        .create_token(user_id)
+        .await
+        .expect("create token");
+    assert!(state
+        .repos
+        .user
+        .find_user_by_token(&token)
+        .await
+        .expect("query")
+        .is_some());
+
+    let outcome = admin
+        .reset_user_password(user_id, "Adm1nReset!23")
+        .await
+        .expect("admin reset");
+    assert!(outcome.ok, "reset should succeed: {:?}", outcome.error_msg);
+
+    // 原子化 + 缓存清除：旧 token 立即失效
+    assert!(
+        state
+            .repos
+            .user
+            .find_user_by_token(&token)
+            .await
+            .expect("query")
+            .is_none(),
+        "admin reset must revoke cached tokens immediately"
+    );
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
+
+#[tokio::test]
 async fn test_password_reset_token_single_use() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");

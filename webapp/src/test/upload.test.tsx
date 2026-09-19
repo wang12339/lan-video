@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import Upload from '../pages/Upload/Upload'
 import { ToastProvider } from '../components/Toast/Toast'
@@ -83,7 +82,7 @@ describe('Upload 组件', () => {
     vi.clearAllMocks()
     mockedCheckSession.mockResolvedValue(true)
     mockedGetUploadStatus.mockResolvedValue({ received: 0 })
-    mockedUploadResumeChunk.mockResolvedValue({ received: 100, id: 'vid-1' })
+    mockedUploadResumeChunk.mockResolvedValue({ received: 100, id: 1 })
   })
 
   afterEach(() => {
@@ -360,7 +359,7 @@ describe('Upload 组件', () => {
     it('上传进行中应显示进度百分比', async () => {
       // 验证上传过程中组件显示哈希计算状态
       mockedUploadResumeChunk.mockImplementation(async () => {
-        return { received: 5 * 1024, id: 'vid-1' }
+        return { received: 5 * 1024, id: 1 }
       })
 
       renderUpload()
@@ -426,7 +425,7 @@ describe('Upload 组件', () => {
     })
 
     it('上传完成后文件行应显示成功与查看按钮（不得停留在计算哈希）', async () => {
-      mockedUploadResumeChunk.mockResolvedValue({ received: 1024, id: 'vid-1' })
+      mockedUploadResumeChunk.mockResolvedValue({ received: 1024, id: 1 })
 
       renderUpload()
       const input = getFileInput()
@@ -449,7 +448,7 @@ describe('Upload 组件', () => {
     })
 
     it('多个文件应各自独立显示进度', async () => {
-      mockedUploadResumeChunk.mockResolvedValue({ received: 1024 * 1024, id: 'vid-1' })
+      mockedUploadResumeChunk.mockResolvedValue({ received: 1024 * 1024, id: 1 })
 
       renderUpload()
       const input = getFileInput()
@@ -598,8 +597,8 @@ describe('Upload 组件', () => {
 
     it('点击取消按钮应停止上传', async () => {
       // 创建一个永不 resolve 的 promise 来模拟长时间上传
-      let resolveChunk: ((v: { received: number; id?: string }) => void) | null = null
-      const neverResolves = new Promise<{ received: number; id?: string }>((resolve) => {
+      let resolveChunk: ((v: { received: number; id?: number }) => void) | null = null
+      const neverResolves = new Promise<{ received: number; id?: number }>((resolve) => {
         resolveChunk = resolve
       })
       let firstCall = true
@@ -608,7 +607,7 @@ describe('Upload 组件', () => {
           firstCall = false
           return neverResolves
         }
-        return { received: 1024 * 1024, id: 'vid-1' }
+        return { received: 1024 * 1024, id: 1 }
       })
 
       renderUpload()
@@ -706,7 +705,7 @@ describe('Upload 组件', () => {
       let callCount = 0
       mockedUploadResumeChunk.mockImplementation(async () => {
         const idx = ++callCount
-        return { received: 1024, id: `vid-${idx}` }
+        return { received: 1024, id: idx }
       })
 
       renderUpload()
@@ -785,7 +784,7 @@ describe('Upload 组件', () => {
       let callCount = 0
       mockedUploadResumeChunk.mockImplementation(async () => {
         callCount++
-        return { received: 1024, id: `vid-${callCount}` }
+        return { received: 1024, id: callCount }
       })
 
       renderUpload()
@@ -815,7 +814,7 @@ describe('Upload 组件', () => {
       mockedUploadResumeChunk.mockImplementation(async () => {
         callCount++
         // 第一次调用成功，第二次失败
-        if (callCount <= 1) return { received: 1024, id: `vid-${callCount}` }
+        if (callCount <= 1) return { received: 1024, id: callCount }
         throw new Error('网络错误')
       })
 
@@ -863,7 +862,7 @@ describe('Upload 组件', () => {
       let callCount = 0
       mockedUploadResumeChunk.mockImplementation(async () => {
         callCount++
-        return { received: 1024, id: `vid-${callCount}` }
+        return { received: 1024, id: callCount }
       })
 
       renderUpload()

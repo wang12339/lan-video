@@ -122,13 +122,15 @@ beforeEach(() => {
 
   // 默认：已登录用户
   mockUseAuth.mockReturnValue({
-    user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true },
+    user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true, isGuest: false },
     loading: false,
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
   })
@@ -240,8 +242,10 @@ describe('Comments 组件', () => {
         kickedMsg: null,
         clearKickedMsg: vi.fn(),
         login: vi.fn(),
+        loginWithToken: vi.fn(),
         register: vi.fn(),
         logout: vi.fn(),
+        enterGuest: vi.fn(),
         refreshUser: vi.fn(),
         setUser: vi.fn(),
       })
@@ -554,7 +558,7 @@ describe('Comments 组件', () => {
 
       // 删除第一条评论
       const deleteBtns = screen.getAllByRole('button', { name: '删除' })
-      fireEvent.click(deleteBtns[0])
+      fireEvent.click(deleteBtns[0]!)
 
       const confirmBtn = screen.getByRole('button', { name: '确认' })
       fireEvent.click(confirmBtn)

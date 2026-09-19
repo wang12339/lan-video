@@ -22,6 +22,8 @@ export default function SettingsTab({
   const [sendingVerification, setSendingVerification] = useState(false)
   const [editingEmail, setEditingEmail] = useState(false)
   const [emailValue, setEmailValue] = useState('')
+  // 修改邮箱需要验证当前密码（后端 PUT /auth/user/email 要求）
+  const [emailPassword, setEmailPassword] = useState('')
   const [savingEmail, setSavingEmail] = useState(false)
 
   const handleSendVerification = useCallback(async () => {
@@ -39,21 +41,23 @@ export default function SettingsTab({
   const handleSaveEmail = useCallback(async () => {
     const email = emailValue.trim().toLowerCase()
     if (!email || !email.includes('@')) { onAlert(t('auth.validation.emailInvalid')); return }
+    if (!emailPassword) { onAlert(t('profile.emailPasswordRequired')); return }
     setSavingEmail(true)
     try {
-      await updateEmail(email)
+      await updateEmail(email, emailPassword)
       if (setUser && user) {
         setUser({ ...user, email, emailVerified: false })
         queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       }
       setEditingEmail(false)
+      setEmailPassword('')
       onAlert(t('profile.emailUpdated'))
     } catch (err) {
       onAlert(err instanceof Error ? err.message : t('common.saveFailed'))
     } finally {
       setSavingEmail(false)
     }
-  }, [emailValue, onAlert, queryClient, setUser, user, t])
+  }, [emailValue, emailPassword, onAlert, queryClient, setUser, user, t])
 
   if (!user) return null
 
@@ -109,9 +113,20 @@ export default function SettingsTab({
                     onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEmail() }}
                     autoFocus
                   />
+                  <input
+                    type="password"
+                    className="email-input"
+                    placeholder={t('profile.emailPasswordPrompt')}
+                    value={emailPassword}
+                    onChange={(e) => setEmailPassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEmail() }}
+                    autoComplete="current-password"
+                    maxLength={128}
+                    required
+                  />
                   <div className="email-actions">
                     <button className="profile-btn" onClick={handleSaveEmail} disabled={savingEmail}>{savingEmail ? t('common.saving') : t('common.save')}</button>
-                    <button className="profile-btn-secondary" onClick={() => setEditingEmail(false)}>{t('common.cancel')}</button>
+                    <button className="profile-btn-secondary" onClick={() => { setEditingEmail(false); setEmailPassword('') }}>{t('common.cancel')}</button>
                   </div>
                 </div>
               ) : (
@@ -129,12 +144,12 @@ export default function SettingsTab({
                         {sendingVerification ? t('common.sending') : t('profile.verify')}
                       </button>
                     )}
-                    <button className="profile-btn-secondary" onClick={() => { setEmailValue(user.email || ''); setEditingEmail(true) }}>
+                    <button className="profile-btn-secondary" onClick={() => { setEmailValue(user.email || ''); setEmailPassword(''); setEditingEmail(true) }}>
                       {t('profile.modify')}
                     </button>
                   </>
                 ) : (
-                  <button className="profile-btn" onClick={() => { setEmailValue(''); setEditingEmail(true) }}>
+                  <button className="profile-btn" onClick={() => { setEmailValue(''); setEmailPassword(''); setEditingEmail(true) }}>
                     {t('profile.bindEmail')}
                   </button>
                 )}

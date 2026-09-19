@@ -41,6 +41,24 @@ fn map_comment(c: crate::repositories::comment_repo::CommentRow) -> CommentRespo
 }
 
 /// GET /videos/{id}/comments
+#[utoipa::path(
+    get,
+    path = "/videos/{id}/comments",
+    tag = "comments",
+    summary = "List comments for a video",
+    description = "分页返回视频的顶级评论",
+    security(("bearerAuth" = [])),
+    params(
+        ("id" = String, Path, description = "Video ID (hashid or numeric)"),
+        ("page" = Option<i64>, Query, description = "Page number (0-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (max 100)")
+    ),
+    responses(
+        (status = 200, description = "Comment list", body = CommentListResponse),
+        (status = 400, description = "Invalid video ID"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
     Path(video_id): Path<String>,
@@ -64,6 +82,20 @@ pub async fn list_comments(
 }
 
 /// GET /comments/{id}/replies
+#[utoipa::path(
+    get,
+    path = "/comments/{id}/replies",
+    tag = "comments",
+    summary = "List replies to a comment",
+    description = "返回某条评论的全部回复",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "评论 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Reply list", body = [CommentResponse]),
+        (status = 400, description = "Invalid comment ID"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn list_replies(
     State(state): State<Arc<AppState>>,
     Path(comment_id): Path<String>,
@@ -80,6 +112,22 @@ pub async fn list_replies(
 }
 
 /// POST /videos/{id}/comments
+#[utoipa::path(
+    post,
+    path = "/videos/{id}/comments",
+    tag = "comments",
+    summary = "Create a comment",
+    description = "发表评论（可指定 parent_id 回复某条评论）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "Video ID (hashid or numeric)")),
+    request_body = CreateCommentRequest,
+    responses(
+        (status = 201, description = "Comment created", body = CommentResponse),
+        (status = 400, description = "Empty or oversized comment"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn create_comment(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -114,6 +162,21 @@ pub async fn create_comment(
 }
 
 /// DELETE /comments/{id}
+#[utoipa::path(
+    delete,
+    path = "/comments/{id}",
+    tag = "comments",
+    summary = "Delete a comment",
+    description = "删除评论（作者本人或管理员）",
+    security(("bearerAuth" = [])),
+    params(("id" = String, Path, description = "评论 ID (hashid 或数字)")),
+    responses(
+        (status = 200, description = "Comment deleted", body = serde_json::Value),
+        (status = 400, description = "Invalid comment ID"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Comment not found or not permitted")
+    )
+)]
 pub async fn delete_comment(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

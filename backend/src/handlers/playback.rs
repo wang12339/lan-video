@@ -15,7 +15,21 @@ use crate::util::hashid;
 use crate::util::pagination::PaginationParams;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
-/// GET /playback/history/{videoId}
+/// GET /playback/history/{video_id}
+#[utoipa::path(
+    get,
+    path = "/playback/history/{video_id}",
+    tag = "playback",
+    summary = "Get playback position for a video",
+    description = "Get the saved playback position and duration for a specific video",
+    security(("bearerAuth" = [])),
+    params(("video_id" = String, Path, description = "Video ID (hashid or numeric)")),
+    responses(
+        (status = 200, description = "Playback position", body = PlaybackHistoryResponse),
+        (status = 400, description = "Invalid video ID"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn get_playback_history_for_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -45,6 +59,22 @@ pub async fn get_playback_history_for_video(
 }
 
 /// GET /playback/history
+#[utoipa::path(
+    get,
+    path = "/playback/history",
+    tag = "playback",
+    summary = "List playback history for current user (paginated)",
+    description = "Get the current user's playback history, ordered by most recent",
+    security(("bearerAuth" = [])),
+    params(
+        ("page" = Option<i64>, Query, description = "Page number (1-indexed)"),
+        ("size" = Option<i64>, Query, description = "Page size (1-100)")
+    ),
+    responses(
+        (status = 200, description = "Paginated watch history list", body = PagedRecentWatchResponse),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn list_playback_history(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -70,6 +100,20 @@ pub async fn list_playback_history(
 }
 
 /// POST /playback/history
+#[utoipa::path(
+    post,
+    path = "/playback/history",
+    tag = "playback",
+    summary = "Update playback position",
+    description = "Save or update the playback position for a video. Validates that values are non-negative and within reasonable bounds.",
+    security(("bearerAuth" = [])),
+    request_body = PlaybackHistoryRequest,
+    responses(
+        (status = 204, description = "Playback position updated"),
+        (status = 400, description = "Invalid playback values"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn update_playback_history(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -186,6 +230,20 @@ fn validate_session_request(
 }
 
 /// POST /playback/session/start — 开始播放会话
+#[utoipa::path(
+    post,
+    path = "/playback/session/start",
+    tag = "playback",
+    summary = "Start a playback session",
+    description = "记录一次播放会话的开始，用于在线用户统计",
+    security(("bearerAuth" = [])),
+    request_body = SessionRequest,
+    responses(
+        (status = 204, description = "Session started"),
+        (status = 400, description = "Invalid video ID"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn start_playback_session(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -219,6 +277,20 @@ pub async fn start_playback_session(
 }
 
 /// POST /playback/session/heartbeat — 刷新播放会话
+#[utoipa::path(
+    post,
+    path = "/playback/session/heartbeat",
+    tag = "playback",
+    summary = "Refresh a playback session",
+    description = "刷新播放会话的心跳，避免会话过期",
+    security(("bearerAuth" = [])),
+    request_body = SessionRequest,
+    responses(
+        (status = 204, description = "Heartbeat recorded"),
+        (status = 400, description = "Invalid video ID"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn playback_session_heartbeat(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -232,6 +304,20 @@ pub async fn playback_session_heartbeat(
 }
 
 /// POST /playback/session/stop — 停止播放会话
+#[utoipa::path(
+    post,
+    path = "/playback/session/stop",
+    tag = "playback",
+    summary = "Stop a playback session",
+    description = "结束一次播放会话",
+    security(("bearerAuth" = [])),
+    request_body = SessionRequest,
+    responses(
+        (status = 204, description = "Session stopped"),
+        (status = 400, description = "Invalid video ID"),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn stop_playback_session(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,

@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AuthRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuthResponse {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -15,7 +16,7 @@ pub struct AuthResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserInfoResponse {
     #[serde(serialize_with = "crate::util::hashid_serde::serialize_id")]
     pub id: i64,
@@ -36,7 +37,7 @@ pub struct UserInfoResponse {
     pub is_guest: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UserProfileResponse {
     pub username: String,
     #[serde(rename = "isAdmin")]
@@ -48,47 +49,51 @@ pub struct UserProfileResponse {
     #[serde(rename = "totalWatchTimeMs")]
     pub total_watch_time_ms: i64,
     #[serde(rename = "recentHistory")]
+    #[schema(value_type = Vec<serde_json::Value>)]
     pub recent_history: Vec<super::playback::RecentWatchItem>,
 }
 
 // ── Password reset / forgot password ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ForgotPasswordResponse {
     pub ok: bool,
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ResetPasswordRequest {
     pub token: String,
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ResetPasswordToken {
     pub token: String,
 }
 
 // ── Email management ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateEmailRequest {
     pub email: String,
+    /// 当前密码（重认证）：改邮箱会吊销全部旧会话，必须先验证密码，
+    /// 防止会话内跨站请求/物理接触者静默改绑邮箱后接管账号。
+    pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SendVerificationEmailResponse {
     pub ok: bool,
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct VerifyEmailRequest {
     pub token: String,
 }

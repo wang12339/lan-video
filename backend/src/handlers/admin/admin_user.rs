@@ -5,7 +5,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{invalidate_media_auth_user, AuthUser};
 use crate::models::admin::{AdminResetPasswordRequest, ApproveRequest};
 use crate::models::video::OkResponse;
 use crate::state::AppState;
@@ -24,6 +24,19 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/users",
+    tag = "admin",
+    summary = "List users",
+    description = "返回用户列表（含审批状态、角色、活跃令牌等）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "User list", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
 ) -> Result<
@@ -42,6 +55,18 @@ pub async fn list_users(
 /// GET /admin/users/pending/count — 待审批注册用户数。
 ///
 /// 管理端导航徽标轮询用：只返回计数，避免轮询时反复传输整个用户列表。
+#[utoipa::path(
+    get,
+    path = "/admin/users/pending/count",
+    tag = "admin",
+    description = "返回待审批注册用户数（管理员导航徽标轮询用，仅计数）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Pending count", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn pending_user_count(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -54,6 +79,23 @@ pub async fn pending_user_count(
     Ok(Json(serde_json::json!({ "count": count })))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/users/{id}",
+    tag = "admin",
+    summary = "Delete a user",
+    description = "删除用户及其关联数据（不能删除自己）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "用户 ID")
+    ),
+    responses(
+        (status = 200, description = "Delete result", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "User not found")
+    )
+)]
 pub async fn delete_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -71,6 +113,9 @@ pub async fn delete_user(
             target_user_id = id,
             "admin deleted user"
         );
+        // 目标用户已删除：同步失效其媒体鉴权缓存（Redis 可用时精确，
+        // 否则本地 10s TTL 兜底）
+        invalidate_media_auth_user(&state, id).await;
         Ok(Json(OkResponse {
             ok: true,
             error: None,
@@ -81,6 +126,25 @@ pub async fn delete_user(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/password",
+    tag = "admin",
+    summary = "Reset a user's password",
+    description = "管理员重置指定用户密码，同时吊销该用户全部令牌",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "用户 ID")
+    ),
+    request_body = AdminResetPasswordRequest,
+    responses(
+        (status = 200, description = "Password reset", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "User not found")
+    )
+)]
 pub async fn reset_user_password(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -112,6 +176,8 @@ pub async fn reset_user_password(
             target_user_id = id,
             "admin reset user password (all tokens invalidated)"
         );
+        // 密码已重置且旧 token 全部吊销：同步失效媒体鉴权缓存
+        invalidate_media_auth_user(&state, id).await;
         Ok(Json(OkResponse {
             ok: true,
             error: None,
@@ -122,6 +188,23 @@ pub async fn reset_user_password(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/admin",
+    tag = "admin",
+    summary = "Toggle admin privileges",
+    description = "切换用户的管理员权限（不能操作自己）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "用户 ID")
+    ),
+    responses(
+        (status = 200, description = "Admin status toggled", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "User not found")
+    )
+)]
 pub async fn toggle_user_admin(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -150,6 +233,25 @@ pub async fn toggle_user_admin(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/approve",
+    tag = "admin",
+    summary = "Approve a pending user",
+    description = "审批新用户（注册审批制下用户需审批后才能登录）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "用户 ID")
+    ),
+    request_body = ApproveRequest,
+    responses(
+        (status = 200, description = "Approval updated", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "User not found")
+    )
+)]
 pub async fn approve_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -179,6 +281,23 @@ pub async fn approve_user(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/users/{id}/kick",
+    tag = "admin",
+    summary = "Force logout a user",
+    description = "强制用户下线：删除该用户全部认证令牌",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "用户 ID")
+    ),
+    responses(
+        (status = 200, description = "User kicked", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "User not found")
+    )
+)]
 pub async fn kick_user(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -196,6 +315,9 @@ pub async fn kick_user(
         tokens_deleted = count,
         "admin kicked user offline"
     );
+    // 踢人 = 吊销全部会话：同步失效媒体鉴权缓存，否则旧 token 在
+    // 缓存 TTL 内仍可读取媒体文件
+    invalidate_media_auth_user(&state, id).await;
     Ok(Json(OkResponse {
         ok: true,
         error: None,

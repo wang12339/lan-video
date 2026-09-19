@@ -22,6 +22,19 @@ pub struct PerformanceMetricsResponse {
     pub retry_rate: f64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/performance/metrics",
+    tag = "admin",
+    summary = "Database performance metrics",
+    description = "返回数据库查询性能指标：成功率、超时率、重试率、P95/P99 延迟与缓存命中率",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Performance metrics", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn get_performance_metrics(
     State(_state): State<Arc<AppState>>,
 ) -> Json<PerformanceMetricsResponse> {
@@ -48,6 +61,18 @@ pub async fn get_performance_metrics(
 }
 
 /// 重置性能指标
+#[utoipa::path(
+    post,
+    path = "/admin/performance/reset",
+    tag = "admin",
+    description = "重置数据库查询性能指标计数器",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Performance metrics reset", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn reset_performance_metrics(
     State(_state): State<Arc<AppState>>,
 ) -> Json<serde_json::Value> {

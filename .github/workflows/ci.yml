@@ -134,6 +134,11 @@ jobs:
         working-directory: ./webapp
         run: npx tsc --noEmit
 
+      # 测试文件的类型检查（tsconfig.test.json，由 webapp 提供 typecheck:test 脚本）
+      - name: TypeScript check (tests)
+        working-directory: ./webapp
+        run: npm run typecheck:test
+
       - name: Run tests
         working-directory: ./webapp
         run: npm test
@@ -375,8 +380,44 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
+            set -eu
             cd /opt/atmos-video
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
-            docker compose down
-            docker compose up -d
+
+            # compose 通过 shell 环境变量插值镜像（优先级高于服务器 .env 文件）
+            export IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+            # 记录当前运行镜像为 :previous 供回滚；首次部署无容器时忽略失败
+            PREVIOUS_IMAGE="$(docker compose images -q app 2>/dev/null | head -n1)"
+            if [ -n "$PREVIOUS_IMAGE" ]; then
+              docker tag "$PREVIOUS_IMAGE" "$IMAGE_REF:previous" || true
+            fi
+
+            # 拉取 CI 刚推送的镜像；不再 `compose down`，缩短停机窗口
+            docker pull "$IMAGE_REF:main"
+
+            # Dockerfile / compose 已配置 HEALTHCHECK，--wait 会等待容器健康；
+            # 若服务器 Compose 版本过旧不支持 --wait，则退回 `up -d`，
+            # 由下方 curl 轮询兜底健康检查。
+            IMAGE_TAG=main docker compose up -d --wait --no-deps app \
+              || IMAGE_TAG=main docker compose up -d --no-deps app
+
+            # 显式轮询 /health（最多 30 次 × 2s），失败则回滚到 :previous
+            healthy=0
+            for _ in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8082/health >/dev/null 2>&1; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$healthy" -ne 1 ]; then
+              echo "::error::健康检查失败，回滚到 :previous 镜像"
+              if [ -n "$PREVIOUS_IMAGE" ]; then
+                IMAGE_TAG=previous docker compose up -d --no-deps app
+              fi
+              exit 1
+            fi
+
             docker system prune -f

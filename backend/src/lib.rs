@@ -12,4 +12,6 @@ pub mod openapi;
 pub mod repositories;
 pub mod services;
 pub mod state;
+#[cfg(test)]
+pub mod test_support;
 pub mod util;

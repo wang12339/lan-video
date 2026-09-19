@@ -24,7 +24,11 @@ export default defineConfig({
     target: 'es2020',
     cssCodeSplit: true,
     sourcemap: false,
-    chunkSizeWarningLimit: 90,
+    // 以下 chunk 均无法再拆到 90kB 以下，故放宽阈值并在此说明：
+    // - react-vendor：react + react-dom 单一职责，必需依赖
+    // - hls-vendor：hls.js 为单个库，且只在懒加载的 /player 路由引入，不影响首屏
+    // - index：入口 chunk 承载路由/上下文/API 等首屏必需代码，拆无可拆
+    chunkSizeWarningLimit: 400,
     reportCompressedSize: true,
     rollupOptions: {
       output: {
@@ -32,10 +36,16 @@ export default defineConfig({
           if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
             return 'react-vendor'
           }
-          if (id.includes('node_modules/react-router-dom') || id.includes('node_modules/@remix-run')) {
+          // react-router v7 主实现位于 node_modules/react-router，react-router-dom 仅做转发
+          if (
+            id.includes('node_modules/react-router-dom') ||
+            id.includes('node_modules/react-router/') ||
+            id.includes('node_modules/@remix-run')
+          ) {
             return 'router'
           }
-          if (id.includes('node_modules/@tanstack/react-query')) {
+          // query-core 位于 node_modules/@tanstack，一并归入 query 分包
+          if (id.includes('node_modules/@tanstack')) {
             return 'query'
           }
           if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) {
@@ -43,6 +53,11 @@ export default defineConfig({
           }
           if (id.includes('node_modules/hls.js')) {
             return 'hls-vendor'
+          }
+          // 其余 node_modules 兜底进 vendor：业务代码迭代不会让第三方依赖
+          // 的缓存指纹随之变化，也避免未分类依赖散落进入口 chunk
+          if (id.includes('node_modules')) {
+            return 'vendor'
           }
         },
       },

@@ -100,6 +100,8 @@ function NavBar() {
     setSelectedIdx(-1)
     if (suggestTimer.current) clearTimeout(suggestTimer.current)
     if (value.trim().length < 1) {
+      // 递增序号使在途请求失效：清空输入后旧响应到达时不能重新弹开下拉
+      suggestSeq.current++
       setSuggestions([])
       setShowSuggestions(false)
       setSearchLoading(false)

@@ -637,7 +637,7 @@ async fn test_update_email_validation_and_success() {
         Method::PUT,
         "/auth/user/email",
         Some(&token),
-        Some(json!({ "email": "not-an-email" })),
+        Some(json!({ "email": "not-an-email", "password": TEST_USER_PASSWORD })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {}", body);
@@ -649,11 +649,88 @@ async fn test_update_email_validation_and_success() {
         Method::PUT,
         "/auth/user/email",
         Some(&token),
-        Some(json!({ "email": email })),
+        Some(json!({ "email": email, "password": TEST_USER_PASSWORD })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {}", body);
     assert_eq!(body["ok"], json!(true));
+    assert!(
+        body["token"].is_string(),
+        "rotated token must be returned: {body}"
+    );
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
+
+#[tokio::test]
+async fn test_update_email_requires_password_and_rotates_tokens() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let state = test_app_state().await;
+    let (username, _user_id, token) = create_viewer_with_token(&state, "email_rotate").await;
+    let app = build_test_app().await;
+    let email = format!("{}@example.com", unique_username("rotate"));
+
+    // 1) 缺少 password 字段：反序列化阶段就被拒绝（4xx），不触碰邮箱
+    let (status, _) = send_json(
+        &app,
+        Method::PUT,
+        "/auth/user/email",
+        Some(&token),
+        Some(json!({ "email": email })),
+    )
+    .await;
+    assert!(
+        status.is_client_error(),
+        "missing password must be rejected, got {status}"
+    );
+
+    // 2) 密码错误 → 401 泛化错误，且不得吊销当前会话
+    let (status, body) = send_json(
+        &app,
+        Method::PUT,
+        "/auth/user/email",
+        Some(&token),
+        Some(json!({ "email": email, "password": "DefinitelyWrong_1!" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "body: {}", body);
+    let (status, _) = send_json(&app, Method::GET, "/auth/user", Some(&token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "wrong password must not revoke the current session"
+    );
+
+    // 3) 正确密码 → 200，响应携带轮换后的新 token，旧 token 立即失效
+    let (status, body) = send_json(
+        &app,
+        Method::PUT,
+        "/auth/user/email",
+        Some(&token),
+        Some(json!({ "email": email, "password": TEST_USER_PASSWORD })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {}", body);
+    assert_eq!(body["ok"], json!(true));
+    let new_token = body["token"]
+        .as_str()
+        .expect("rotated token in response body")
+        .to_string();
+    assert_ne!(new_token, token, "token must be rotated");
+
+    let (status, _) = send_json(&app, Method::GET, "/auth/user", Some(&token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "old token must be revoked after email change"
+    );
+    let (status, body) = send_json(&app, Method::GET, "/auth/user", Some(&new_token), None).await;
+    assert_eq!(status, StatusCode::OK, "new token must work: {body}");
+    // 新邮箱的验证状态必须重置
+    assert_eq!(body["emailVerified"], json!(false));
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
@@ -675,7 +752,7 @@ async fn test_update_email_conflict_409() {
         Method::PUT,
         "/auth/user/email",
         Some(&token_a),
-        Some(json!({ "email": email })),
+        Some(json!({ "email": email, "password": TEST_USER_PASSWORD })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -685,7 +762,7 @@ async fn test_update_email_conflict_409() {
         Method::PUT,
         "/auth/user/email",
         Some(&token_b),
-        Some(json!({ "email": email })),
+        Some(json!({ "email": email, "password": TEST_USER_PASSWORD })),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "body: {}", body);
@@ -820,6 +897,8 @@ async fn test_send_verification_email() {
     let state = test_app_state().await;
     let (username, _user_id, token) = create_viewer_with_token(&state, "send_verify").await;
     let app = build_test_app().await;
+    // 测试环境 SMTP 未配置：必须返回 503 明确错误，而不是假装发送成功
+    // （旧行为还会把 email_verified 置 true，属于虚假验证）。
     let (status, body) = send_json(
         &app,
         Method::POST,
@@ -828,8 +907,66 @@ async fn test_send_verification_email() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["ok"], json!(true), "body: {}", body);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "body: {}", body);
+    assert_eq!(body["error"], json!("邮件服务未配置"));
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
+
+#[tokio::test]
+async fn test_chat_media_requires_strict_path_and_reference() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let state = test_app_state().await;
+    let (username, user_id, token) = create_viewer_with_token(&state, "chat_media").await;
+    let app = build_test_app().await;
+
+    // 1) 严格文件名之外的路径一律 403（. 开头 / 子路径 / 非白名单扩展名）
+    for bad in [
+        "/media/chat/.hidden.jpg",
+        "/media/chat/sub/x.jpg",
+        "/media/chat/../secret.png",
+        "/media/chat/note.txt",
+        "/media/chat/",
+    ] {
+        let (status, _) = send_json(&app, Method::GET, bad, Some(&token), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "path {bad} must be denied");
+    }
+
+    // 2) 合法文件名但未被聊天消息引用 → 403（防遍历孤儿文件）
+    let orphan = format!("/media/chat/{}.jpg", unique_username("orphan"));
+    let (status, _) = send_json(&app, Method::GET, &orphan, Some(&token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "unreferenced chat media must be denied"
+    );
+
+    // 3) 被聊天消息引用 → 放行到静态文件层（文件不存在时为 404，不再是 403）
+    let referenced = format!("/media/chat/{}.jpg", unique_username("ref"));
+    sqlx::query(
+        "INSERT INTO chat_messages (user_id, username, content, msg_type, image_url) \
+         VALUES ($1, $2, '', 1, $3)",
+    )
+    .bind(user_id)
+    .bind(&username)
+    .bind(&referenced)
+    .execute(state.repos.video.pool())
+    .await
+    .expect("insert chat message");
+    let (status, _) = send_json(&app, Method::GET, &referenced, Some(&token), None).await;
+    assert_ne!(
+        status,
+        StatusCode::FORBIDDEN,
+        "referenced chat media must pass media_auth, got {status}"
+    );
+
+    sqlx::query("DELETE FROM chat_messages WHERE image_url = $1")
+        .bind(&referenced)
+        .execute(state.repos.video.pool())
+        .await
+        .expect("cleanup chat message");
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
 
@@ -1092,12 +1229,8 @@ async fn test_video_favorite_toggle_flow() {
     cleanup_test_video(state.repos.video.pool(), video_id).await;
 }
 
-/// KNOWN-FAILING: GET /videos/favorites currently returns 500 because
-/// `find_favorites_by_username` maps `user_favorites.created_at` (naive
-/// TIMESTAMP) into `HistoryRow.updated_at: DateTime<Utc>` — a sqlx type
-/// mismatch. Ignored until the source is fixed.
+/// GET /videos/favorites returns a paginated object `{items, total, page, size}`.
 #[tokio::test]
-#[ignore = "既有缺陷: find_favorites_by_username 类型不匹配 (timestamp 解码为 DateTime<Utc>) 导致 500"]
 async fn test_video_favorites_list() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
@@ -1121,9 +1254,12 @@ async fn test_video_favorites_list() {
     let (status, body) =
         send_json(&app, Method::GET, "/videos/favorites", Some(&token), None).await;
     assert_eq!(status, StatusCode::OK);
-    let items = body.as_array().expect("favorites should be an array");
+    let items = body["items"]
+        .as_array()
+        .expect("favorites should contain an items array");
+    let video_hash = atmos_video_backend::util::hashid::encode_id(video_id);
     assert!(
-        items.iter().any(|it| it["videoId"] == json!(video_id)),
+        items.iter().any(|it| it["videoId"] == json!(video_hash)),
         "favorites should contain the video: {}",
         body
     );
@@ -2399,13 +2535,8 @@ async fn test_tags_public_endpoints() {
     assert_eq!(body["error"], json!("标签不存在"));
 }
 
-/// KNOWN-FAILING: attaching tags to a video currently fails because
-/// `add_tags_to_video_batch` emits `VALUES VALUES (...)` (sqlx `push_values`
-/// already includes the keyword), so the query is a syntax error and every
-/// non-empty attach returns 400 "添加标签失败". Ignored until the source is
-/// fixed.
+/// 批量给视频打标签（PUT /videos/{id}/tags），覆盖创建标签与管理员流程。
 #[tokio::test]
-#[ignore = "既有缺陷: add_tags_to_video_batch 生成 VALUES VALUES 非法 SQL, 添加标签必失败"]
 async fn test_video_tags_admin_flow() {
     let Some(_) = database_url() else {
         eprintln!("DATABASE_URL not set, skipping");
@@ -2458,12 +2589,12 @@ async fn test_video_tags_admin_flow() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!([]));
 
-    // Attach the tag to the video
+    // Attach the tag to the video（非管理员只能操作自己上传的视频，这里走管理员）
     let (status, body) = send_json(
         &app,
         Method::POST,
         &format!("/videos/{}/tags", video_id),
-        Some(&token),
+        Some(&admin_token),
         Some(json!([tag_id])),
     )
     .await;
@@ -2487,12 +2618,12 @@ async fn test_video_tags_admin_flow() {
         body
     );
 
-    // Remove the tag
+    // Remove the tag（同样需要管理员/所有者权限）
     let (status, _) = send_json(
         &app,
         Method::DELETE,
         &format!("/videos/{}/tags", video_id),
-        Some(&token),
+        Some(&admin_token),
         Some(json!([tag_id])),
     )
     .await;
@@ -2832,9 +2963,9 @@ async fn test_internal_routes_admin_only() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["version"].is_string());
 
-    // /metrics: no token → 401
+    // /metrics: METRICS_TOKEN 未配置时默认关闭（404），不再走 admin 鉴权
     let (status, _) = send_json(&app, Method::GET, "/metrics", None, None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
 }
@@ -2942,4 +3073,18 @@ async fn test_media_requires_auth() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// METRICS_TOKEN 未配置时，/metrics* 默认关闭（404，不泄露端点存在性）。
+#[tokio::test]
+async fn test_metrics_disabled_without_token() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+    let app = build_test_app().await;
+    for path in ["/metrics", "/metrics/prometheus"] {
+        let (status, _) = send_json(&app, Method::GET, path, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path} 应默认关闭");
+    }
 }

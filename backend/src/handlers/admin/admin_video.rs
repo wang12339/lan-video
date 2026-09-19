@@ -75,6 +75,22 @@ fn map_upload_service_error(e: &ServiceError) -> (StatusCode, &'static str) {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/videos/external",
+    tag = "admin",
+    summary = "Add an external video",
+    description = "Register an external video URL (http/https). Title must be 1-500 characters.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = serde_json::Value,
+    responses(
+        (status = 201, description = "Created — returns the new video ID", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn add_external_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -137,6 +153,23 @@ pub async fn add_external_video(
 }
 
 /// POST /admin/videos/upload
+#[utoipa::path(
+    post,
+    path = "/admin/videos/upload",
+    tag = "admin",
+    description = "Upload a single video or image file via multipart form. Streamed to disk, SHA-256 checked, duplicates rejected. Available to any authenticated identity with role >= 1.",
+    security(("bearerAuth" = [])),
+    request_body(content_type = "multipart/form-data", description = "Multipart form with a single `file` field (50 GB max) and optional `category`"),
+    responses(
+        (status = 201, description = "Upload successful — returns the new video ID", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Duplicate file (code `duplicate`)"),
+        (status = 413, description = "Payload too large"),
+        (status = 500, description = "Internal server error"),
+        (status = 507, description = "Per-user storage quota exhausted (code `quota_exceeded`)")
+    )
+)]
 pub async fn upload_video(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -269,6 +302,24 @@ fn is_valid_upload_hash(s: &str) -> bool {
 ///
 /// 客户端在开始传输前调用：命中同上传者已有内容时返回 `exists: true`
 /// （可零传输跳过），带 `size` 时同时做配额预检。
+#[utoipa::path(
+    get,
+    path = "/admin/videos/upload-status",
+    tag = "admin",
+    description = "Pre-flight check before uploading: duplicate detection and optional quota check. Response is never cached (`Cache-Control: no-store`).",
+    security(("bearerAuth" = [])),
+    params(
+        ("hash" = String, Query, description = "Upload key — SHA-256 hex of the complete file"),
+        ("size" = Option<i64>, Query, description = "Total file size in bytes (optional; enables the quota pre-check)")
+    ),
+    responses(
+        (status = 200, description = "Upload pre-flight result", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error"),
+        (status = 507, description = "Per-user storage quota exhausted (code `quota_exceeded`)")
+    )
+)]
 pub async fn upload_status(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -349,6 +400,32 @@ pub async fn upload_status(
 /// 幂等分片追加：`x-upload-offset` 必须等于服务端已接收字节数，
 /// 否则返回 409 `offset_mismatch`（body.data.received 为服务端偏移），
 /// 客户端据此回退重切分片。最后一个分片触发 finalize 并做哈希校验。
+#[utoipa::path(
+    post,
+    path = "/admin/videos/upload-resume",
+    tag = "admin",
+    description = "Append a chunk to a partial upload identified by `x-upload-hash`. `x-upload-offset` must equal the bytes already received (409 `offset_mismatch` otherwise). Finalization verifies the incremental SHA-256 and returns 201 with the new video ID. Body capped at 32 MB; available to any authenticated identity with role >= 1.",
+    security(("bearerAuth" = [])),
+    params(
+        ("x-upload-hash" = String, Header, description = "SHA-256 hex of the complete file (upload key, verified at finalization)"),
+        ("x-upload-offset" = Option<i64>, Header, description = "Byte offset at which this chunk starts (must equal server-received bytes)"),
+        ("x-upload-name" = Option<String>, Header, description = "Original filename"),
+        ("x-upload-size" = i64, Header, description = "Total expected file size in bytes (max 50 GB)"),
+        ("x-upload-category" = Option<String>, Header, description = "Category for the uploaded file")
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw chunk bytes; empty body performs a progress query"),
+    responses(
+        (status = 200, description = "Progress query (empty body) — returns bytes received", body = serde_json::Value),
+        (status = 201, description = "Upload finalized (idempotent for a replayed final chunk)", body = serde_json::Value),
+        (status = 206, description = "Partial content — more data needed", body = serde_json::Value),
+        (status = 400, description = "Invalid headers/offset, or final hash mismatch (code `hash_mismatch`)"),
+        (status = 401, description = "Unauthorized"),
+        (status = 409, description = "Offset mismatch (code `offset_mismatch`) or duplicate content (code `duplicate`)"),
+        (status = 413, description = "Payload too large"),
+        (status = 500, description = "Internal server error"),
+        (status = 507, description = "Per-user storage quota exhausted (code `quota_exceeded`)")
+    )
+)]
 pub async fn upload_resume(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
@@ -462,6 +539,20 @@ pub async fn upload_resume(
 }
 
 /// POST /admin/videos/check-hashes
+#[utoipa::path(
+    post,
+    path = "/admin/videos/check-hashes",
+    tag = "admin",
+    description = "Given a list of file hashes, return which ones already exist in the database. Max 1000 hashes per request.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "List of existing hashes", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn check_hashes(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<CheckHashesRequest>,
@@ -482,6 +573,20 @@ pub async fn check_hashes(
 }
 
 /// POST /admin/videos/check-files
+#[utoipa::path(
+    post,
+    path = "/admin/videos/check-files",
+    tag = "admin",
+    description = "Given a list of (name, size) pairs, return which indices already exist in the database. Max 1000 files per request.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Indices of existing files", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn check_files(
     State(state): State<Arc<AppState>>,
     SafeJson(files): SafeJson<Vec<FileCheckItem>>,
@@ -503,6 +608,21 @@ pub async fn check_files(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/videos/scan",
+    tag = "admin",
+    summary = "Scan media directory",
+    description = "Scan the configured media directory for video and image files not yet in the database. New files are added with hashes and metadata.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body(content_type = "multipart/form-data", description = "Optional multipart form with a `category` field"),
+    responses(
+        (status = 200, description = "Scan result", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn scan_media(
     State(state): State<Arc<AppState>>,
     multipart: Option<Multipart>,
@@ -533,6 +653,23 @@ pub async fn scan_media(
 }
 
 /// PUT /admin/videos/{id}
+#[utoipa::path(
+    put,
+    path = "/admin/videos/{id}",
+    tag = "admin",
+    description = "Update title, description, and/or category for a video",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "Video ID")
+    ),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Update result", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn update_video(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
@@ -584,6 +721,23 @@ pub async fn update_video(
 }
 
 /// DELETE /admin/videos/{id}
+#[utoipa::path(
+    delete,
+    path = "/admin/videos/{id}",
+    tag = "admin",
+    description = "Delete a video and its associated physical files, playback history, likes, and favorites",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = String, Path, description = "视频 ID（数字或 hashid）")
+    ),
+    responses(
+        (status = 200, description = "Delete result", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn delete_video(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -617,6 +771,20 @@ pub async fn delete_video(
 }
 
 /// DELETE /admin/videos/batch
+#[utoipa::path(
+    delete,
+    path = "/admin/videos/batch",
+    tag = "admin",
+    description = "Delete multiple videos and their associated files, playback history, likes, and favorites in a single transaction. Max 500 IDs per request.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Delete result", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
     SafeJson(ids): SafeJson<Vec<String>>,
@@ -655,6 +823,24 @@ pub async fn delete_videos(
 }
 
 /// POST /admin/videos/{id}/cover
+#[utoipa::path(
+    post,
+    path = "/admin/videos/{id}/cover",
+    tag = "admin",
+    description = "Upload a cover image for a specific video via multipart form",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    params(
+        ("id" = i64, Path, description = "Video ID")
+    ),
+    request_body(content_type = "multipart/form-data", description = "Multipart form with a single `file` field (cover image)"),
+    responses(
+        (status = 204, description = "Cover uploaded successfully"),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn upload_cover(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
@@ -684,6 +870,18 @@ pub async fn upload_cover(
 }
 
 /// POST /admin/videos/backfill-thumbnails
+#[utoipa::path(
+    post,
+    path = "/admin/videos/backfill-thumbnails",
+    tag = "admin",
+    description = "Scan all local videos without covers and generate thumbnails using ffmpeg. Runs in batches to avoid memory spikes.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Backfill result", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
 pub async fn backfill_thumbnails(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     match state.services.media.backfill_thumbnails().await {
         Ok((generated, errors)) => {
@@ -701,6 +899,22 @@ pub struct BatchCategoryRequest {
     pub category: String,
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/videos/batch-category",
+    tag = "admin",
+    summary = "Batch update video categories",
+    description = "批量修改视频分类（最多 1000 个，分类名最多 100 字符）",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Categories updated", body = serde_json::Value),
+        (status = 400, description = "Bad request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn batch_update_category(
     State(state): State<Arc<AppState>>,
     SafeJson(req): SafeJson<BatchCategoryRequest>,

@@ -12,15 +12,15 @@ use crate::db::log_slow_query;
 /// a cache each one costs a SHA-256 hash plus a 2-table JOIN.
 ///
 /// Invalidation: logout (`delete_token`) has the raw token and invalidates
-/// precisely. Admin kick / password reset revoke by user_id and cannot
-/// enumerate the raw tokens held in this cache, so those revocations take
-/// effect within at most `TOKEN_CACHE_TTL_SECS` seconds. We accept that
-/// TTL-bounded revocation delay (same tradeoff as the media_auth cache) —
-/// revocation immediacy is prioritised by the fact that we only ever cache
-/// VALID (Some) results: a revoked token keeps authenticating for at most
-/// `TOKEN_CACHE_TTL_SECS`, never longer. Negative results are never cached,
-/// so the find_token_detail "kicked / expired" differentiation in bearer_auth
-/// keeps working unchanged.
+/// precisely; user_id-based revocations (`revoke_tokens_by_user_id`,
+/// `delete_tokens_by_user_id`, `delete_user`, guest merge) enumerate the
+/// cached UserRows and evict every token of that user, so kick / password
+/// reset / single-session supersede take effect immediately in-process.
+/// We only ever cache VALID (Some) results, so a token that is not explicitly
+/// invalidated still authenticates for at most `TOKEN_CACHE_TTL_SECS` (e.g.
+/// direct DB manipulation outside the repo). Negative results are never
+/// cached, so the find_token_detail "kicked / expired" differentiation in
+/// bearer_auth keeps working unchanged.
 ///
 /// The cached UserRow carries role/approved; role/approval changes are
 /// likewise TTL-bounded, which is acceptable.
@@ -36,6 +36,23 @@ fn token_cache() -> &'static Cache<String, UserRow> {
             .max_capacity(TOKEN_CACHE_CAPACITY)
             .build()
     })
+}
+
+/// 精确清除 `TOKEN_CACHE` 中属于 `user_id` 的所有 token。
+///
+/// 单会话踢旧（重新登录）、管理员踢人、密码重置等按 user_id 的吊销操作
+/// 因此立即生效，而不再依赖 10 秒 TTL 兜底。缓存条目存有 UserRow（含 id），
+/// 可以反向枚举；吊销是低频操作，扫一遍（≤1 万条）成本可忽略。
+fn invalidate_cached_tokens_for_user(user_id: i64) {
+    let cache = token_cache();
+    let tokens: Vec<String> = cache
+        .iter()
+        .filter(|(_, user)| user.id == user_id)
+        .map(|(token, _)| token.as_ref().clone())
+        .collect();
+    for token in tokens {
+        cache.invalidate(&token);
+    }
 }
 
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -240,6 +257,8 @@ impl UserRepository {
             .await?;
 
         tx.commit().await?;
+        // 影子账号已删除：立即从 TOKEN_CACHE 清除访客旧 token
+        invalidate_cached_tokens_for_user(guest_id);
         Ok(video_rows)
     }
 
@@ -476,6 +495,9 @@ impl UserRepository {
             .bind(user_id)
             .execute(&self.pool)
             .await?;
+        // 立即生效：清除该用户在 TOKEN_CACHE 中的旧 token（否则最多 10s 内
+        // 旧 token 仍可通过 bearer_auth / media_auth）
+        invalidate_cached_tokens_for_user(user_id);
         Ok(result.rows_affected())
     }
 
@@ -492,6 +514,7 @@ impl UserRepository {
             .bind(user_id)
             .execute(&self.pool)
             .await?;
+        invalidate_cached_tokens_for_user(user_id);
         Ok(result.rows_affected())
     }
 
@@ -543,6 +566,8 @@ impl UserRepository {
             .bind(user_id)
             .execute(&self.pool)
             .await?;
+        // 用户已删除：缓存中的 token 也必须立即失效（否则仍能通过鉴权 10s）
+        invalidate_cached_tokens_for_user(user_id);
         Ok(result.rows_affected() > 0)
     }
 
@@ -585,6 +610,50 @@ impl UserRepository {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// 原子地重置密码并吊销该用户所有有效 token。
+    ///
+    /// **SQL**（同一事务）：
+    /// 1. `UPDATE users SET password_hash = $1 WHERE id = $2`
+    /// 2. `UPDATE auth_tokens SET revoked = true
+    ///     WHERE user_id = $2 AND expires_at > CURRENT_TIMESTAMP AND NOT revoked`
+    ///
+    /// 任一步失败整体回滚，不会出现“密码已改但旧 token 仍有效”的危险中间态
+    /// （旧实现先改密码再单独删/吊销 token，第二步失败只记日志）。
+    ///
+    /// 返回用户是否存在（第一条 UPDATE 是否命中）；不存在时回滚并返回 `false`。
+    ///
+    /// **Index**: `users(id)` PK；`auth_tokens(user_id, revoked, expires_at)`。
+    pub async fn reset_password_and_revoke_tokens(
+        &self,
+        user_id: i64,
+        hash: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let updated = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+            .bind(hash)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        if updated.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        sqlx::query(
+            "UPDATE auth_tokens SET revoked = true \
+             WHERE user_id = $1 AND expires_at > CURRENT_TIMESTAMP AND NOT revoked",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        // 事务提交后立即清除本地缓存的旧 token，吊销即时生效
+        invalidate_cached_tokens_for_user(user_id);
+        Ok(true)
     }
 
     /// Toggle admin status for a user.

@@ -41,12 +41,14 @@ describe('ConfirmDialog', () => {
     expect(confirm.className).toContain('cd-btn-danger')
   })
 
-  it('calls onCancel when the cancel button is clicked', () => {
+  it('calls onCancel and onClosed when the cancel button is clicked', () => {
     vi.useFakeTimers()
-    const { props } = renderDialog()
+    const onClosed = vi.fn()
+    const { props } = renderDialog({ onClosed })
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     act(() => { vi.advanceTimersByTime(250) })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
+    expect(onClosed).toHaveBeenCalledTimes(1)
     expect(props.onConfirm).not.toHaveBeenCalled()
   })
 
@@ -58,15 +60,18 @@ describe('ConfirmDialog', () => {
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
-  it('calls onConfirm when the confirm button is clicked', async () => {
+  it('calls onConfirm and onClosed, but not onCancel, when the confirm button is clicked', async () => {
     vi.useFakeTimers()
-    const { props } = renderDialog()
+    const onClosed = vi.fn()
+    const { props } = renderDialog({ onClosed })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '确定' }))
     })
     act(() => { vi.advanceTimersByTime(250) })
     expect(props.onConfirm).toHaveBeenCalledTimes(1)
-    expect(props.onCancel).toHaveBeenCalledTimes(1)
+    // 确认成功不再回调 onCancel，调用方可区分「取消」与「确认」
+    expect(props.onCancel).not.toHaveBeenCalled()
+    expect(onClosed).toHaveBeenCalledTimes(1)
   })
 
   it('shows loading state while the async confirm is pending and blocks Esc', async () => {
@@ -81,7 +86,8 @@ describe('ConfirmDialog', () => {
     expect(props.onCancel).not.toHaveBeenCalled()
     await act(async () => { resolveConfirm() })
     act(() => { vi.advanceTimersByTime(250) })
-    expect(props.onCancel).toHaveBeenCalledTimes(1)
+    // 异步确认成功后同样只走成功路径
+    expect(props.onCancel).not.toHaveBeenCalled()
   })
 
   it('calls onCancel when Esc is pressed', () => {

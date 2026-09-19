@@ -146,12 +146,25 @@ export default function Home() {
     return () => document.removeEventListener('keydown', handleArrowKeys)
   }, [])
 
+  // 翻页请求同步去重：虚拟化触底、底部哨兵、手动按钮共用同一在途标记，
+  // 避免同一页被并发请求两次（query-core 不会对 fetchNextPage 去重）
+  const loadingMoreRef = useRef(false)
+  const handleLoadMore = useCallback(() => {
+    if (loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    fetchNextPage()
+      .finally(() => {
+        loadingMoreRef.current = false
+      })
+      .catch(() => {})
+  }, [fetchNextPage])
+
   // 底部哨兵
   const sentinelRef = useRef<HTMLDivElement>(null)
   useInfiniteScroll(sentinelRef, {
     hasMore: !!hasNextPage && filteredVideos.length > 0,
     loading: isFetchingNextPage,
-    onLoadMore: fetchNextPage,
+    onLoadMore: handleLoadMore,
   })
 
   const structuredData = useMemo(() => ({
@@ -168,7 +181,6 @@ export default function Home() {
   }), [t])
 
   const handleRetry = useCallback(() => refetch(), [refetch])
-  const handleLoadMore = useCallback(() => fetchNextPage(), [fetchNextPage])
 
   return (
     <div className="home">

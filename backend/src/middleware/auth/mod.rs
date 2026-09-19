@@ -191,7 +191,7 @@ pub async fn role_auth(req: Request, next: Next, min_role: i16) -> Response {
 
 mod media;
 
-pub use media::{media_auth, AuthUser};
+pub use media::{invalidate_media_auth_token, invalidate_media_auth_user, media_auth, AuthUser};
 
 #[inline]
 pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {

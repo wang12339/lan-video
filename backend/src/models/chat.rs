@@ -1,4 +1,5 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::util::hashid_serde::{serialize_id, serialize_option_id};
 
@@ -28,20 +29,21 @@ pub struct NewChatMessage<'a> {
 }
 
 /// 历史分页响应（id 游标，倒序返回，前端自行反转拼接）
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ChatHistoryResponse {
     pub items: Vec<ChatMessageItem>,
     /// 是否还有更早的消息
     pub has_more: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ChatMessageItem {
     pub id: i64,
     /// hashid 序列化（与 /auth/user 等一致，前端用于"我的消息"比对）
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(serialize_with = "serialize_option_id")]
     #[serde(rename = "userId")]
+    #[schema(value_type = Option<String>, example = "k1a2b3c4")]
     pub user_id: Option<i64>,
     pub username: String,
     /// 发言者是否为访客影子账号（前端显示"访客"徽标）
@@ -62,7 +64,7 @@ pub struct ChatMessageItem {
 }
 
 /// WS 下行事件（serde_json 序列化为文本帧）
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatEvent {
     /// 新消息（含发送者信息；userId 为 hashid，与 /auth/user 一致）

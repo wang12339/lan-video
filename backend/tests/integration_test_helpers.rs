@@ -120,6 +120,7 @@ pub fn test_config() -> AppConfig {
         gateway_client_id: String::new(),
         gateway_client_secret: String::new(),
         gateway_redirect_uri: String::new(),
+        metrics_token: String::new(),
     }
 }
 

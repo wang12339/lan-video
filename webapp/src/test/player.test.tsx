@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -146,13 +146,15 @@ beforeEach(() => {
 
   // 默认：已登录用户
   mockUseAuth.mockReturnValue({
-    user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true },
+    user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true, isGuest: false },
     loading: false,
     kickedMsg: null,
     clearKickedMsg: vi.fn(),
     login: vi.fn(),
+    loginWithToken: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    enterGuest: vi.fn(),
     refreshUser: vi.fn(),
     setUser: vi.fn(),
   })
@@ -551,13 +553,15 @@ describe('Player 页面', () => {
 
   it('管理用户看到删除按钮', async () => {
     mockUseAuth.mockReturnValue({
-      user: { id: 'u1', username: 'admin', isAdmin: true, avatarUrl: undefined, createdAt: '', emailVerified: true },
+      user: { id: 'u1', username: 'admin', isAdmin: true, avatarUrl: undefined, createdAt: '', emailVerified: true, isGuest: false },
       loading: false,
       kickedMsg: null,
       clearKickedMsg: vi.fn(),
       login: vi.fn(),
+      loginWithToken: vi.fn(),
       register: vi.fn(),
       logout: vi.fn(),
+      enterGuest: vi.fn(),
       refreshUser: vi.fn(),
       setUser: vi.fn(),
     })
@@ -667,7 +671,7 @@ describe('Player 页面', () => {
       expect(document.querySelector('video.player-video')).toBeInTheDocument()
     })
 
-    const videoEl = document.querySelector('video.player-video')!
+    const videoEl = document.querySelector('video.player-video') as HTMLVideoElement
     fireEvent.click(videoEl)
 
     expect(videoEl.play).toHaveBeenCalled()
@@ -685,13 +689,15 @@ describe('Player 页面', () => {
 
     // refreshUser 返回同 id 的新对象引用
     mockUseAuth.mockReturnValue({
-      user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true },
+      user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true, isGuest: false },
       loading: false,
       kickedMsg: null,
       clearKickedMsg: vi.fn(),
       login: vi.fn(),
+      loginWithToken: vi.fn(),
       register: vi.fn(),
       logout: vi.fn(),
+      enterGuest: vi.fn(),
       refreshUser: vi.fn(),
       setUser: vi.fn(),
     })

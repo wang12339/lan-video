@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   mapVideo, mapImage, mapHistory, mapPlaylist, formatCount, formatDuration,
 } from '../api/utils'
-import type { Video, PlaybackHistory } from '../api/types'
+import type { SourceType, Video, PlaybackHistory } from '../api/types'
 import type { Playlist } from '../api/playlists'
 
 function makeVideo(overrides: Partial<Video> = {}): Video {
@@ -75,7 +75,7 @@ describe('mapVideo', () => {
 
   it('applies defaults for empty fields', () => {
     const m = mapVideo(makeVideo({
-      title: '', category: '', description: '', sourceType: '',
+      title: '', category: '', description: '', sourceType: '' as SourceType,
       duration: 0, views: 0, watchPosition: undefined,
     }))
     expect(m?.title).toBe('未命名')

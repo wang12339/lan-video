@@ -222,6 +222,18 @@ fn notify_admins_new_registration(state: Arc<AppState>, username: String) {
     });
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/register",
+    tag = "auth",
+    summary = "Register a new user",
+    description = "Create a new user account. Requires REGISTRATION_ENABLED=true. The first registered user becomes admin only when ALLOW_FIRST_USER_ADMIN=true; otherwise new users start as viewers and need admin approval. Rate-limited per username.",
+    request_body = AuthRequest,
+    responses(
+        (status = 200, description = "Registration result", body = AuthResponse),
+        (status = 429, description = "Too many attempts — rate limited", body = AuthResponse)
+    )
+)]
 pub async fn register(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -251,6 +263,18 @@ pub async fn register(
     Ok(handle_auth_result(result, &state))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "auth",
+    summary = "Login with username and password",
+    description = "Authenticate and receive a bearer token. Rate-limited per username.",
+    request_body = AuthRequest,
+    responses(
+        (status = 200, description = "Login result with auth token", body = AuthResponse),
+        (status = 429, description = "Too many attempts — rate limited", body = AuthResponse)
+    )
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -276,6 +300,13 @@ pub async fn login(
             }
         } else if let Some(token) = &resp.token {
             merge_guest_session_if_any(&state, &headers, token).await;
+            // 单会话“后登录优先”：普通用户本次登录已吊销全部旧 token，
+            // 同步失效该用户的媒体鉴权缓存（管理员可多设备，不涉及踢旧）。
+            if let Ok(Some(user)) = state.repos.user.find_user_by_token(token).await {
+                if user.role < 3 {
+                    auth_mw::invalidate_media_auth_user(&state, user.id).await;
+                }
+            }
         }
     }
     Ok(handle_auth_result(result, &state))
@@ -287,6 +318,17 @@ pub async fn login(
 /// cookie）。访客与登录用户同权限层（role=1），但只能看到/播放自己
 /// 上传的内容；之后注册或登录真实账号时，访客期间的内容自动合并。
 /// 幂等性由前端保证：先 `GET /auth/user`，仅在 401 时才调用本接口。
+#[utoipa::path(
+    post,
+    path = "/auth/guest",
+    tag = "auth",
+    summary = "Enter guest mode (anonymous session)",
+    description = "创建匿名访客影子账号并签发 7 天 token（同时以 bearer token 与 HttpOnly cookie 下发）。访客与登录用户同权限层，但只能看到/播放自己上传的内容；之后注册或登录真实账号时内容自动合并。是否调用由前端保证幂等（先 GET /auth/user，仅 401 时调用）。按 IP 限速。",
+    responses(
+        (status = 200, description = "Guest session created", body = AuthResponse),
+        (status = 429, description = "Too many guest sessions from this IP — rate limited", body = AuthResponse)
+    )
+)]
 pub async fn guest_session(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -298,6 +340,15 @@ pub async fn guest_session(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "auth",
+    summary = "Logout and invalidate token",
+    description = "Invalidate the current auth token and clear the session cookie",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "Logged out successfully", body = AuthResponse))
+)]
 pub async fn logout(State(state): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
     let token = auth_mw::extract_bearer_token(req.headers())
         .or_else(|| auth_mw::extract_token_from_cookie(req.headers()));
@@ -308,6 +359,12 @@ pub async fn logout(State(state): State<Arc<AppState>>, req: Request) -> impl In
         .auth
         .logout(None, token.as_deref(), &ip)
         .await;
+
+    // 失效该 token 的媒体鉴权缓存（本地精确清除 + Redis DEL），
+    // 否则已登出的设备在 10 秒 TTL 内仍能用旧 token 读媒体文件。
+    if let Some(t) = token.as_deref() {
+        auth_mw::invalidate_media_auth_token(&state, t).await;
+    }
 
     let mut resp = Json(AuthResponse {
         ok: true,
@@ -323,6 +380,15 @@ pub async fn logout(State(state): State<Arc<AppState>>, req: Request) -> impl In
     resp
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/user",
+    tag = "auth",
+    summary = "Get current user info",
+    description = "Returns basic information about the authenticated user",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "User details", body = UserInfoResponse))
+)]
 /// GET /auth/user
 pub async fn user_info(
     State(state): State<Arc<AppState>>,
@@ -348,6 +414,15 @@ pub async fn user_info(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/user/profile",
+    tag = "auth",
+    summary = "Get user profile with stats",
+    description = "Returns user profile including watch history, total watch time, and videos watched count",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "Profile with watch history", body = UserProfileResponse))
+)]
 /// GET /auth/user/profile
 pub async fn user_profile(
     State(state): State<Arc<AppState>>,
@@ -371,6 +446,18 @@ pub async fn user_profile(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/user/avatar",
+    tag = "auth",
+    summary = "Upload avatar image",
+    description = "通过 multipart 表单上传头像（JPG/PNG/WebP/GIF，最大 5MB），按 magic bytes 校验文件类型",
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Avatar uploaded", body = serde_json::Value),
+        (status = 400, description = "不支持的图片格式或文件过大")
+    )
+)]
 /// POST /auth/user/avatar
 pub async fn upload_avatar(
     State(state): State<Arc<AppState>>,
@@ -469,6 +556,15 @@ pub async fn upload_avatar(
     })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/forgot-password",
+    tag = "auth",
+    summary = "Request a password reset email",
+    description = "发送密码重置邮件。无论邮箱是否注册都返回相同响应，避免邮箱枚举。IP 与邮箱均有速率限制。",
+    request_body = ForgotPasswordRequest,
+    responses((status = 200, description = "Reset request accepted", body = ForgotPasswordResponse))
+)]
 pub async fn forgot_password(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -557,6 +653,18 @@ pub async fn forgot_password(
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/reset-password",
+    tag = "auth",
+    summary = "Reset password",
+    description = "使用邮件中的令牌设置新密码（8-128 字符，需包含大小写字母、数字、特殊字符中至少三种），成功后吊销该用户所有令牌",
+    request_body = ResetPasswordRequest,
+    responses(
+        (status = 200, description = "Password reset", body = serde_json::Value),
+        (status = 400, description = "重置链接无效或已过期")
+    )
+)]
 /// POST /auth/reset-password
 pub async fn reset_password(
     State(state): State<Arc<AppState>>,
@@ -596,12 +704,14 @@ pub async fn reset_password(
         .map_err(|e| internal_error_log("password hash join error", &e))?
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "密码处理失败"))?;
 
+    // 原子化：改密码 + 吊销全部 token 同事务提交；吊销失败即整体失败，
+    // 不会留下“密码已改、旧 token 仍可用”的状态。
     let updated = state
         .repos
         .user
-        .update_password_hash(user_id, &hash)
+        .reset_password_and_revoke_tokens(user_id, &hash)
         .await
-        .map_err(|e| internal_error_log("update_password_hash", &e))?;
+        .map_err(|e| internal_error_log("reset_password_and_revoke_tokens", &e))?;
 
     if !updated {
         // The user was deleted between token validation and the update.
@@ -611,9 +721,8 @@ pub async fn reset_password(
         ));
     }
 
-    if let Err(e) = state.repos.user.revoke_tokens_by_user_id(user_id).await {
-        tracing::error!("revoke_tokens_by_user_id after password reset: {}", e);
-    }
+    // 同步失效该用户媒体鉴权缓存（Redis 可用时精确，否则 10s TTL 兜底）
+    auth_mw::invalidate_media_auth_user(&state, user_id).await;
 
     state.metrics.record_password_reset();
 
@@ -622,6 +731,15 @@ pub async fn reset_password(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/reset-password",
+    tag = "auth",
+    summary = "Password reset page (email link)",
+    description = "处理邮件中的重置链接，携带 token 重定向到前端重置密码页面",
+    params(("token" = String, Query, description = "密码重置令牌")),
+    responses((status = 303, description = "重定向到前端重置密码页面"))
+)]
 /// GET /auth/reset-password?token=xxx
 ///
 /// Handles password reset links from emails. Redirects to the frontend
@@ -636,12 +754,36 @@ pub async fn reset_password_get(
     axum::response::Redirect::to(&format!("{}/webapp/?reset_token={}", base, params.token))
 }
 
+#[utoipa::path(
+    put,
+    path = "/auth/user/email",
+    tag = "auth",
+    summary = "Update current user's email",
+    description = "更新当前用户邮箱（自动转小写）。需当前密码重认证；成功后吊销全部旧 token 并重置邮箱验证状态。",
+    security(("bearerAuth" = [])),
+    request_body = UpdateEmailRequest,
+    responses(
+        (status = 200, description = "邮箱已更新", body = serde_json::Value),
+        (status = 400, description = "邮箱格式无效"),
+        (status = 401, description = "当前密码错误"),
+        (status = 409, description = "该邮箱已被其他账号绑定")
+    )
+)]
 /// PUT /auth/user/email
+///
+/// 安全模型（本次加固）：
+/// 1. 改邮箱属于敏感操作，必须先用当前密码重认证（防会话内跨站请求/
+///    物理接触者静默改绑邮箱后走密码找回接管账号）；
+/// 2. 成功后吊销该用户全部旧 token（其他设备立即下线），并签发一个新
+///    token 返回给当前设备（刚验证过密码），响应按 `auth_response` 的
+///    写法下发 token/csrf cookie；
+/// 3. `user_repo.update_email` 会把 `email_verified` 置回 false，防止未
+///    验证的新邮箱被当成已验证。
 pub async fn update_email(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<UpdateEmailRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     let email = req.email.trim().to_lowercase();
 
     // Enhanced email validation
@@ -650,6 +792,22 @@ pub async fn update_email(
             StatusCode::BAD_REQUEST,
             "请输入有效的邮箱地址",
         ));
+    }
+
+    // 重认证：密码错误/为空统一泛化 401，不泄露账号状态
+    if req.password.is_empty()
+        || !state
+            .services
+            .auth
+            .verify_user_password(&auth_user.username, &req.password)
+            .await
+            .map_err(|e| internal_error_log("verify_user_password", &e))?
+    {
+        tracing::warn!(
+            user_id = auth_user.id,
+            "update_email rejected: password re-auth failed"
+        );
+        return Err(error_response(StatusCode::UNAUTHORIZED, "当前密码错误"));
     }
 
     state
@@ -667,15 +825,80 @@ pub async fn update_email(
             error_response(StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误")
         })?;
 
-    Ok(Json(
-        serde_json::json!({ "ok": true, "message": "邮箱已更新，验证状态已重置，请重新验证新邮箱" }),
-    ))
+    // 改绑成功：先吊销全部旧 token（其他设备全部下线），再为当前设备
+    // 签发新 token。吊销失败则整体失败，避免留下可用旧会话。
+    if let Err(e) = state
+        .repos
+        .user
+        .revoke_tokens_by_user_id(auth_user.id)
+        .await
+    {
+        tracing::error!("update_email: revoke_tokens_by_user_id failed: {}", e);
+        return Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "服务器内部错误",
+        ));
+    }
+    let new_token = state
+        .repos
+        .user
+        .create_token(auth_user.id)
+        .await
+        .map_err(|e| internal_error_log("create_token after update_email", &e))?;
+
+    // 媒体鉴权缓存同步失效该用户旧 token（Redis 可用时精确，否则 TTL 兜底）
+    auth_mw::invalidate_media_auth_user(&state, auth_user.id).await;
+
+    // 与 auth_response 相同的 cookie 处理：HttpOnly token + 非 HttpOnly csrf
+    let mut resp = Json(serde_json::json!({
+        "ok": true,
+        "message": "邮箱已更新，其他设备已下线，请重新验证新邮箱",
+        "token": new_token,
+    }))
+    .into_response();
+    if let Ok(val) = HeaderValue::from_str(&auth_mw::set_token_cookie(
+        &new_token,
+        crate::services::auth_service::COOKIE_MAX_AGE,
+        state.config.cookie_secure,
+    )) {
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, val);
+    }
+    if let Ok(val) = HeaderValue::from_str(&auth_mw::set_csrf_cookie(
+        crate::services::auth_service::COOKIE_MAX_AGE,
+        state.config.cookie_secure,
+    )) {
+        resp.headers_mut()
+            .append(axum::http::header::SET_COOKIE, val);
+    }
+    Ok(resp)
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/send-verification-email",
+    tag = "auth",
+    summary = "Resend email verification link",
+    description = "重新发送邮箱验证邮件。每 5 分钟最多 2 次（用户级速率限制）；SMTP 未配置时返回 503",
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Verification email result", body = SendVerificationEmailResponse),
+        (status = 503, description = "邮件服务未配置")
+    )
+)]
 pub async fn send_verification_email(
     State(state): State<Arc<AppState>>,
     Extension(auth_user): Extension<AuthUser>,
-) -> Json<SendVerificationEmailResponse> {
+) -> Result<Json<SendVerificationEmailResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // SMTP 未配置：明确返回 503，绝不静默把 email_verified 置 true
+    //（旧行为让用户误以为邮箱已验证，属于虚假验证）。
+    if !state.services.email.is_configured() {
+        return Err(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "邮件服务未配置",
+        ));
+    }
+
     let key = format!("verify_email:user:{}", auth_user.id);
     if state
         .rate_limiter
@@ -683,10 +906,10 @@ pub async fn send_verification_email(
         .await
         .is_err()
     {
-        return Json(SendVerificationEmailResponse {
+        return Ok(Json(SendVerificationEmailResponse {
             ok: false,
             message: "请求过于频繁，请稍后再试。".into(),
-        });
+        }));
     }
 
     let email = state
@@ -697,43 +920,41 @@ pub async fn send_verification_email(
         .ok()
         .flatten();
 
-    if state.services.email.is_configured() {
-        if let Some(ref email) = email {
-            if let Ok(token) = state
-                .repos
-                .user
-                .create_email_verification_token(auth_user.id)
-                .await
-            {
-                let verify_url = format!(
-                    "{}/auth/verify-email?token={}",
-                    state.config.public_url.trim_end_matches('/'),
-                    token
-                );
-                state
-                    .services
-                    .email
-                    .send_email_verification(email, &auth_user.username, &verify_url)
-                    .await;
-            }
+    if let Some(ref email) = email {
+        if let Ok(token) = state
+            .repos
+            .user
+            .create_email_verification_token(auth_user.id)
+            .await
+        {
+            let verify_url = format!(
+                "{}/auth/verify-email?token={}",
+                state.config.public_url.trim_end_matches('/'),
+                token
+            );
+            state
+                .services
+                .email
+                .send_email_verification(email, &auth_user.username, &verify_url)
+                .await;
         }
-
-        Json(SendVerificationEmailResponse {
-            ok: true,
-            message: "验证邮件已发送。如果您的邮箱没有收到，请稍后再试。".into(),
-        })
-    } else {
-        if email.is_some() {
-            let _ = state.repos.user.verify_email(auth_user.id).await;
-        }
-
-        Json(SendVerificationEmailResponse {
-            ok: true,
-            message: "验证邮件功能未配置。请联系管理员。".into(),
-        })
     }
+
+    Ok(Json(SendVerificationEmailResponse {
+        ok: true,
+        message: "验证邮件已发送。如果您的邮箱没有收到，请稍后再试。".into(),
+    }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/verify-email",
+    tag = "auth",
+    summary = "Email verification page (email link)",
+    description = "处理邮件中的验证链接，验证成功后直接返回成功/失败 HTML 页面",
+    params(("token" = String, Query, description = "邮箱验证令牌")),
+    responses((status = 200, description = "验证结果 HTML 页面", content_type = "text/html", body = String))
+)]
 /// GET /auth/verify-email?token=xxx
 ///
 /// Handles email verification links from emails. Verifies the token
@@ -776,6 +997,18 @@ pub async fn verify_email_get(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/verify-email",
+    tag = "auth",
+    summary = "Verify email with token",
+    description = "使用令牌验证邮箱地址",
+    request_body = VerifyEmailRequest,
+    responses(
+        (status = 200, description = "Email verified", body = serde_json::Value),
+        (status = 400, description = "验证链接无效或已过期")
+    )
+)]
 /// POST /auth/verify-email
 pub async fn verify_email(
     State(state): State<Arc<AppState>>,

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 // ── admin_logs ──
 
 /// Log entry parsed from JSON log file
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,
@@ -34,7 +35,7 @@ pub struct LogEntry {
     pub page: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct LogQuery {
     pub level: Option<String>,
     pub search: Option<String>,
@@ -44,33 +45,33 @@ pub struct LogQuery {
 
 // ── admin_system ──
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct TrackRequest {
     pub action: String,
     pub target: Option<String>,
     pub page: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegistrationToggleRequest {
     pub enabled: bool,
 }
 
 // ── admin_transcode ──
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct TranscodeRequest {
     pub resolutions: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TranscodeResponse {
     pub success: bool,
     pub message: String,
     pub job_id: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscodeStatusResponse {
     pub video_id: i64,
@@ -78,7 +79,7 @@ pub struct TranscodeStatusResponse {
     pub pending_jobs: Vec<JobInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct VariantInfo {
     pub resolution: String,
     pub file_path: String,
@@ -86,7 +87,7 @@ pub struct VariantInfo {
     pub bitrate: Option<i32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct JobInfo {
     pub id: i32,
     pub resolution: String,
@@ -97,12 +98,12 @@ pub struct JobInfo {
 // ── admin_user ──
 
 /// Admin reset user password request
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AdminResetPasswordRequest {
     pub password: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ApproveRequest {
     pub approved: bool,
 }

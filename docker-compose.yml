@@ -53,6 +53,9 @@ services:
         max-file: "3"
 
   app:
+    # 服务器部署使用 CI 推送至 GHCR 的镜像（docker compose pull 后 up 即用）；
+    # 本地开发保留 build，可 IMAGE_TAG=local docker compose up --build 使用。
+    image: ghcr.io/${IMAGE_NAME:-atmos-video}:${IMAGE_TAG:-main}
     build: .
     ports:
       # 仅绑定回环地址：明文流量必须经宿主机 Nginx 终止 TLS 并限流/鉴权

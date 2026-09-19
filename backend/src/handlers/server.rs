@@ -11,6 +11,14 @@ use crate::models::server::{
 };
 use crate::state::AppState;
 
+#[utoipa::path(
+    get,
+    path = "/server/info",
+    tag = "server",
+    summary = "Server version info",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "Server version info", body = ServerInfo))
+)]
 pub async fn server_info() -> Json<ServerInfo> {
     Json(ServerInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -27,6 +35,15 @@ pub async fn server_info() -> Json<ServerInfo> {
 /// - Version information
 ///
 /// Returns 200 if all checks pass, 503 if any critical check fails.
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "server",
+    responses(
+        (status = 200, description = "All checks passed", body = HealthCheckResponse),
+        (status = 503, description = "One or more checks failed", body = HealthCheckResponse)
+    )
+)]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let start = Instant::now();
     let mut checks = HashMap::new();
@@ -190,6 +207,13 @@ fn check_disk_space(path: &std::path::Path) -> Result<DiskUsage, String> {
 /// GET /metrics — Prometheus metrics endpoint
 ///
 /// Returns JSON with current metrics for monitoring and alerting.
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "server",
+    security(("metricsToken" = [])),
+    responses((status = 200, description = "JSON metrics", body = MetricsResponse))
+)]
 pub async fn metrics(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
     let metrics = &state.metrics;
 
@@ -215,16 +239,40 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Json<MetricsResponse
 /// GET /metrics/prometheus — Prometheus text format metrics
 ///
 /// Returns metrics in Prometheus text format for scraping.
+#[utoipa::path(
+    get,
+    path = "/metrics/prometheus",
+    tag = "server",
+    security(("metricsToken" = [])),
+    responses((status = 200, description = "Prometheus text exposition", content_type = "text/plain", body = String))
+)]
 pub async fn metrics_prometheus(State(state): State<Arc<AppState>>) -> String {
     state.metrics.encode_metrics()
 }
 
 /// GET /docs/openapi.json — OpenAPI specification
-pub async fn openapi_spec() -> Json<serde_json::Value> {
+///
+/// 直接序列化 `openapi::spec()` 返回的静态引用（首次调用后不再重建）。
+#[utoipa::path(
+    get,
+    path = "/docs/openapi.json",
+    tag = "server",
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "OpenAPI 3.1 document", body = serde_json::Value))
+)]
+pub async fn openapi_spec() -> Json<&'static serde_json::Value> {
     Json(crate::openapi::spec())
 }
 
 /// GET /docs — redirect to OpenAPI spec
+#[utoipa::path(
+    get,
+    path = "/docs",
+    tag = "server",
+    summary = "Redirect to the OpenAPI document",
+    security(("bearerAuth" = [])),
+    responses((status = 308, description = "Permanent redirect to /docs/openapi.json"))
+)]
 pub async fn docs_redirect() -> Redirect {
     Redirect::permanent("/docs/openapi.json")
 }

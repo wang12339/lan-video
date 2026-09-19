@@ -279,6 +279,8 @@
     "verifySent": "Verification email sent",
     "sendFailed": "Failed to send",
     "emailUpdated": "Email updated, please send a verification email",
+    "emailPasswordPrompt": "Current password",
+    "emailPasswordRequired": "Please enter your current password",
     "deletePlaylistTitle": "Delete playlist",
     "deletePlaylistConfirm": "Delete playlist \"{{name}}\"?",
     "playlistNamePlaceholder": "Playlist name",

@@ -459,8 +459,8 @@ describe('SpeedMenu', () => {
 
 describe('QualityMenu', () => {
   const variants: VideoVariant[] = [
-    { resolution: '720p', url: '/media/v_720p.m3u8' },
-    { resolution: '1080p', url: '/media/v_1080p.m3u8' },
+    { resolution: '720p', filePath: '/media/v_720p.m3u8', fileSize: 0 },
+    { resolution: '1080p', filePath: '/media/v_1080p.m3u8', fileSize: 0 },
   ]
 
   const defaultProps: React.ComponentProps<typeof QualityMenu> = {
@@ -579,7 +579,7 @@ describe('QualityMenu', () => {
   })
 
   it('单个 variant 也正确渲染', () => {
-    const singleVariant: VideoVariant[] = [{ resolution: '480p', url: '/media/v_480p.m3u8' }]
+    const singleVariant: VideoVariant[] = [{ resolution: '480p', filePath: '/media/v_480p.m3u8', fileSize: 0 }]
     render(<QualityMenu {...defaultProps} variants={singleVariant} showQualityMenu={true} />)
 
     const menu = screen.getByRole('menu')
