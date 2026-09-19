@@ -3,7 +3,12 @@ import { createPortal } from 'react-dom'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { listVideos, mapImage, burnVideo } from '../../api'
-import { getToken } from '../../api/client'
+import {
+  getGalleryCacheKey,
+  getGalleryCachedData,
+  setGalleryCacheData,
+  clearGalleryCache,
+} from '../../api/galleryCache'
 import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../components/Toast/Toast'
 import ConfirmDialog from '../../components/ui/ConfirmDialog'
@@ -16,45 +21,6 @@ const SEARCH_DEBOUNCE_MS = 300
 const INTERSECTION_ROOT_MARGIN = '0px 0px 300px 0px'
 /** 灯箱预加载前后各 2 张图片 */
 const LIGHTBOX_PRELOAD_RANGE = 2
-
-// ── API 响应缓存 ──────────────────────────────────────────────────────────────
-interface CacheEntry {
-  items: MappedImage[]
-  total: number
-  timestamp: number
-}
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 分钟
-const apiCache = new Map<string, CacheEntry>()
-
-function getCacheKey(type: string, query: string, page: number, size: number): string {
-  // 隔离登录态，避免跨账号串读（与 api/client.ts LRU 的 anon/token 隔离一致）
-  const tokenPart = getToken() ?? 'anon'
-  return `${tokenPart}:${type}:${query}:${page}:${size}`
-}
-
-function getCachedData(key: string): CacheEntry | null {
-  const entry = apiCache.get(key)
-  if (!entry) return null
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    apiCache.delete(key)
-    return null
-  }
-  return entry
-}
-
-function setCacheData(key: string, items: MappedImage[], total: number): void {
-  // 限制缓存大小，防止内存泄漏
-  if (apiCache.size > 200) {
-    const oldestKey = apiCache.keys().next().value
-    if (oldestKey !== undefined) apiCache.delete(oldestKey)
-  }
-  apiCache.set(key, { items, total, timestamp: Date.now() })
-}
-
-/** 清空 API 缓存（仅供测试使用） */
-export function clearGalleryCache(): void {
-  apiCache.clear()
-}
 
 // ── 图片卡片组件（memo 优化） ─────────────────────────────────────────────────
 interface GalleryCardProps {
@@ -148,8 +114,8 @@ export default function Gallery() {
     if (!append) setTotal(0)
     try {
       // 检查缓存
-      const cacheKey = getCacheKey('local_image', query, pageNum, PAGE_SIZE)
-      const cached = getCachedData(cacheKey)
+      const cacheKey = getGalleryCacheKey('local_image', query, pageNum, PAGE_SIZE)
+      const cached = getGalleryCachedData(cacheKey)
 
       let mapped: MappedImage[]
       let newTotal: number
@@ -162,7 +128,7 @@ export default function Gallery() {
         if (gen !== loadGenRef.current) return
         mapped = res.items.map(mapImage).filter((v): v is MappedImage => !!v)
         newTotal = res.total
-        setCacheData(cacheKey, mapped, newTotal)
+        setGalleryCacheData(cacheKey, mapped, newTotal)
       }
 
       if (append) {

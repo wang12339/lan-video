@@ -70,6 +70,8 @@ export function useVideoData(
 ): UseVideoDataReturn {
   const { t } = useTranslation()
   const { user } = useAuth()
+  // 只依赖用户 id：refreshUser 等身份重验返回新对象时不应触发重新加载
+  const userId = user?.id ?? null
 
   const [video, setVideo] = useState<MappedVideo | null>(() => null)
   const [loading, setLoading] = useState(true)
@@ -78,6 +80,8 @@ export function useVideoData(
   const [variants, setVariants] = useState<VideoVariant[]>(() => [])
   const [hlsUrl, setHlsUrl] = useState<string | null>(() => null)
   const lastVideoIdRef = useRef(videoId)
+  // 同一 videoId 只上报一次观看：身份重验导致的 effect 重跑不再重复计数
+  const countedViewsRef = useRef<Set<string>>(new Set())
 
   const safeSetVideo = useCallback((updater: React.SetStateAction<MappedVideo | null>) => {
     setVideo(prev => {
@@ -145,7 +149,7 @@ export function useVideoData(
     }
 
     if (!videoId) { setError(t('errors.missingVideoId')); setLoading(false); return }
-    if (!user && !isShared) {
+    if (!userId && !isShared) {
       setError(t('player.loginRequired'))
       setLoading(false)
       return
@@ -177,7 +181,10 @@ export function useVideoData(
         safeSetVideo(mv)
         const cleanTitle = mv.title.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || mv.title
         document.title = cleanTitle + ' · ATMOS'
-        incrementViews(videoId).catch(() => {})
+        if (!countedViewsRef.current.has(videoId)) {
+          countedViewsRef.current.add(videoId)
+          incrementViews(videoId).catch(() => {})
+        }
         loadRelated(mv.category)
 
         try {
@@ -211,7 +218,7 @@ export function useVideoData(
     }
     load()
     return () => { cancelled = true }
-  }, [videoId, isShared, shareToken, user, startSession, t, loadRelated, safeSetVideo])
+  }, [videoId, isShared, shareToken, userId, startSession, t, loadRelated, safeSetVideo])
 
   return {
     video, setVideo: safeSetVideo as React.Dispatch<React.SetStateAction<MappedVideo | null>>,

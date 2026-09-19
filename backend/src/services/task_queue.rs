@@ -553,6 +553,10 @@ async fn persist_variants(
 
 /// Startup crash recovery:
 /// 1. Rows left `processing` died mid-flight — reset them to `pending`.
+///    多实例部署下，重启本实例不能把其它实例**正在跑**的任务也重置
+///    （它们会与本实例重复转码、甚至同写同一输出文件），因此只回收
+///    "陈旧"行：`started_at` 缺失，或超过 10 分钟没有任何更新
+///    （正常转码远超该阈值时由 ffmpeg 超时兜底，不会误回收活任务）。
 /// 2. Rebuild in-memory tasks from all `pending` rows (grouped per video)
 ///    whose variant does not already exist on disk, and enqueue them.
 async fn recover_stale_jobs(
@@ -562,7 +566,9 @@ async fn recover_stale_jobs(
     media_root: &Path,
 ) {
     if let Err(e) = sqlx::query(
-        "UPDATE transcoding_jobs SET status = 'pending', started_at = NULL WHERE status = 'processing'",
+        "UPDATE transcoding_jobs SET status = 'pending', started_at = NULL \
+         WHERE status = 'processing' \
+           AND (started_at IS NULL OR started_at < NOW() - INTERVAL '10 minutes')",
     )
     .execute(pool)
     .await

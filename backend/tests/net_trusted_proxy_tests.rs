@@ -65,14 +65,31 @@ fn client_ip_trusted_proxy_peers_allowlist() {
     let req = ip_req(None, Some("203.0.113.9"), None);
     assert_eq!(client_ip(&req), "unknown");
 
-    // ── 场景 5：未配置白名单 = 旧行为，任意对端信任
+    // ── 场景 5：未配置白名单 = 不信任任何代理头（默认拒绝），防伪造
     std::env::remove_var("TRUSTED_PROXY_PEERS");
+    let req = ip_req(
+        Some(SocketAddr::from(([8, 8, 8, 8], 12345))),
+        Some("203.0.113.9"),
+        Some("6.6.6.6"),
+    );
+    assert_eq!(
+        client_ip(&req),
+        "8.8.8.8",
+        "TRUSTED_PROXY=1 但未配置 TRUSTED_PROXY_PEERS 时必须忽略伪造头"
+    );
+
+    // ── 场景 5b：白名单为空/全部非法同样等于不信任任何代理头
+    std::env::set_var("TRUSTED_PROXY_PEERS", "not-an-ip,,");
     let req = ip_req(
         Some(SocketAddr::from(([8, 8, 8, 8], 12345))),
         Some("203.0.113.9"),
         None,
     );
-    assert_eq!(client_ip(&req), "203.0.113.9");
+    assert_eq!(
+        client_ip(&req),
+        "8.8.8.8",
+        "无法解析的白名单条目不得导致任意对端被信任"
+    );
 
     // ── 场景 6：TRUSTED_PROXY 关闭 → 非 CF 对端伪造头被忽略（回归）
     std::env::remove_var("TRUSTED_PROXY");

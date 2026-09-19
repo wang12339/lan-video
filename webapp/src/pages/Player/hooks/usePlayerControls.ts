@@ -88,7 +88,7 @@ function clampVolume(val: number): number {
   return Math.max(0, Math.min(1, isNaN(val) ? 0.8 : val))
 }
 
-function normalizeSpeed(s: number): number {
+export function normalizeSpeed(s: number): number {
   if (VALID_PLAYBACK_RATES.has(s)) return s
   let closest = 1
   let minDiff = Infinity
@@ -102,6 +102,7 @@ function normalizeSpeed(s: number): number {
 export function usePlayerControls(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   playerRef: React.RefObject<HTMLDivElement | null>,
+  videoId: string,
   metrics?: {
     recordQualitySwitchStart: (from: string, to: string) => void
     recordQualitySwitchResult: (success: boolean) => void
@@ -166,10 +167,11 @@ export function usePlayerControls(
     } catch { /* playback rate not supported */ }
     setSpeed(valid)
     trackClick('倍速', `${old}x→${valid}x`)
-    if (getPref('speedMem')) {
-      try { localStorage.setItem('atmos_speed_video', String(valid)) } catch { /* noop */ }
+    // 与 useVideoSource 的读取键保持一致：按视频记忆倍速
+    if (getPref('speedMem') && videoId) {
+      try { localStorage.setItem('atmos_speed_' + videoId, String(valid)) } catch { /* noop */ }
     }
-  }, [videoRef])
+  }, [videoRef, videoId])
 
   const setVolumeValue = useCallback((val: number) => {
     const v = videoRef.current

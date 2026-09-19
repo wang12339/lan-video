@@ -119,9 +119,10 @@ function renderPlayer(route = '/player?id=v1') {
 
 const { useAuth } = await import('../context/AuthContext')
 const { getVideo, mapVideo, incrementViews, savePlayback, startPlaybackSession,
-        stopPlaybackSession, getSimilarVideos,
+        stopPlaybackSession, getSimilarVideos, getFavoriteStatus, toggleFavorite,
         listVideos } = await import('../api')
 const { request } = await import('../api/client')
+const { getPref } = await import('../api/prefs')
 
 const mockUseAuth = vi.mocked(useAuth)
 const mockGetVideo = vi.mocked(getVideo)
@@ -133,6 +134,8 @@ const mockStopSession = vi.mocked(stopPlaybackSession)
 const mockGetSimilar = vi.mocked(getSimilarVideos)
 const mockListVideos = vi.mocked(listVideos)
 const mockRequest = vi.mocked(request)
+const mockGetFavoriteStatus = vi.mocked(getFavoriteStatus)
+const mockToggleFavorite = vi.mocked(toggleFavorite)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -668,5 +671,112 @@ describe('Player 页面', () => {
     fireEvent.click(videoEl)
 
     expect(videoEl.play).toHaveBeenCalled()
+  })
+
+  // ── 修复回归：计数/缓存/倍速/收藏 ──────────────────────────────────────────
+
+  it('身份重验（user 引用变化但 id 相同）不重复拉取与计数', async () => {
+    const { rerender } = renderPlayer()
+
+    await waitFor(() => {
+      expect(mockIncrementViews).toHaveBeenCalledTimes(1)
+    })
+    expect(mockGetVideo).toHaveBeenCalledTimes(1)
+
+    // refreshUser 返回同 id 的新对象引用
+    mockUseAuth.mockReturnValue({
+      user: { id: 'u1', username: 'testuser', isAdmin: false, avatarUrl: undefined, createdAt: '', emailVerified: true },
+      loading: false,
+      kickedMsg: null,
+      clearKickedMsg: vi.fn(),
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+      setUser: vi.fn(),
+    })
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/player?id=v1']}>
+          <Player />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    await act(async () => { await Promise.resolve() })
+
+    expect(mockGetVideo).toHaveBeenCalledTimes(1)
+    expect(mockIncrementViews).toHaveBeenCalledTimes(1)
+  })
+
+  it('倍速记忆按 videoId 写入（atmos_speed_{id}）', async () => {
+    vi.mocked(getPref).mockReturnValue(true)
+    localStorage.removeItem('atmos_speed_v1')
+    localStorage.removeItem('atmos_speed_video')
+
+    renderPlayer()
+
+    await waitFor(() => {
+      expect(document.querySelector('.speed-wrap')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '倍速' }))
+    fireEvent.click(screen.getByText('2×'))
+
+    expect(localStorage.getItem('atmos_speed_v1')).toBe('2')
+    expect(localStorage.getItem('atmos_speed_video')).toBeNull()
+
+    localStorage.removeItem('atmos_speed_v1')
+  })
+
+  it('从 atmos_speed_{id} 恢复合法倍速', async () => {
+    vi.mocked(getPref).mockReturnValue(true)
+    localStorage.setItem('atmos_speed_v1', '1.5')
+
+    renderPlayer()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '倍速' })).toHaveTextContent('1.5×')
+    })
+
+    localStorage.removeItem('atmos_speed_v1')
+  })
+
+  it('非法倍速记忆值不赋值（保持 1×，不触发白屏）', async () => {
+    vi.mocked(getPref).mockReturnValue(true)
+    localStorage.setItem('atmos_speed_v1', 'abc')
+
+    renderPlayer()
+
+    await waitFor(() => {
+      expect(mockGetVideo).toHaveBeenCalledWith('v1')
+    })
+    expect(document.querySelector('.player-page')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '倍速' })).toHaveTextContent('1×')
+
+    localStorage.removeItem('atmos_speed_v1')
+  })
+
+  it('收藏切换结果不被在途的过期状态响应覆盖', async () => {
+    let resolveStatus!: (v: { favorited: boolean }) => void
+    mockGetFavoriteStatus.mockReturnValueOnce(new Promise((r) => { resolveStatus = r }))
+    mockToggleFavorite.mockResolvedValueOnce({ favorited: true } as never)
+
+    renderPlayer()
+
+    const favBtn = await screen.findByRole('button', { name: '收藏' })
+    fireEvent.click(favBtn)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '已取消收藏' })).toBeInTheDocument()
+    })
+
+    // 过期响应此时才返回，不应覆盖用户刚切换的状态
+    await act(async () => {
+      resolveStatus({ favorited: false })
+    })
+
+    expect(screen.getByRole('button', { name: '已取消收藏' })).toBeInTheDocument()
   })
 })

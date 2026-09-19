@@ -1773,6 +1773,65 @@ async fn test_http_register_login_logout_flow() {
     cleanup_test_user(&pool, &username).await;
 }
 
+/// CSRF 防护：登录/注册只接受 application/json。浏览器跨站表单可发
+/// text/plain，必须在解析前 415 拒绝；大小写变体与 charset 参数应被接受。
+#[tokio::test]
+async fn test_http_auth_requires_json_content_type() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let (app, pool) = build_http_app().await;
+    let username = unique_username("ct_guard");
+    let payload =
+        serde_json::json!({ "username": username, "password": STRONG_PASSWORD }).to_string();
+
+    // 缺少 Content-Type → 415
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/register")
+        .body(Body::from(payload.clone()))
+        .unwrap();
+    let res = send(&app, req).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "缺少 Content-Type 必须被拒绝"
+    );
+
+    // text/plain（跨站表单可发的类型）→ 415
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/login")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(payload.clone()))
+        .unwrap();
+    let res = send(&app, req).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "text/plain 跨站表单必须被拒绝"
+    );
+
+    // application/json 的大小写变体 + charset 参数 → 接受
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/register")
+        .header(header::CONTENT_TYPE, "Application/JSON; charset=utf-8")
+        .body(Body::from(payload))
+        .unwrap();
+    let res = send(&app, req).await;
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "合法 JSON Content-Type 应被接受"
+    );
+
+    restore_registration_disabled(&pool).await;
+    cleanup_test_user(&pool, &username).await;
+}
+
 #[tokio::test]
 async fn test_http_forgot_password_response_consistency() {
     let Some(_) = database_url() else {
@@ -2208,10 +2267,10 @@ async fn test_rate_limiting_on_login() {
         .expect("register");
     assert!(reg.ok);
 
-    // Attempt login with wrong password multiple times to trigger rate limit
-    // The rate limiter allows 3 attempts per 60s window
-    for i in 0..5 {
-        let result = svc
+    // 同一用户名 60 秒内的错误密码尝试上限为 5 次，达到上限的那次即被
+    // 拒绝（用户名维度只在密码校验失败后累加/检查）。
+    for i in 0..4 {
+        let resp = svc
             .login(
                 &AuthRequest {
                     username: username.clone(),
@@ -2219,27 +2278,85 @@ async fn test_rate_limiting_on_login() {
                 },
                 "127.0.0.1",
             )
-            .await;
+            .await
+            .unwrap_or_else(|_| panic!("attempt {} should not be rate limited yet", i + 1));
+        assert!(!resp.ok, "attempt {}: wrong password should fail", i + 1);
+    }
 
-        match result {
-            Ok(resp) => {
-                if i < 3 {
-                    // First 3 attempts should return a normal error (not rate limited)
-                    assert!(!resp.ok, "attempt {}: wrong password should fail", i);
-                }
-                // After 3 attempts, the AuthError::RateLimited gets mapped to
-                // a response by the handler; at the service level it returns Err
-            }
-            Err(_) => {
-                // Rate limited — this is expected after too many attempts
-                assert!(
-                    i >= 2,
-                    "should not be rate limited before 3 attempts, got error at attempt {}",
-                    i
-                );
-                break;
-            }
-        }
+    let limited = svc
+        .login(
+            &AuthRequest {
+                username: username.clone(),
+                password: "wrongpassword".into(),
+            },
+            "127.0.0.1",
+        )
+        .await;
+    assert!(limited.is_err(), "第 5 次错误密码必须触发用户名维度限流");
+
+    cleanup_test_user(state.repos.video.pool(), &username).await;
+}
+
+/// 防定向锁号：用户名维度限流只在密码校验失败后累加，正确密码既不被
+/// 失败计数拦截，成功后还会清除失败计数。
+#[tokio::test]
+async fn test_login_success_bypasses_username_failure_lock() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    let svc = auth_service(&state);
+    let username = unique_username("no_lockout");
+    register_user(&svc, &username, STRONG_PASSWORD).await;
+    approve_user(&state, &username).await;
+
+    // 攻击者先制造 4 次密码错误（未达上限 5）
+    for i in 0..4 {
+        let resp = svc
+            .login(
+                &AuthRequest {
+                    username: username.clone(),
+                    password: "attacker-guess".into(),
+                },
+                "127.0.0.1",
+            )
+            .await
+            .expect("failed password must not be rate limited before the limit");
+        assert!(!resp.ok, "attacker attempt {} must fail", i + 1);
+    }
+
+    // 正确密码必须成功登录（否则攻击者可用错误密码锁死受害者账号）
+    let ok = svc
+        .login(
+            &AuthRequest {
+                username: username.clone(),
+                password: STRONG_PASSWORD.into(),
+            },
+            "127.0.0.1",
+        )
+        .await
+        .expect("correct password must not be blocked by prior failures");
+    assert!(ok.ok, "正确密码必须能登录（防定向锁号）");
+
+    // 成功登录清除了失败计数：再次连续 4 次错误密码仍不会被立即限流
+    for i in 0..4 {
+        let resp = svc
+            .login(
+                &AuthRequest {
+                    username: username.clone(),
+                    password: "attacker-guess".into(),
+                },
+                "127.0.0.1",
+            )
+            .await
+            .expect("successful login must reset the failure counter");
+        assert!(
+            !resp.ok,
+            "post-reset attempt {} must fail generically",
+            i + 1
+        );
     }
 
     cleanup_test_user(state.repos.video.pool(), &username).await;

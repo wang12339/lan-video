@@ -57,6 +57,18 @@ describe('client request', () => {
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 
+  it('allows ".." inside the query string (search terms) but still rejects path traversal', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { items: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(request('/videos?q=a..b')).resolves.toEqual({ items: [] })
+    expect(fetchMock).toHaveBeenCalledWith('/videos?q=a..b', expect.anything())
+
+    await expect(request('/videos/../secrets')).rejects.toThrow('Invalid request path')
+    await expect(request('/videos?a=\0b')).rejects.toThrow('Invalid request path')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('adds the Bearer token when auth is enabled and a token exists', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}))
     vi.stubGlobal('fetch', fetchMock)

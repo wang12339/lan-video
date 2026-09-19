@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import Layout from '../components/Layout/Layout'
+import { ToastProvider } from '../components/Toast/Toast'
 import i18n from '../i18n'
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
@@ -146,18 +147,21 @@ function mockAuth(user: ReturnType<typeof makeUser> | null) {
 }
 
 function renderLayout(initialRoute = '/') {
+  // ToastProvider 已上移到 App 层，这里模拟外层包裹
   return render(
-    <MemoryRouter initialEntries={[initialRoute]}>
-      <Routes>
-        <Route path="*" element={<Layout />}>
-          <Route index element={<div data-testid="home-page">首页内容</div>} />
-          <Route path="gallery" element={<div data-testid="gallery-page">相册内容</div>} />
-          <Route path="upload" element={<div data-testid="upload-page">上传内容</div>} />
-          <Route path="admin" element={<div data-testid="admin-page">管理内容</div>} />
-          <Route path="profile" element={<div data-testid="profile-page">个人中心</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>
+    <ToastProvider>
+      <MemoryRouter initialEntries={[initialRoute]}>
+        <Routes>
+          <Route path="*" element={<Layout />}>
+            <Route index element={<div data-testid="home-page">首页内容</div>} />
+            <Route path="gallery" element={<div data-testid="gallery-page">相册内容</div>} />
+            <Route path="upload" element={<div data-testid="upload-page">上传内容</div>} />
+            <Route path="admin" element={<div data-testid="admin-page">管理内容</div>} />
+            <Route path="profile" element={<div data-testid="profile-page">个人中心</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
   )
 }
 
@@ -546,10 +550,21 @@ describe('Layout 响应式布局', () => {
     expect(screen.getByTestId('page-transition')).toBeInTheDocument()
   })
 
-  it('Layout 包裹在 ToastProvider 中', () => {
-    renderLayout()
+  it('ToastProvider 已上移到 App 层，Layout 不再自带', () => {
+    // 不套外层 provider：Layout 仍可渲染（useToast mock 提供默认值），
+    // 且 DOM 中不应再出现 Layout 自带的 toast-provider
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="*" element={<Layout />}>
+            <Route index element={<div data-testid="home-page">首页内容</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    )
 
-    expect(screen.getByTestId('toast-provider')).toBeInTheDocument()
+    expect(screen.queryByTestId('toast-provider')).not.toBeInTheDocument()
+    expect(screen.getByTestId('home-page')).toBeInTheDocument()
   })
 })
 

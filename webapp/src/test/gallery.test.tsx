@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import Gallery, { clearGalleryCache } from '../pages/Gallery/Gallery'
+import Gallery from '../pages/Gallery/Gallery'
+import { clearGalleryCache } from '../api/galleryCache'
 import type { MappedImage, VideoListResponse } from '../api/types'
 
 // ── IntersectionObserver Mock ──────────────────────────────────────────────────

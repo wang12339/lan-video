@@ -229,7 +229,10 @@ impl AuthService {
     /// - 用户名大小写不敏感
     /// - 用户不存在时执行 dummy argon2 验证，防止用户名枚举时序攻击（~50-100ms 差异）
     /// - 错误提示统一为"用户名或密码错误"，不泄露用户是否存在
-    /// - 登录成功后重置该用户名的速率限制计数器
+    /// - IP 维度限流每次请求都检查；用户名维度限流只在密码校验失败后
+    ///   累加/检查——正确密码不会被攻击者制造的失败计数拦截（防定向锁号），
+    ///   错误密码仍受 5 次/5 分钟限制（防爆破）
+    /// - 登录成功后重置该用户名的失败计数
     /// - 单会话策略为“后登录优先”：同一账号在新设备登录会使旧会话全部
     ///   失效（撤销），先登录的设备最长在 `TOKEN_CACHE_TTL_SECS` 内收到 401
     ///   被迫下线；管理员豁免，可多设备同时在线
@@ -238,7 +241,8 @@ impl AuthService {
         req: &AuthRequest,
         client_ip: &str,
     ) -> Result<AuthResponse, ServiceError> {
-        self.check_rate_limits(&req.username, client_ip, "login")
+        // IP 维度：每次请求都检查，防止单 IP 撞库。
+        self.check_ip_rate_limit(&req.username, client_ip, "login")
             .await?;
 
         // SECURITY (A07-01 / AF-001): close the username-enumeration timing
@@ -258,6 +262,11 @@ impl AuthService {
         let user = match user_opt {
             Some(u) if password_ok => u,
             _ => {
+                // 用户名维度限流只在密码校验失败后累加/检查（含用户不存在
+                // 的 dummy 验签分支）：攻击者无法用错误密码锁死受害者账号，
+                // 因为正确密码走不到这里；错误密码尝试仍被 5 次/5 分钟限制。
+                self.check_username_rate_limit(&req.username, client_ip, "login")
+                    .await?;
                 // Generic error: do not reveal whether the user exists
                 tracing::warn!(username = %sanitize_for_log(&req.username), ip = %sanitize_for_log(client_ip), "failed login");
                 return Ok(auth_err("用户名或密码错误"));
@@ -685,7 +694,8 @@ impl AuthService {
         self.config.cookie_secure
     }
 
-    async fn check_rate_limits(
+    /// IP 维度限流：每次请求都检查。
+    async fn check_ip_rate_limit(
         &self,
         username: &str,
         client_ip: &str,
@@ -710,7 +720,17 @@ impl AuthService {
             tracing::warn!(username = %sanitize_for_log(username), ip = %sanitize_for_log(client_ip), "{} rejected: IP rate limited", action);
             return Err(ServiceError::RateLimited);
         }
+        Ok(())
+    }
 
+    /// 用户名维度限流：仅由密码校验失败路径调用，成功登录既不消耗也不会
+    /// 被此限流拦截（避免攻击者用错误密码定向锁死受害者账号）。
+    async fn check_username_rate_limit(
+        &self,
+        username: &str,
+        client_ip: &str,
+        action: &str,
+    ) -> Result<(), ServiceError> {
         let trimmed = username.trim().to_lowercase();
         let key_len = "auth:".len() + trimmed.len();
         let mut key = String::with_capacity(key_len);
@@ -722,6 +742,20 @@ impl AuthService {
             return Err(ServiceError::RateLimited);
         }
         Ok(())
+    }
+
+    /// 注册路径：IP + 用户名双维度都在请求开始时检查（无密码校验，
+    /// 滥用防护需要）。登录路径见 `login`：用户名维度只统计失败。
+    async fn check_rate_limits(
+        &self,
+        username: &str,
+        client_ip: &str,
+        action: &str,
+    ) -> Result<(), ServiceError> {
+        self.check_ip_rate_limit(username, client_ip, action)
+            .await?;
+        self.check_username_rate_limit(username, client_ip, action)
+            .await
     }
 }
 

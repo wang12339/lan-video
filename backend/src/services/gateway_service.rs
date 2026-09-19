@@ -7,7 +7,8 @@
 //! 1. `GET /auth/gateway/start`   → 生成 state+PKCE 暂存 → 302 到网关授权页
 //! 2. 用户在网关登录并同意授权 → 302 回 `redirect_uri` 并携带 `code`
 //! 3. `GET /auth/gateway/callback` → code 换 token → 拉 userinfo →
-//!    按网关用户名自动建号/绑定 → 签发 Atmos token → 302 回前端落地页
+//!    按网关不可变 `sub` 关联/建号（邮箱仅在已验证时按邮箱绑定）→
+//!    签发 Atmos token → 302 回前端落地页
 //!    （带一次性 exchange_code，前端用它换真 token）
 
 use std::collections::HashMap;
@@ -99,10 +100,16 @@ struct GatewayTokenResp {
 
 #[derive(Deserialize)]
 struct GatewayUserinfo {
+    /// 身份提供方的不可变主体标识（OIDC `sub`）。账号关联的唯一权威键：
+    /// 缺失（反序列化失败）或为空都拒绝登录。
+    sub: String,
     #[serde(default)]
     username: String,
     #[serde(default)]
     email: Option<String>,
+    /// 网关是否声明邮箱已验证；只有 `Some(true)` 才允许按邮箱绑定已有账号。
+    #[serde(default)]
+    email_verified: Option<bool>,
 }
 
 // ---------- handlers ----------
@@ -236,15 +243,26 @@ pub async fn callback(
     let Ok(ui) = resp.json::<GatewayUserinfo>().await else {
         return redirect_err(webapp_login, "userinfo_failed");
     };
-    if ui.username.trim().is_empty() {
+    // sub 是必填的不可变主体标识：缺失/为空一律拒绝，绝不用用户名兜底。
+    let gw_sub = ui.sub.trim().to_string();
+    if gw_sub.is_empty() {
+        tracing::warn!("gateway userinfo missing sub");
         return redirect_err(webapp_login, "userinfo_failed");
     }
 
     // 账号关联/建号 + 签发 Atmos token
     let gw_username = ui.username.trim().to_string();
     let display_email = ui.email.clone().filter(|e| e.contains('@'));
+    let email_verified = ui.email_verified == Some(true);
 
-    let result = gateway_sign_in(&state, &gw_username, display_email.as_deref()).await;
+    let result = gateway_sign_in(
+        &state,
+        &gw_sub,
+        &gw_username,
+        display_email.as_deref(),
+        email_verified,
+    )
+    .await;
     match result {
         Ok(atmos_token) => {
             // 生成一次性 exchange code，30 秒有效
@@ -323,42 +341,80 @@ pub async fn exchange(
         .into_response()
 }
 
-/// 按网关用户名登录/建号，返回 Atmos token
+/// 判断 sqlx 错误是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
+fn is_unique_violation(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|db| db.code())
+        .map(|code| code.as_ref() == "23505")
+        .unwrap_or(false)
+}
+
+/// 校验 approved、执行单会话踢旧并签发 token（所有关联路径共用）。
+async fn issue_token_for_existing(
+    state: &AppState,
+    user: &crate::repositories::user_repo::UserRow,
+) -> Result<String, String> {
+    if !user.approved {
+        return Err("user not approved".into());
+    }
+    // 单会话策略与密码登录一致：普通用户新登录踢旧会话（管理员允许多端）
+    if user.role < 3 {
+        if let Err(e) = state.repos.user.revoke_tokens_by_user_id(user.id).await {
+            tracing::warn!("gateway single-session revoke failed: {}", e);
+        }
+    }
+    state
+        .repos
+        .user
+        .create_token(user.id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 按网关不可变 `sub` 登录/建号，返回 Atmos token。
+///
+/// 关联顺序（防账号接管）：
+/// a. `sub` 已绑定 → 直接命中该本地账号；
+/// b. 否则仅当网关声明 `email_verified = true` 时，按邮箱命中已有账号并
+///    绑定 `sub`；
+/// c. 否则新建账号：用户名被占用时追加 `_2`/`_3`… 直到可用，`sub` 绑定
+///    成功后才放行，`email` 仅在未被占用时写入。
+///
+/// 明确不再「按用户名自动登入本地同名账号」，也不把邮箱写到任意已有账号上。
 async fn gateway_sign_in(
     state: &AppState,
+    gw_sub: &str,
     gw_username: &str,
     email: Option<&str>,
+    email_verified: bool,
 ) -> Result<String, String> {
-    // 先找现有账号（用户名大小写不敏感，与 login 行为一致）
+    // a. 不可变 sub 命中：sub 是唯一权威键，不再按用户名查。
     if let Some(user) = state
         .repos
         .user
-        .find_by_username(gw_username)
+        .find_by_gateway_sub(gw_sub)
         .await
         .map_err(|e| e.to_string())?
     {
-        if !user.approved {
-            return Err("user not approved".into());
-        }
-        // 绑定邮箱（若用户还没有）
-        if let Some(mail) = email {
-            if user.email.is_none() && !mail.is_empty() {
-                let _ = state.repos.user.update_email(user.id, mail).await;
-            }
-        }
-        // 单会话策略与密码登录一致：普通用户新登录踢旧会话
-        if user.role < 3 {
-            let _ = state.repos.user.revoke_tokens_by_user_id(user.id).await;
-        }
-        return state
-            .repos
-            .user
-            .create_token(user.id)
-            .await
-            .map_err(|e| e.to_string());
+        return issue_token_for_existing(state, &user).await;
     }
 
-    // 新用户：自动建号（网关用户 = 已验证身份，免审批直接通过）
+    // b. 网关声明邮箱已验证时，才允许按邮箱绑定已有账号。
+    if email_verified {
+        if let Some(mail) = email.filter(|m| !m.is_empty()) {
+            if let Some(user) = state
+                .repos
+                .user
+                .find_by_email(mail)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                return link_gateway_sub_and_sign_in(state, &user, gw_sub).await;
+            }
+        }
+    }
+
+    // c. 新用户：网关用户 = 已验证身份，免审批直接通过。
     // 密码字段存随机 Argon2 哈希 —— 用户无法用密码登录此账号，
     // 只能通过网关 SSO 进入（密码找回等流程自然失效）。
     let random_password = random_token(32);
@@ -377,26 +433,120 @@ async fn gateway_sign_in(
         return Err("argon2 hash failed".into());
     }
 
-    let username = sanitize_username(gw_username);
-    let new_id = state
-        .repos
-        .user
-        .create_user(&username, &password_hash, 1)
-        .await
-        .map_err(|e| e.to_string())?;
-    // create_user 里 role>=3 才 approved；这里手动放行网关用户
-    let _ = state.repos.user.approve_user(new_id, true).await;
-    if let Some(mail) = email {
-        if !mail.is_empty() {
-            let _ = state.repos.user.update_email(new_id, mail).await;
+    let base = sanitize_username(gw_username);
+    let new_id = create_user_with_unique_username(state, &base, &password_hash).await?;
+
+    // 先绑定 sub：绑定失败（并发下被其他请求抢先绑定）时，刚建的空账号
+    // 没有任何会话/token，直接清理，避免留下无法登录的孤儿行。
+    match state.repos.user.link_gateway_sub(new_id, gw_sub).await {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = state.repos.user.delete_user(new_id).await;
+            return sign_in_sub_owner(state, gw_sub).await;
+        }
+        Err(e) if is_unique_violation(&e) => {
+            let _ = state.repos.user.delete_user(new_id).await;
+            return sign_in_sub_owner(state, gw_sub).await;
+        }
+        Err(e) => {
+            let _ = state.repos.user.delete_user(new_id).await;
+            return Err(e.to_string());
         }
     }
+
+    // create_user 里 role>=3 才 approved；这里手动放行网关用户
+    if let Err(e) = state.repos.user.approve_user(new_id, true).await {
+        tracing::warn!("gateway approve new user failed: {}", e);
+    }
+
+    // email 仅在未被其他账号占用时写入（网关已验证的邮箱此时通常可用，
+    // 但并发/历史数据下仍可能撞车，撞车则放弃写入而不是覆盖他人邮箱）。
+    if let Some(mail) = email.filter(|m| !m.is_empty()) {
+        match state.repos.user.find_by_email(mail).await {
+            Ok(None) => {
+                if let Err(e) = state.repos.user.update_email(new_id, mail).await {
+                    tracing::warn!("gateway set email for new user failed: {}", e);
+                }
+            }
+            Ok(Some(_)) => tracing::warn!("gateway email already in use, not setting for new user"),
+            Err(e) => tracing::warn!("gateway email lookup failed: {}", e),
+        }
+    }
+
     state
         .repos
         .user
         .create_token(new_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 把 `sub` 绑定到已有账号（路径 b）；冲突（23505 或已被绑到别的 sub）
+/// 时按 sub 重新查询，命中则登录 sub 的归属账号，否则报错。
+async fn link_gateway_sub_and_sign_in(
+    state: &AppState,
+    user: &crate::repositories::user_repo::UserRow,
+    gw_sub: &str,
+) -> Result<String, String> {
+    match state.repos.user.link_gateway_sub(user.id, gw_sub).await {
+        Ok(true) => issue_token_for_existing(state, user).await,
+        Ok(false) => sign_in_sub_owner(state, gw_sub).await,
+        Err(e) if is_unique_violation(&e) => sign_in_sub_owner(state, gw_sub).await,
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 按 sub 查找归属账号并签发 token（并发绑定冲突后的收敛路径）。
+async fn sign_in_sub_owner(state: &AppState, gw_sub: &str) -> Result<String, String> {
+    match state.repos.user.find_by_gateway_sub(gw_sub).await {
+        Ok(Some(user)) => issue_token_for_existing(state, &user).await,
+        Ok(None) => Err("gateway sub conflict".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 创建用户；用户名被占用时追加 `_2`/`_3`… 直到可用（预查 + 唯一索引
+/// 23505 竞态兜底）。避免网关用户名与本地既有账号同名时登入他人账号。
+async fn create_user_with_unique_username(
+    state: &AppState,
+    base: &str,
+    password_hash: &str,
+) -> Result<i64, String> {
+    const MAX_SUFFIX: u32 = 1000;
+    let mut suffix: u32 = 1;
+    loop {
+        let candidate = if suffix == 1 {
+            base.to_string()
+        } else {
+            format!("{}_{}", base, suffix)
+        };
+        match state.repos.user.find_by_username(&candidate).await {
+            Ok(Some(_)) => {
+                suffix += 1;
+                if suffix > MAX_SUFFIX {
+                    return Err("username exhausted".into());
+                }
+                continue;
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        match state
+            .repos
+            .user
+            .create_user(&candidate, password_hash, 1)
+            .await
+        {
+            Ok(id) => return Ok(id),
+            Err(e) if is_unique_violation(&e) => {
+                suffix += 1;
+                if suffix > MAX_SUFFIX {
+                    return Err("username exhausted".into());
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// 用户名清洗：只保留字母数字/_-.，长度限制

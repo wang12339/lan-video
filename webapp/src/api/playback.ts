@@ -1,4 +1,4 @@
-import { request } from './client';
+import { request, getToken } from './client';
 import type { PlaybackHistory } from './types';
 
 const MAX_HISTORY_LIMIT = 200;
@@ -16,6 +16,11 @@ function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
 const historyCache = new Map<string, { data: PlaybackHistory[]; ts: number }>();
 const HISTORY_TTL = 30_000;
 
+/** 清空播放历史缓存（登出时调用，避免切换账号后串读上一个用户的数据） */
+export function clearPlaybackHistoryCache(): void {
+  historyCache.clear();
+}
+
 export async function savePlayback(
   videoId: string,
   positionMs: number,
@@ -32,12 +37,13 @@ export async function savePlayback(
       },
     })
   );
-  historyCache.clear();
+  clearPlaybackHistoryCache();
 }
 
 export async function listPlaybackHistory(limit = 50): Promise<PlaybackHistory[]> {
   const clamped = Math.max(1, Math.min(MAX_HISTORY_LIMIT, limit));
-  const key = `history:${clamped}`;
+  // 键含登录态标识：避免登出/切换账号后命中上一个用户的历史缓存
+  const key = `${getToken() ?? 'anon'}:history:${clamped}`;
   const cached = historyCache.get(key);
   if (cached && Date.now() - cached.ts < HISTORY_TTL) return cached.data;
 

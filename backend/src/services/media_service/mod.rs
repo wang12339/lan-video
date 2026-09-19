@@ -7,7 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::repositories::video_repo::VideoRepository;
+use crate::repositories::video_repo::{SaveVideoOutcome, VideoRepository};
 use crate::util::error::ServiceError;
 
 pub mod session;
@@ -223,26 +223,9 @@ impl MediaService {
             }
         };
 
-        // SECURITY (A04 H2): enforce per-user storage quota *before* we move
-        // the file or write to the database. This check is racy across
-        // concurrent uploads from the same user, but that's an acceptable
-        // over-quota boundary — quotas are advisory, not security-critical.
-        let quota = self.config.upload_quota_bytes;
-        if quota > 0 {
-            let used = match self.repo.get_storage_used(uploader_id).await {
-                Ok(u) => u,
-                Err(e) => {
-                    // DB failure: clean up the temp file before propagating,
-                    // unless the caller wants to retry finalize.
-                    Self::cleanup_upload_temp(temp_path, keep_temp_on_internal_error).await;
-                    return Err(ServiceError::Internal(e.to_string()));
-                }
-            };
-            if used + file_size > quota {
-                let _ = tokio::fs::remove_file(temp_path).await;
-                return Err(ServiceError::QuotaExceeded("存储配额已用尽".into()));
-            }
-        }
+        // SECURITY (A04 H2): 配额校验与扣减已下沉到
+        // `save_local_video_with_quota` 的单个事务（用户行 FOR UPDATE 串行化），
+        // 不再在这里做无锁预检查；这样并发上传不会超卖，计费失败也不会被吞掉。
 
         // Check for duplicates using server-computed hash（按上传者隔离）
         match self.repo.find_video_by_file_hash(uploader_id, &hash).await {
@@ -351,7 +334,7 @@ impl MediaService {
 
         let id = match self
             .repo
-            .save_local_video(
+            .save_local_video_with_quota(
                 &sanitized_name,
                 "",
                 source_type,
@@ -363,10 +346,25 @@ impl MediaService {
                 Some(&sanitized_name),
                 None,
                 Some(uploader_id),
+                self.config.upload_quota_bytes,
             )
             .await
         {
-            Ok(id) => id,
+            Ok(SaveVideoOutcome::Ok(row)) => row.id,
+            Ok(SaveVideoOutcome::Duplicate) => {
+                // 并发下唯一索引 uq_videos_uploader_file_hash 命中的情况：
+                // 与预检查同语义，映射为"文件已存在"而不是 500。
+                let _ = tokio::fs::remove_file(&dest_path).await;
+                return Err(ServiceError::Duplicate("文件已存在".into()));
+            }
+            Ok(SaveVideoOutcome::QuotaExceeded) => {
+                let _ = tokio::fs::remove_file(&dest_path).await;
+                return Err(ServiceError::QuotaExceeded("存储配额已用尽".into()));
+            }
+            Ok(SaveVideoOutcome::UserNotFound) => {
+                let _ = tokio::fs::remove_file(&dest_path).await;
+                return Err(ServiceError::Internal("上传者不存在".into()));
+            }
             Err(e) => {
                 // The file was already moved to its final destination but no
                 // DB row references it — remove it to avoid an orphaned file
@@ -376,19 +374,8 @@ impl MediaService {
             }
         };
 
-        // Charge the user's quota counter.
-        if let Err(e) = self
-            .repo
-            .increment_storage_used(uploader_id, file_size)
-            .await
-        {
-            tracing::warn!(
-                uploader = uploader_id,
-                bytes = file_size,
-                "Failed to update storage quota: {}",
-                e
-            );
-        }
+        // 配额扣减已在 save_local_video_with_quota 的事务内完成（失败整体
+        // 回滚），这里不再单独 increment，也不会吞掉计费失败。
 
         info!(
             uploader = uploader_id,

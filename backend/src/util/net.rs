@@ -11,8 +11,15 @@ pub fn configure_trusted_proxy(enabled: bool) {
 }
 
 /// 显式配置可信代理对端白名单：`Some(peers)` = 仅这些对端的代理头被信任；
-/// `None` = 未显式配置（回退到 TRUSTED_PROXY_PEERS env 或全部信任）。
+/// `None`/空列表 = 不信任任何对端的代理头（回退直连对端 IP）。
 pub fn configure_trusted_proxy_peers(peers: Option<Vec<IpAddr>>) {
+    // TRUSTED_PROXY 已启用但没有白名单时，所有代理头都会被忽略——这会让
+    // 反向代理后的限流/审计把全部请求记成代理 IP，启动时告警提示补配置。
+    if trusted_proxy() && peers.as_ref().is_none_or(Vec::is_empty) {
+        tracing::warn!(
+            "TRUSTED_PROXY 已启用但未配置 TRUSTED_PROXY_PEERS 白名单，代理头（cf-connecting-ip / X-Forwarded-For）将被忽略，client_ip 回退为直连对端地址。请在反向代理场景设置 TRUSTED_PROXY_PEERS=<代理 IP 列表>"
+        );
+    }
     let _ = TRUSTED_PROXY_PEERS_CONF.set(peers);
 }
 
@@ -29,7 +36,8 @@ fn trusted_proxy() -> bool {
         .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
-/// 可信代理对端白名单；`None` 表示未限制（任意对端可能被信任，旧行为）。
+/// 可信代理对端白名单；`None` 表示未配置 → 不信任任何对端的代理头。
+/// （显式配置由 `configure_trusted_proxy_peers` 完成，未配置时回退 env。）
 #[inline]
 fn trusted_proxy_peers() -> Option<&'static [IpAddr]> {
     if let Some(configured) = TRUSTED_PROXY_PEERS_CONF.get() {
@@ -68,7 +76,7 @@ pub fn client_ip(req: &Request) -> String {
         let peer_allowed = match peer_ip {
             Some(ip) => trusted_proxy_peers()
                 .map(|peers| peers.contains(&ip))
-                .unwrap_or(true), // 未配置白名单 = 旧行为：任意对端信任
+                .unwrap_or(false), // 未配置白名单 = 不信任任何代理头，防伪造
             None => false, // 无从判断对端 → 不采信任何代理头
         };
         if peer_allowed {

@@ -55,7 +55,9 @@ services:
   app:
     build: .
     ports:
-      - "8082:8082"
+      # 仅绑定回环地址：明文流量必须经宿主机 Nginx 终止 TLS 并限流/鉴权
+      # （见 nginx/nginx.conf），直接暴露 8082 会绕过反代防护。
+      - "127.0.0.1:8082:8082"
     environment:
       DATABASE_URL: postgres://atmos:${DB_PASSWORD}@postgres/atmos_video
       REDIS_URL: redis://redis:6379
@@ -63,6 +65,8 @@ services:
       PUBLIC_URL: ${PUBLIC_URL}
       WEBAPP_ROOT: /var/lib/atmos/webapp
       MEDIA_ROOT: /var/lib/atmos/media
+      # 生产必填（≥32 字符随机值）：见 .env.example / backend/.env.example
+      HASHID_SALT: ${HASHID_SALT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,8 +80,10 @@ services:
           memory: 2G
           cpus: "2.0"
     restart: unless-stopped
+    # 镜像自带 HEALTHCHECK（curl /health，见 Dockerfile）；此处保留以兼容
+    # 老 Docker/Compose 版本，值保持一致。
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/health"]
       interval: 30s
       timeout: 10s
       retries: 3

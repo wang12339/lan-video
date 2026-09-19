@@ -8,6 +8,7 @@ mod integration_test_helpers;
 use atmos_video_backend::handlers;
 use atmos_video_backend::middleware::auth::AuthUser;
 use atmos_video_backend::models::video::VideoQuery;
+use atmos_video_backend::repositories::video_repo::SaveVideoOutcome;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -1577,7 +1578,8 @@ async fn test_upload_video_wrong_file_type() {
     assert!(res.is_err(), "空文件应上传失败");
     assert!(!tmp2.exists(), "失败的临时文件应被服务清理");
 
-    // 上传者不存在 → 存储配额读取失败
+    // 上传者不存在（幽灵 id）：文本内容会先在类型校验被拦下；即便内容
+    // 合法，落库事务也会返回 UserNotFound（见 quota 事务测试）。
     let tmp3 = std::env::temp_dir().join(format!("upload_ghost_{}.mp4", unique_username("f")));
     std::fs::write(&tmp3, b"some content").unwrap();
     let res = state
@@ -1670,6 +1672,152 @@ async fn test_upload_video_duplicate_hash_rejected() {
     for f in after.difference(&before) {
         let _ = std::fs::remove_file(f);
     }
+    cleanup_test_user(pool, &username).await;
+}
+
+/// `save_local_video_with_quota` 的事务语义：
+/// - 配额校验 + INSERT + 扣费原子（无 TOCTOU、不会只入库不计费）；
+/// - 唯一索引 23505 映射为 Duplicate（并发重复上传不走 500）；
+/// - 超配额返回 QuotaExceeded 且不写行、不计费；
+/// - 幽灵上传者返回 UserNotFound。
+#[tokio::test]
+async fn test_save_local_video_with_quota_transaction() {
+    let Some(_) = database_url() else {
+        eprintln!("DATABASE_URL not set, skipping");
+        return;
+    };
+
+    let state = test_app_state().await;
+    ensure_chinese_ts_config(state.repos.video.pool()).await;
+    let pool = state.repos.video.pool();
+    let (user_id, username) = create_test_user(pool, "quota_tx").await;
+
+    let tag = unique_username("qtx");
+    let quota = 100i64;
+    async fn storage_used(pool: &sqlx::PgPool, uid: i64) -> i64 {
+        let used: i64 = sqlx::query_scalar("SELECT storage_used_bytes FROM users WHERE id = $1")
+            .bind(uid)
+            .fetch_one(pool)
+            .await
+            .expect("read storage_used_bytes");
+        used
+    }
+
+    // 1) 首次落库：60B < 100B → Ok，配额在同一事务内扣减
+    let first = state
+        .repos
+        .video
+        .save_local_video_with_quota(
+            &format!("quota_{tag}.mp4"),
+            "",
+            "local_video",
+            None,
+            &format!("/media/quota_{tag}.mp4"),
+            "local",
+            Some(&format!("qhash_{tag}")),
+            Some(60),
+            Some("quota.mp4"),
+            None,
+            Some(user_id),
+            quota,
+        )
+        .await
+        .expect("首次落库应成功");
+    let first_id = match first {
+        SaveVideoOutcome::Ok(row) => row.id,
+        other => panic!("期望 Ok(VideoRow)，实际: {other:?}"),
+    };
+    assert_eq!(storage_used(pool, user_id).await, 60, "首次上传应扣减 60B");
+
+    // 2) 同上传者 + 同 file_hash → Duplicate（23505 映射），且不重复计费
+    let dup = state
+        .repos
+        .video
+        .save_local_video_with_quota(
+            &format!("quota_dup_{tag}.mp4"),
+            "",
+            "local_video",
+            None,
+            &format!("/media/quota_dup_{tag}.mp4"),
+            "local",
+            Some(&format!("qhash_{tag}")),
+            Some(10),
+            Some("quota_dup.mp4"),
+            None,
+            Some(user_id),
+            quota,
+        )
+        .await
+        .expect("重复上传应返回 Ok(Duplicate) 而非 Err");
+    assert!(matches!(dup, SaveVideoOutcome::Duplicate), "实际: {dup:?}");
+    assert_eq!(
+        storage_used(pool, user_id).await,
+        60,
+        "重复文件不应再次计费"
+    );
+
+    // 3) 60 + 50 > 100 → QuotaExceeded，未写行、未计费
+    let over = state
+        .repos
+        .video
+        .save_local_video_with_quota(
+            &format!("quota_over_{tag}.mp4"),
+            "",
+            "local_video",
+            None,
+            &format!("/media/quota_over_{tag}.mp4"),
+            "local",
+            Some(&format!("qhash_over_{tag}")),
+            Some(50),
+            Some("quota_over.mp4"),
+            None,
+            Some(user_id),
+            quota,
+        )
+        .await
+        .expect("超配额应返回 Ok(QuotaExceeded) 而非 Err");
+    assert!(
+        matches!(over, SaveVideoOutcome::QuotaExceeded),
+        "实际: {over:?}"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM videos WHERE uploader_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("count videos");
+    assert_eq!(count, 1, "超配额不应写入视频行");
+    assert_eq!(
+        storage_used(pool, user_id).await,
+        60,
+        "超配额不应改变已用量"
+    );
+
+    // 4) 幽灵上传者 → UserNotFound（不产生孤儿行）
+    let ghost = state
+        .repos
+        .video
+        .save_local_video_with_quota(
+            &format!("quota_ghost_{tag}.mp4"),
+            "",
+            "local_video",
+            None,
+            &format!("/media/quota_ghost_{tag}.mp4"),
+            "local",
+            Some(&format!("qhash_ghost_{tag}")),
+            Some(1),
+            Some("quota_ghost.mp4"),
+            None,
+            Some(999_999_999_999),
+            quota,
+        )
+        .await
+        .expect("幽灵上传者应返回 Ok(UserNotFound) 而非 Err");
+    assert!(
+        matches!(ghost, SaveVideoOutcome::UserNotFound),
+        "实际: {ghost:?}"
+    );
+
+    cleanup_test_video(pool, first_id).await;
     cleanup_test_user(pool, &username).await;
 }
 

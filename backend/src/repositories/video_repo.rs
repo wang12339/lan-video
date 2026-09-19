@@ -146,6 +146,28 @@ pub struct FileHashRow {
     pub file_hash: Option<String>,
 }
 
+/// 上传落库 + 配额扣减的原子操作结果。
+#[derive(Debug)]
+pub enum SaveVideoOutcome {
+    /// 插入成功，且（当上传者存在且文件大小已知时）已在同一事务内扣减配额。
+    /// `VideoRow` 体积较大，装箱以缩小枚举体积（clippy::large_enum_variant）。
+    Ok(Box<VideoRow>),
+    /// 超出上传者存储配额，未写入任何行。
+    QuotaExceeded,
+    /// 撞上 `uq_videos_uploader_file_hash` 唯一索引（并发重复上传），未写入任何行。
+    Duplicate,
+    /// 上传者用户行不存在（幽灵上传者），未写入任何行。
+    UserNotFound,
+}
+
+/// 判断 sqlx 错误是否为 PostgreSQL 唯一约束冲突（SQLSTATE 23505）。
+fn is_unique_violation(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|db| db.code())
+        .map(|code| code.as_ref() == "23505")
+        .unwrap_or(false)
+}
+
 /// 视频数据访问层，封装所有 `videos` / `video_variants` / `transcoding_jobs` 相关的
 /// SQL 操作。通过 `AppState` 以 `Arc` 形式全局共享，内部维护 `stream_url → VideoRow`
 /// 的 Moka 缓存以加速 media_auth 热路径。
@@ -310,26 +332,6 @@ impl VideoRepository {
     /// ```
     pub async fn find_by_id(&self, id: i64) -> Result<Option<VideoRow>, sqlx::Error> {
         log_slow_query("video_repo::find_by_id", || async {
-            sqlx::query_as::<_, VideoRow>(&format!(
-                "SELECT {} FROM videos WHERE id = $1",
-                VIDEO_COLUMNS
-            ))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-        })
-        .await
-    }
-
-    /// 根据视频 ID 获取单条视频记录。
-    ///
-    /// 仅供内部能力型路径使用，两点均已有独立的授权边界：
-    /// 1. `share` token 校验（全局 token 唯一，见 share_repo 的 H-02 说明）；
-    /// 2. `media_auth` 播放鉴权（会话/分享 token 已验证）。
-    ///
-    /// 不得用于对外列表 / 详情查询。
-    pub async fn find_by_id_unscoped(&self, id: i64) -> Result<Option<VideoRow>, sqlx::Error> {
-        log_slow_query("video_repo::find_by_id_unscoped", || async {
             sqlx::query_as::<_, VideoRow>(&format!(
                 "SELECT {} FROM videos WHERE id = $1",
                 VIDEO_COLUMNS
@@ -565,8 +567,8 @@ impl VideoRepository {
 
     /// 查找缺少封面图的本地视频（游标分页，供后台封面生成任务使用）。
     ///
-    /// 封面生成属于全局后台任务，需遍历所有视频补齐封面。此方法与
-    /// `find_by_id_unscoped` 一样仅供内部使用，不对外暴露。
+    /// 封面生成属于全局后台任务，需遍历所有视频补齐封面。此方法仅供内部使用，
+    /// 不对外暴露。
     ///
     /// # SQL
     /// ```sql
@@ -790,6 +792,106 @@ impl VideoRepository {
         .fetch_one(&self.pool)
         .await?;
         Ok(id)
+    }
+
+    /// 保存本地视频并**原子地**校验/扣减上传者存储配额。
+    ///
+    /// 与 [`save_local_video`] + [`increment_storage_used`] 的组合不同，这里把
+    /// 「读配额 → 校验 → INSERT → 记账」放进同一个事务：
+    /// 1. `SELECT storage_used_bytes FROM users WHERE id = $1 FOR UPDATE`
+    ///    —— 行锁把同一用户的并发上传串行化，消除 TOCTOU 超卖；
+    /// 2. `quota_bytes <= 0` 表示不限量；否则要求
+    ///    `used + file_size <= quota_bytes`（`file_size` 为空按 0 计）；
+    /// 3. `INSERT ... RETURNING {VIDEO_COLUMNS}`；
+    /// 4. `UPDATE users SET storage_used_bytes = COALESCE(storage_used_bytes, 0) + $file_size`
+    ///    —— 与 INSERT 同事务，**失败即整体回滚**，不会出现"视频已入库但未计费"。
+    ///
+    /// 唯一索引 `uq_videos_uploader_file_hash`（迁移 058）的 23505 冲突映射为
+    /// [`SaveVideoOutcome::Duplicate`]；上传者不存在映射为
+    /// [`SaveVideoOutcome::UserNotFound`]，均不会留下半成品行。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_local_video_with_quota(
+        &self,
+        title: &str,
+        description: &str,
+        source_type: &str,
+        cover_url: Option<&str>,
+        stream_url: &str,
+        category: &str,
+        file_hash: Option<&str>,
+        file_size: Option<i64>,
+        original_name: Option<&str>,
+        thumb_url: Option<&str>,
+        uploader_id: Option<i64>,
+        quota_bytes: i64,
+    ) -> Result<SaveVideoOutcome, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        if let Some(uid) = uploader_id {
+            // 行锁：同一 uploader 的并发上传在这里排队，配额判断不会读到
+            // 对方尚未提交的旧值。
+            let used: Option<i64> =
+                sqlx::query_scalar("SELECT storage_used_bytes FROM users WHERE id = $1 FOR UPDATE")
+                    .bind(uid)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let Some(used) = used else {
+                tx.rollback().await?;
+                return Ok(SaveVideoOutcome::UserNotFound);
+            };
+            let size = file_size.unwrap_or(0);
+            if quota_bytes > 0 && used.saturating_add(size) > quota_bytes {
+                tx.rollback().await?;
+                return Ok(SaveVideoOutcome::QuotaExceeded);
+            }
+        }
+
+        let insert = sqlx::query_as::<_, VideoRow>(&format!(
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {}",
+            VIDEO_COLUMNS
+        ))
+        .bind(title)
+        .bind(description)
+        .bind(source_type)
+        .bind(cover_url)
+        .bind(thumb_url)
+        .bind(stream_url)
+        .bind(category)
+        .bind(file_hash)
+        .bind(file_size)
+        .bind(original_name)
+        .bind(uploader_id)
+        .fetch_one(&mut *tx)
+        .await;
+
+        let row = match insert {
+            Ok(row) => row,
+            Err(e) if is_unique_violation(&e) => {
+                tx.rollback().await?;
+                return Ok(SaveVideoOutcome::Duplicate);
+            }
+            Err(e) => {
+                tx.rollback().await?;
+                return Err(e);
+            }
+        };
+
+        if let (Some(uid), Some(size)) = (uploader_id, file_size) {
+            if size > 0 {
+                sqlx::query(
+                    "UPDATE users SET storage_used_bytes = COALESCE(storage_used_bytes, 0) + $1 \
+                     WHERE id = $2",
+                )
+                .bind(size)
+                .bind(uid)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        tx.commit().await?;
+        Ok(SaveVideoOutcome::Ok(Box::new(row)))
     }
 
     /// 批量插入本地视频记录（目录扫描时使用，单条 INSERT 替代 N+1）。

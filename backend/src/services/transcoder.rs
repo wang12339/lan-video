@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -106,6 +106,33 @@ pub struct Transcoder {
     semaphore: Arc<Semaphore>,
 }
 
+/// 进程级「HLS 转码中」集合（video_id）。同一视频的 HLS 输出目录是固定的
+/// `hls/{video_id}/`，重复请求若各起一个 ffmpeg，会并发覆盖同一目录下的
+/// 播放列表与分片；这里在入队前抢占，保证同进程内同一视频只有一个任务。
+///
+/// 注意：这是**进程内**去重，多实例部署时跨实例仍可能撞车；跨实例的强一致
+/// 需要分布式锁，本任务范围内以前述集合 + ffmpeg 输出覆盖语义兜底。
+static HLS_IN_FLIGHT: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+fn hls_in_flight() -> &'static Mutex<HashSet<i64>> {
+    HLS_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// HLS 转码占用的 RAII 标记：drop（含 panic 展开）时自动释放 video_id。
+pub struct HlsInFlightGuard {
+    video_id: i64,
+}
+
+impl Drop for HlsInFlightGuard {
+    fn drop(&mut self) {
+        // 锁中毒（持锁线程 panic）不应阻止释放：取回内部集合继续清理。
+        let mut set = hls_in_flight()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        set.remove(&self.video_id);
+    }
+}
+
 impl Transcoder {
     pub fn new(media_root: &Path, settings: TranscodeSettings) -> Self {
         let output_dir = media_root.join("variants");
@@ -132,6 +159,26 @@ impl Transcoder {
             hls_dir,
             semaphore: Arc::new(Semaphore::new(settings.concurrency.max(1))),
             settings,
+        }
+    }
+
+    /// 暴露全局转码信号量：调用方（如 HLS 后台任务）可 `acquire_owned()`
+    /// 以复用同一并发上限，避免绕开 `transcode()` 内的限流。
+    pub fn semaphore(&self) -> Arc<Semaphore> {
+        self.semaphore.clone()
+    }
+
+    /// 尝试声明开始 `video_id` 的 HLS 转码。该视频已有任务在途时返回
+    /// `None`（调用方应返回 409），否则返回的 guard 持有期间其它请求都
+    /// 会被拒绝，直到 guard 被 drop（任务结束或 panic）。
+    pub fn try_begin_hls(&self, video_id: i64) -> Option<HlsInFlightGuard> {
+        let mut set = hls_in_flight()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if set.insert(video_id) {
+            Some(HlsInFlightGuard { video_id })
+        } else {
+            None
         }
     }
 

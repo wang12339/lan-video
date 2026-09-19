@@ -464,7 +464,6 @@ pub async fn upload_resume(
 /// POST /admin/videos/check-hashes
 pub async fn check_hashes(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<CheckHashesRequest>,
 ) -> Result<Json<CheckHashesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.hashes.len() > 1000 {
@@ -485,7 +484,6 @@ pub async fn check_hashes(
 /// POST /admin/videos/check-files
 pub async fn check_files(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(files): SafeJson<Vec<FileCheckItem>>,
 ) -> Result<Json<CheckFilesResponse>, (StatusCode, Json<ErrorResponse>)> {
     if files.len() > 1000 {
@@ -507,7 +505,6 @@ pub async fn check_files(
 
 pub async fn scan_media(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     multipart: Option<Multipart>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let category = if let Some(mut mp) = multipart {
@@ -538,7 +535,6 @@ pub async fn scan_media(
 /// PUT /admin/videos/{id}
 pub async fn update_video(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<i64>,
     SafeJson(req): SafeJson<VideoUpdateRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -590,7 +586,6 @@ pub async fn update_video(
 /// DELETE /admin/videos/{id}
 pub async fn delete_video(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     let Some(id) = hashid::decode_id_or_numeric(&id) else {
@@ -624,7 +619,6 @@ pub async fn delete_video(
 /// DELETE /admin/videos/batch
 pub async fn delete_videos(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(ids): SafeJson<Vec<String>>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if ids.len() > 500 {
@@ -709,7 +703,6 @@ pub struct BatchCategoryRequest {
 
 pub async fn batch_update_category(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<BatchCategoryRequest>,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.ids.len() > 1000 {

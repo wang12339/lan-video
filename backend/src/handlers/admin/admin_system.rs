@@ -7,17 +7,32 @@ use crate::models::video::OkResponse;
 use crate::state::AppState;
 use crate::util::response::{error_response, internal_error_log, ErrorResponse, SafeJson};
 
+/// 清洗用户可控的追踪字段：剔除控制字符（换行/回车/制表符/ANSI 转义引导符
+/// 等，否则可伪造日志行或注入终端控制序列），并截断到 200 字符。
+fn sanitize_log_field(s: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    let mut out: String = s
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_CHARS)
+        .collect();
+    if s.chars().count() > MAX_CHARS {
+        out.push('…');
+    }
+    out
+}
+
 /// POST /admin/track — 记录用户操作
 pub async fn track_action(
     _state: State<Arc<AppState>>,
-    axum::Extension(auth_user): axum::Extension<crate::middleware::auth::AuthUser>,
+    Extension(auth_user): Extension<AuthUser>,
     SafeJson(req): SafeJson<TrackRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     tracing::info!(
         user = %auth_user.username,
-        action = %req.action,
-        target = req.target.as_deref().unwrap_or(""),
-        page = req.page.as_deref().unwrap_or(""),
+        action = %sanitize_log_field(&req.action),
+        target = %sanitize_log_field(req.target.as_deref().unwrap_or("")),
+        page = %sanitize_log_field(req.page.as_deref().unwrap_or("")),
         "用户操作"
     );
     Ok(StatusCode::NO_CONTENT)
@@ -26,7 +41,6 @@ pub async fn track_action(
 /// GET /admin/stats — 数据统计面板
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let by_type = state
         .repos
@@ -172,5 +186,30 @@ fn format_bytes(bytes: u64) -> String {
         KB..MB => format!("{:.1} KB", bytes as f64 / KB as f64),
         MB..GB => format!("{:.1} MB", bytes as f64 / MB as f64),
         _ => format!("{:.2} GB", bytes as f64 / GB as f64),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_log_field;
+
+    #[test]
+    fn sanitize_log_field_strips_control_chars() {
+        assert_eq!(sanitize_log_field("view\nvideo"), "viewvideo");
+        assert_eq!(sanitize_log_field("a\r\tb"), "ab");
+        // ANSI 转义由 ESC 控制字符驱动，去掉 ESC 后序列失效
+        assert_eq!(sanitize_log_field("\u{1b}[31mred"), "[31mred");
+        assert_eq!(sanitize_log_field("用户"), "用户");
+    }
+
+    #[test]
+    fn sanitize_log_field_truncates_to_200_chars() {
+        let long = "x".repeat(250);
+        let sanitized = sanitize_log_field(&long);
+        assert_eq!(sanitized.chars().count(), 201);
+        assert!(sanitized.ends_with('…'));
+
+        let exact = "x".repeat(200);
+        assert_eq!(sanitize_log_field(&exact).chars().count(), 200);
     }
 }

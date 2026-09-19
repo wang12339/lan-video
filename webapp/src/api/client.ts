@@ -155,7 +155,10 @@ export function cacheClear() {
 }
 
 function sanitizePath(path: string): string {
-  if (path.includes('..') || path.includes('\0')) {
+  // 只校验 pathname：查询串中允许出现 ".."（如搜索词），否则搜索会直接抛错。
+  // NUL 字符对整条 URL 都非法，保留全串检查。
+  const pathname = path.split('?')[0] ?? '';
+  if (pathname.includes('..') || path.includes('\0')) {
     throw new APIError('Invalid request path', 0);
   }
   return path;

@@ -9,7 +9,6 @@ use crate::util::response::{error_response, ErrorResponse};
 
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Query(params): Query<LogQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let limit = params.limit.unwrap_or(200).min(1000);

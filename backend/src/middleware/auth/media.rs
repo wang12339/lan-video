@@ -315,7 +315,7 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                     // NOTE (H-02): share-token path stays unscoped — the token is
                     // capability-based and the video id is compared against the
                     // share record directly, mirroring handlers::shares.
-                    match state.repos.video.find_by_id_unscoped(share.video_id).await {
+                    match state.repos.video.find_by_id(share.video_id).await {
                         Ok(Some(video)) => {
                             if request_path != video.stream_url
                                 && request_path != video.thumb_url.as_deref().unwrap_or("")

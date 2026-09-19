@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { getPref } from '../../../api/prefs'
+import { normalizeSpeed } from './usePlayerControls'
 import { MIN_PROGRESS_SAVE_S } from '../constants'
 
 export interface UseVideoSourceParams {
@@ -47,8 +48,12 @@ export function useVideoSource({
       const saved = localStorage.getItem('atmos_speed_' + videoId)
       if (saved) {
         const parsed = parseFloat(saved)
-        v.playbackRate = parsed
-        setSpeed(parsed)
+        // 非法值（NaN/超出范围）不赋值：直接写 playbackRate 会抛错导致白屏
+        if (Number.isFinite(parsed)) {
+          const valid = normalizeSpeed(parsed)
+          v.playbackRate = valid
+          setSpeed(valid)
+        }
       }
     }
 

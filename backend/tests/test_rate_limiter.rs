@@ -436,3 +436,23 @@ async fn test_rate_limiter_max_attempts_exact_boundary() {
         "the attempt that reaches max must be blocked"
     );
 }
+
+/// 忘记密码邮箱维度策略（handlers/auth.rs）：3 次/3600 秒，达到上限后
+/// 仅 60 秒短冷却。旧策略的长封锁会被攻击者用来对受害者邮箱造成
+/// 低成本拒绝服务。
+#[tokio::test]
+async fn test_forgot_password_email_policy_short_cooldown() {
+    let limiter = RateLimiter::new();
+    let key = "forgot_pwd:email:victim@example.com";
+
+    assert!(limiter.check_with(key, 3, 3600, 60).await.is_ok());
+    assert!(limiter.check_with(key, 3, 3600, 60).await.is_ok());
+    assert!(
+        limiter.check_with(key, 3, 3600, 60).await.is_err(),
+        "第 3 次请求触发短冷却"
+    );
+    assert!(
+        limiter.check_with(key, 3, 3600, 60).await.is_err(),
+        "冷却期内继续拒绝"
+    );
+}

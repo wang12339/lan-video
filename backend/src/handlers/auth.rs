@@ -24,6 +24,23 @@ const BODY_LIMIT: usize = 1_048_576;
 async fn parse_auth_request(
     req: Request,
 ) -> Result<AuthRequest, (StatusCode, Json<ErrorResponse>)> {
+    // CSRF 防线：登录/注册只接受 application/json（大小写不敏感，允许
+    // `; charset=` 参数）。浏览器跨站表单只能发 text/plain / urlencoded，
+    // 这里直接 415，阻断无需 CORS 预检的跨站登录/注册。
+    let media_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .map(str::trim)
+        .unwrap_or("");
+    if !media_type.eq_ignore_ascii_case("application/json") {
+        return Err(error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported media type, expected application/json",
+        ));
+    }
+
     let body = req.into_body();
     let body = axum::body::to_bytes(body, BODY_LIMIT).await.map_err(|e| {
         tracing::error!("Failed to read request body: {}", e);
@@ -494,9 +511,11 @@ pub async fn forgot_password(
     }
 
     let email_key = format!("forgot_pwd:email:{}", email);
+    // 邮箱维度：3 次/小时，达到上限后仅 60 秒短冷却。旧策略（2 次/5 分钟
+    // → 封锁 600 秒）让攻击者能用极低代价对受害者邮箱造成长时间拒绝服务。
     if state
         .rate_limiter
-        .check_with(&email_key, 2, 300, 600)
+        .check_with(&email_key, 3, 3600, 60)
         .await
         .is_err()
     {

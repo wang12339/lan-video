@@ -26,7 +26,6 @@ fn outcome_error(msg: Option<String>) -> (StatusCode, Json<ErrorResponse>) {
 
 pub async fn list_users(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<
     Json<Vec<crate::repositories::user_repo::UserWithStatus>>,
     (StatusCode, Json<ErrorResponse>),
@@ -45,7 +44,6 @@ pub async fn list_users(
 /// 管理端导航徽标轮询用：只返回计数，避免轮询时反复传输整个用户列表。
 pub async fn pending_user_count(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let count = state
         .services

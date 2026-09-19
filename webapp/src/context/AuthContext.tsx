@@ -1,6 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, enterGuestMode, setOnAuthRequired, AuthError, saveToken } from '../api'
 import type { UserInfo } from '../api/types'
+import { clearPlaybackHistoryCache } from '../api/playback'
+import { clearGalleryCache } from '../api/galleryCache'
+import { cacheClear } from '../api/client'
 import i18n from '../i18n'
 
 interface AuthContextType {
@@ -150,6 +153,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     sessionRef.current += 1 // 先作废在途的 refreshUser 结果
     const serverOk = await apiLogout()
+    // 模块级缓存按登录态隔离：登出时主动清空，避免切换账号后串读上一个用户的数据。
+    // 服务端登出成功时 request() 已通过 invalidateCacheForPath('/auth/logout') 清空
+    // LRU + react-query 两层缓存；失败路径（如 403）不会触发该清理，这里兜底。
+    clearPlaybackHistoryCache()
+    clearGalleryCache()
+    cacheClear()
     setUser(null)
     setKickedMsg(null)
     return serverOk

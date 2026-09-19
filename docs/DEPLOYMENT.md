@@ -62,26 +62,44 @@ sudo cp -r webapp/dist/* /var/lib/atmos/webapp/
 
 ## Nginx 配置
 
+后端路由**没有 `/api` 前缀**（如 `/auth/login`、`/videos`、`/admin/...`、`/chat/...`、
+`/media/...`、`/ws/chat`、`/health`），因此整站按原路径代理即可。
+
+> `/media` 由后端 `media_auth` 中间件保护（会话/分享令牌、防盗链、限速），
+> **不要**在 nginx 里 `alias` 静态媒体目录，否则会绕过鉴权。
+> 完整可用配置（上传限流、WebSocket、缓存与安全头）见仓库 `nginx/nginx.conf`。
+
 ```nginx
 server {
     listen 443 ssl;
     server_name your-domain.com;
-    
+
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
-    
+
     location / {
         proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
-    
-    location /media/ {
-        alias /var/lib/atmos/media/;
-        expires 30d;
+
+    # 聊天 WebSocket 长连接需要 Upgrade 头
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
     }
 }
 ```
+
+Nginx 反代后建议启用 `TRUSTED_PROXY=1` 并把反代对端 IP 加入
+`TRUSTED_PROXY_PEERS`（Docker 中后端看到的通常是网桥网关，如 `172.17.0.1`），
+否则限流/审计记录的客户端 IP 会退化为代理地址。
 
 ## 监控
 

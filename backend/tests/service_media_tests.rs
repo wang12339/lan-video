@@ -1378,6 +1378,29 @@ fn test_transcoder_new_creates_variants_dir() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn test_hls_in_flight_rejects_same_video_until_guard_dropped() {
+    let root = temp_media_root();
+    let tx = mock_transcoder(&root);
+
+    // 同一 video_id 第一次可占用；未释放前重复请求被拒绝（对应 409）
+    let guard = tx.try_begin_hls(101_000).expect("首次应可开始");
+    assert!(
+        tx.try_begin_hls(101_000).is_none(),
+        "同视频重复请求应被拒绝"
+    );
+    // 不同视频互不影响
+    let other = tx.try_begin_hls(101_001).expect("不同视频应可并行");
+    drop(other);
+
+    // guard drop 后（任务结束/panic 展开）应可重新开始
+    drop(guard);
+    let again = tx.try_begin_hls(101_000).expect("guard 释放后应可重新开始");
+    drop(again);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // 七、#[ignore] —— 需要真实 PostgreSQL / FFmpeg 的用例
 //

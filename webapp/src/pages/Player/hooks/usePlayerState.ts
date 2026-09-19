@@ -27,7 +27,7 @@ export function usePlayerState(
 
   // ── Controls (playback, UI, menus, progress) ──
   const metrics = usePlayerMetrics(videoRef, videoId, isShared)
-  const controls = usePlayerControls(videoRef, playerRef, metrics)
+  const controls = usePlayerControls(videoRef, playerRef, videoId, metrics)
   const {
     showLoading, setShowLoading,
     videoError, setVideoError,

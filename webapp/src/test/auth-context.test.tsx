@@ -30,6 +30,19 @@ vi.mock('../i18n', () => ({
   default: { t: (key: string) => key },
 }))
 
+// 模块级缓存：登出时应被清空（AuthContext 直接依赖这些模块）
+vi.mock('../api/playback', () => ({
+  clearPlaybackHistoryCache: vi.fn(),
+}))
+
+vi.mock('../api/galleryCache', () => ({
+  clearGalleryCache: vi.fn(),
+}))
+
+vi.mock('../api/client', () => ({
+  cacheClear: vi.fn(),
+}))
+
 // ── 测试工具 ────────────────────────────────────────────────────────────────────
 
 const mockUser: UserInfo = {
@@ -52,6 +65,9 @@ const mockAdminUser: UserInfo = {
 
 // 从 mock 模块拿到 AuthError 构造函数，供测试中构造实例
 const { AuthError: AuthErrorClass } = await import('../api')
+const { clearPlaybackHistoryCache } = await import('../api/playback')
+const { clearGalleryCache } = await import('../api/galleryCache')
+const { cacheClear } = await import('../api/client')
 
 /** 读取 Context 值的测试组件 */
 function Consumer({ onReady }: { onReady: (ctx: ReturnType<typeof useAuth>) => void }) {
@@ -378,6 +394,22 @@ describe('AuthContext', () => {
 
       expect(mockApiLogout).toHaveBeenCalledTimes(2)
       expect(ctx.user).toBeNull()
+    })
+
+    it('logout 清除模块级缓存（播放历史/图库/LRU）', async () => {
+      mockGetUserInfo.mockResolvedValue(mockUser)
+      mockApiLogout.mockResolvedValue(undefined)
+
+      renderWithAuth((c) => { ctx = c })
+      await waitFor(() => expect(ctx.user).toEqual(mockUser))
+
+      await act(async () => {
+        await ctx.logout()
+      })
+
+      expect(clearPlaybackHistoryCache).toHaveBeenCalledTimes(1)
+      expect(clearGalleryCache).toHaveBeenCalledTimes(1)
+      expect(cacheClear).toHaveBeenCalledTimes(1)
     })
   })
 

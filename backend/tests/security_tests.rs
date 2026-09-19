@@ -808,6 +808,9 @@ mod rate_limit_tests {
             ("login_attempts", 5, 300),
             ("api_requests", 100, 60),
             ("upload_requests", 10, 3600),
+            // 忘记密码邮箱维度：3 次/小时。达到上限后仅 60 秒短冷却，
+            // 避免长封锁被攻击者用来对受害者邮箱造成低成本拒绝服务。
+            ("forgot_password_email", 3, 3600),
         ];
 
         for (name, max_attempts, window_seconds) in &config {

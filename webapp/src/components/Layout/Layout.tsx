@@ -3,34 +3,21 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { useChatRoom } from '../../context/ChatContext'
-import { searchSuggest, setOnError, getPendingUserCount, PENDING_USERS_CHANGED_EVENT } from '../../api'
+import { searchSuggest, getPendingUserCount, PENDING_USERS_CHANGED_EVENT } from '../../api'
 import { addToSearchHistory } from '../../utils/searchHistory'
 import { trackClick } from '../../utils/track'
-import { ToastProvider, useToast } from '../Toast/Toast'
+import { useToast } from '../Toast/Toast'
 import PageTransition from '../ui/PageTransition'
 import AuthDialog from '../AuthDialog/AuthDialog'
 import ThemeToggle from '../ui/ThemeToggle'
 import { useScrollLock } from '../../hooks/useScrollLock'
 import './Layout.css'
 
-function ErrorBoundaryInit() {
-  const { toast } = useToast()
-  const { t } = useTranslation()
-  useEffect(() => {
-    setOnError((err) => {
-      toast(err.message || t('auth.error'), 'error')
-    })
-    return () => setOnError(() => {})
-  }, [toast, t])
-  return null
-}
-
 export default function Layout() {
   const location = useLocation()
   const { t } = useTranslation()
   return (
-    <ToastProvider>
-      <ErrorBoundaryInit />
+    <>
       <a href="#main-content" className="skip-link">{t('common.skipToContent') || '跳至主内容'}</a>
       <NavBar />
       <main id="main-content" className="page-content">
@@ -38,7 +25,7 @@ export default function Layout() {
           <Outlet />
         </PageTransition>
       </main>
-    </ToastProvider>
+    </>
   )
 }
 

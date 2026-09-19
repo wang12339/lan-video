@@ -52,6 +52,9 @@ pub struct UserRow {
     /// 访客影子账号标记（迁移 052）。访客账号无密码、不可登录，
     /// 注册/登录真实账号时其内容会被合并并删除本行。
     pub is_guest: bool,
+    /// 网关 SSO 的不可变主体标识（迁移 058）。绑定后登录只按它命中，
+    /// 不再按用户名/邮箱关联，避免同名账号接管。
+    pub gateway_sub: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
@@ -249,7 +252,7 @@ impl UserRepository {
     pub async fn find_by_username(&self, username: &str) -> Result<Option<UserRow>, sqlx::Error> {
         let user = log_slow_query("user_repo::find_by_username", || async {
             sqlx::query_as::<_, UserRow>(
-                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest FROM users WHERE username = $1"
+                "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, gateway_sub FROM users WHERE username = $1"
             )
             .bind(username)
             .fetch_optional(&self.pool)
@@ -257,6 +260,34 @@ impl UserRepository {
         })
         .await?;
         Ok(user)
+    }
+
+    /// 按网关 SSO 的不可变 `sub` 查找本地账号（迁移 058 唯一索引）。
+    ///
+    /// 这是网关登录的**第一**关联路径：sub 由身份提供方保证不可变且唯一，
+    /// 因此不会像按用户名/邮箱关联那样被同名注册或改邮箱接管。
+    pub async fn find_by_gateway_sub(&self, sub: &str) -> Result<Option<UserRow>, sqlx::Error> {
+        sqlx::query_as::<_, UserRow>(
+            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, gateway_sub FROM users WHERE gateway_sub = $1",
+        )
+        .bind(sub)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// 把网关 `sub` 绑定到本地账号（仅当该账号尚未绑定其它 sub）。
+    ///
+    /// 返回是否实际写入。同一 sub 并发绑定到不同账号时，唯一索引
+    /// `uq_users_gateway_sub` 会抛 23505，调用方应重新按 sub 查询。
+    pub async fn link_gateway_sub(&self, user_id: i64, sub: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE users SET gateway_sub = $1 WHERE id = $2 AND (gateway_sub IS NULL OR gateway_sub = $1)",
+        )
+        .bind(sub)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Generate a 256-bit (64 char) cryptographically secure token from the
@@ -318,7 +349,7 @@ impl UserRepository {
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let user = log_slow_query("user_repo::find_user_by_token", || async {
             sqlx::query_as::<_, UserRow>(
-                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, u.is_guest
+                r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at, u.email, u.email_verified, u.is_guest, u.gateway_sub
                    FROM auth_tokens t
                    JOIN users u ON t.user_id = u.id
                    WHERE t.token_hash = $1 AND t.expires_at > CURRENT_TIMESTAMP AND NOT t.revoked"#,
@@ -356,9 +387,9 @@ impl UserRepository {
         }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-        let row = sqlx::query_as::<_, (i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, bool, bool)>(
+        let row = sqlx::query_as::<_, (i64, String, String, bool, i16, Option<String>, chrono::DateTime<chrono::Utc>, Option<String>, bool, bool, Option<String>, bool, bool)>(
             r#"SELECT u.id, u.username, u.password_hash, u.approved, u.role, u.avatar_url, u.created_at,
-                      u.email, u.email_verified, u.is_guest,
+                      u.email, u.email_verified, u.is_guest, u.gateway_sub,
                       t.revoked, t.expires_at > CURRENT_TIMESTAMP AS valid
                FROM auth_tokens t
                JOIN users u ON t.user_id = u.id
@@ -379,6 +410,7 @@ impl UserRepository {
                 email,
                 email_verified,
                 is_guest,
+                gateway_sub,
                 revoked,
                 valid,
             )| {
@@ -394,6 +426,7 @@ impl UserRepository {
                         email,
                         email_verified,
                         is_guest,
+                        gateway_sub,
                     },
                     revoked,
                     valid,
@@ -753,7 +786,7 @@ impl UserRepository {
     /// becomes a hot path).
     pub async fn find_by_email(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
         sqlx::query_as::<_, UserRow>(
-            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest FROM users WHERE email = $1"
+            "SELECT id, username, password_hash, approved, role, avatar_url, created_at, email, email_verified, is_guest, gateway_sub FROM users WHERE email = $1"
         )
         .bind(email)
         .fetch_optional(&self.pool)

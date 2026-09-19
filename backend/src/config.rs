@@ -217,6 +217,25 @@ impl AppConfig {
         let allow_first_user_admin = parse_bool_env("ALLOW_FIRST_USER_ADMIN", false);
         let trusted_proxy = parse_bool_env("TRUSTED_PROXY", false);
         let hashid_salt = std::env::var("HASHID_SALT").unwrap_or_default();
+
+        // HASHID_SALT 生产强制：非 dev/development/test 环境必须显式配置
+        // 至少 32 字符的随机盐，否则内置默认值/占位符会公开在源码里，
+        // 任何人都能枚举解码视频/用户 hashid。开发环境保留自动回退。
+        let is_dev_env = ["dev", "development", "test"]
+            .iter()
+            .any(|env| app_env.eq_ignore_ascii_case(env));
+        if !is_dev_env
+            && (hashid_salt.is_empty()
+                || hashid_salt == "atmos-video-default-salt"
+                || hashid_salt == "change-me-to-a-long-random-string"
+                || hashid_salt.len() < 32)
+        {
+            panic!(
+                "HASHID_SALT 未安全配置（APP_ENV={app_env}）：必须设置至少 32 字符的随机盐，\
+                 不能为空、不能使用内置默认值 atmos-video-default-salt 或占位符 \
+                 change-me-to-a-long-random-string。生成命令：openssl rand -hex 32"
+            );
+        }
         let transcode_timeout_secs = std::env::var("TRANSCODE_TIMEOUT_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -439,6 +458,48 @@ mod tests {
         restore_env("APP_ENV", saved_app_env);
         restore_env("PUBLIC_URL", saved_public_url);
         restore_env("COOKIE_SECURE", saved_cookie_secure);
+    }
+
+    #[test]
+    fn from_env_non_dev_requires_strong_hashid_salt() {
+        let _env_guard = lock_from_env_env();
+        let saved_app_env = std::env::var("APP_ENV").ok();
+        let saved_public_url = std::env::var("PUBLIC_URL").ok();
+        let saved_hashid_salt = std::env::var("HASHID_SALT").ok();
+
+        std::env::set_var("APP_ENV", "production");
+        std::env::set_var("PUBLIC_URL", "https://video.example.com");
+
+        let short_salt = "x".repeat(31);
+        let unsafe_salts: [&str; 4] = [
+            "",
+            "atmos-video-default-salt",
+            "change-me-to-a-long-random-string",
+            short_salt.as_str(),
+        ];
+        for salt in unsafe_salts {
+            std::env::set_var("HASHID_SALT", salt);
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(AppConfig::from_env));
+            assert!(
+                result.is_err(),
+                "生产环境不安全的 HASHID_SALT {salt:?} 必须导致启动失败"
+            );
+        }
+
+        std::env::set_var("HASHID_SALT", "0123456789abcdef0123456789abcdef");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(AppConfig::from_env));
+        assert!(result.is_ok(), "32 字符随机盐必须被接受");
+
+        // 开发环境保留自动回退：不设置 HASHID_SALT 也能启动
+        std::env::set_var("APP_ENV", "development");
+        std::env::remove_var("HASHID_SALT");
+        let config = AppConfig::from_env();
+        assert!(config.hashid_salt.is_empty());
+
+        restore_env("APP_ENV", saved_app_env);
+        restore_env("PUBLIC_URL", saved_public_url);
+        restore_env("HASHID_SALT", saved_hashid_salt);
     }
 
     #[test]

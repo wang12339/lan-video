@@ -33,7 +33,6 @@ pub struct ChatHistoryQuery {
 /// GET /chat/messages — 历史分页（id 倒序游标，前端反转拼接）
 pub async fn get_chat_history(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Query(q): Query<ChatHistoryQuery>,
 ) -> Result<Json<ChatHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let limit = q.limit.unwrap_or(HISTORY_PAGE_LIMIT).clamp(1, 100);

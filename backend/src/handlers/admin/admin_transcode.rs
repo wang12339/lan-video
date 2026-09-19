@@ -1,9 +1,8 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::{Extension, Json};
+use axum::Json;
 use std::sync::Arc;
 
-use crate::middleware::auth::AuthUser;
 use crate::models::admin::{TranscodeRequest, TranscodeResponse, TranscodeStatusResponse};
 use crate::services::media_service::safe_media_path;
 use crate::state::AppState;
@@ -14,7 +13,6 @@ use crate::util::response::{error_response, internal_error_log, ErrorResponse, S
 /// Start transcoding a video to multiple resolutions
 pub async fn transcode_video(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
     SafeJson(req): SafeJson<TranscodeRequest>,
 ) -> Result<Json<TranscodeResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -82,7 +80,6 @@ pub async fn transcode_video(
 /// Get transcoding status for a video
 pub async fn transcode_status(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<TranscodeStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -114,7 +111,6 @@ pub async fn transcode_status(
 /// Delete a specific variant of a video
 pub async fn delete_variant(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path((id, resolution)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -180,7 +176,6 @@ pub async fn delete_variant(
 /// Cancel ongoing transcoding for a video
 pub async fn cancel_transcode(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -214,7 +209,6 @@ pub async fn cancel_transcode(
 /// Start HLS transcoding for adaptive streaming
 pub async fn transcode_to_hls(
     State(state): State<Arc<AppState>>,
-    Extension(_auth_user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let video_id = crate::util::hashid::decode_id_or_numeric(&id)
@@ -239,9 +233,28 @@ pub async fn transcode_to_hls(
     let video_path = safe_media_path(&video.stream_url, &state.config.media_root)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频路径"))?;
 
+    // 进程内 in-flight 去重：同一视频只允许一个 HLS 任务写 hls/{id}/。
+    // guard 随 spawned 任务一起移动，任务结束（含 panic）时自动释放。
+    let Some(hls_guard) = state.transcoder.try_begin_hls(video_id) else {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            "该视频的 HLS 转码正在进行中",
+        ));
+    };
+
     let transcoder = state.transcoder.clone();
 
     tokio::spawn(async move {
+        // 复用全局转码信号量，限制同时运行的 ffmpeg 数量；与普通转码
+        // 共享同一上限，避免 HLS 任务把 CPU 打满。
+        let _hls_guard = hls_guard;
+        let _permit = match transcoder.semaphore().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::error!(video_id = video_id, "HLS semaphore closed");
+                return;
+            }
+        };
         match transcoder.transcode_to_hls(video_id, &video_path).await {
             Ok(playlist) => {
                 tracing::info!(
