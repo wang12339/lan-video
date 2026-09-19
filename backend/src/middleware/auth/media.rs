@@ -61,7 +61,7 @@ fn chat_media_ref_cache() -> &'static Cache<String, bool> {
 ///
 /// 本地 moka 精确清除该 token；配置了 Redis 时同时 `DEL media:auth:{token}`，
 /// 让多实例部署下其他进程的缓存也失效。Redis 不可用时静默降级。
-pub async fn invalidate_media_auth_token(state: &Arc<AppState>, token: &str) {
+pub async fn invalidate_media_auth_token(state: &AppState, token: &str) {
     media_auth_cache().invalidate(token);
     let Some(conn) = state.redis.as_ref() else {
         return;
@@ -74,14 +74,14 @@ pub async fn invalidate_media_auth_token(state: &Arc<AppState>, token: &str) {
         .await;
 }
 
-/// 失效某个用户全部 token 的媒体鉴权缓存（踢人/删除/重置密码/改邮箱时
-/// 调用）。
+/// 失效某个用户全部 token 的媒体鉴权缓存（踢人/删除/重置密码/改邮箱/
+/// 网关 SSO 登录踢旧会话时调用）。
 ///
 /// Redis 侧维护 `media:auth:user:{uid}` 集合（`media_auth_cache_put_redis`
 /// 写入），这里读取成员逐个删除 `media:auth:{token}` 后删除集合。本地
 /// moka 无法按 user 反向枚举，无 Redis 时仅靠 10 秒 TTL 兜底（与
 /// `TOKEN_CACHE` 的 TTL 有界吊销策略一致）。
-pub async fn invalidate_media_auth_user(state: &Arc<AppState>, user_id: i64) {
+pub async fn invalidate_media_auth_user(state: &AppState, user_id: i64) {
     let Some(conn) = state.redis.as_ref() else {
         return;
     };

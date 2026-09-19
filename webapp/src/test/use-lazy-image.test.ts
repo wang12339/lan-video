@@ -309,6 +309,25 @@ describe('useLazyImage', () => {
       global.Image = originalImage
     })
   })
+
+  describe('共享 observer', () => {
+    it('相同配置的多个实例只创建一个 IntersectionObserver', () => {
+      renderHook(() =>
+        useLazyImage('https://example.com/a.jpg', { threshold: 0.25, rootMargin: '123px' })
+      )
+      renderHook(() =>
+        useLazyImage('https://example.com/b.jpg', { threshold: 0.25, rootMargin: '123px' })
+      )
+
+      const observer = global.IntersectionObserver as unknown as {
+        mock: { calls: Array<[IntersectionObserverCallback, IntersectionObserverInit?]> }
+      }
+      const matchingCalls = observer.mock.calls.filter(
+        ([, options]) => options?.threshold === 0.25
+      )
+      expect(matchingCalls).toHaveLength(1)
+    })
+  })
 })
 
 describe('useLazyLoad', () => {

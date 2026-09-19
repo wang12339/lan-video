@@ -19,7 +19,6 @@ export default tseslint.config(
           'useToast',
           'useAuth',
           'useChatRoom',
-          'useVirtualList',
           'useShortcutRegistry',
           'useShortcutsHelp',
           'useGlobalShortcuts',

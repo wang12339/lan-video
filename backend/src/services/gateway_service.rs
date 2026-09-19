@@ -396,6 +396,9 @@ async fn issue_token_for_existing(
         if let Err(e) = state.repos.user.revoke_tokens_by_user_id(user.id).await {
             tracing::warn!("gateway single-session revoke failed: {}", e);
         }
+        // 旧会话可能仍在媒体鉴权缓存中（Redis/moka）；与密码登录路径一致，
+        // 立即失效该用户的媒体缓存，避免被踢后 ≤10s 内仍能取媒体。
+        crate::middleware::auth::invalidate_media_auth_user(state, user.id).await;
     }
     state
         .repos

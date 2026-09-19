@@ -49,6 +49,7 @@ describe('ToastProvider', () => {
     expect(error).toHaveAttribute('role', 'alert')
     expect(error?.querySelector('.toast-icon')).toHaveTextContent('✕')
     expect(info).toHaveClass('toast-info')
+    expect(info).toHaveAttribute('role', 'status')
     expect(info?.querySelector('.toast-icon')).toHaveTextContent('ℹ')
   })
 
