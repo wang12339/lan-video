@@ -141,6 +141,14 @@ export async function backfillThumbnails(): Promise<{ ok: boolean; generated: nu
   });
 }
 
+/** 回填图片 EXIF（后台逐张解析原图并写入 exif_* 列） */
+export async function backfillExif(): Promise<{ ok: boolean; processed: number; errors: string[] }> {
+  return request<{ ok: boolean; processed: number; errors: string[] }>('/admin/videos/backfill-exif', {
+    method: 'POST',
+    timeout: 600000,
+  });
+}
+
 // ── 数据统计 ──
 
 export interface AdminStats {

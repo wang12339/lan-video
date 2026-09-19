@@ -192,6 +192,7 @@ fn registered_routes() -> Vec<(&'static str, &'static str)> {
         ("POST", "/admin/videos/check-files"),
         ("POST", "/admin/videos/scan"),
         ("POST", "/admin/videos/backfill-thumbnails"),
+        ("POST", "/admin/videos/backfill-exif"),
         ("DELETE", "/admin/videos/batch"),
         ("PUT", "/admin/videos/{id}"),
         ("DELETE", "/admin/videos/{id}"),

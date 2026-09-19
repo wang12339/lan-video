@@ -24,6 +24,22 @@ use crate::models::danmaku::{DanmakuListResponse, SendDanmakuRequest, SendDanmak
 
 const MAX_SEARCH_QUERY_LEN: usize = 200;
 
+/// 解析 `YYYY-MM-DD` 为当日 UTC 零点；非法格式返回 400。
+fn parse_taken_date(
+    value: &str,
+) -> Result<chrono::DateTime<chrono::Utc>, (StatusCode, Json<ErrorResponse>)> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "日期格式应为 YYYY-MM-DD".to_string(),
+            )
+        })
+}
+
 #[utoipa::path(
     get,
     path = "/videos",
@@ -38,7 +54,9 @@ const MAX_SEARCH_QUERY_LEN: usize = 200;
         ("type" = Option<String>, Query, description = "Filter by source_type (prefix with ! to exclude, e.g. '!external')"),
         ("category" = Option<String>, Query, description = "Filter by category name"),
         ("uploader_id" = Option<String>, Query, description = "Filter by uploader ID (admin only)"),
-        ("sort" = Option<String>, Query, description = "Sort order")
+        ("sort" = Option<String>, Query, description = "Sort order: views_asc | id_desc | id_asc | duration_desc | duration_asc | title_asc | title_desc | taken_desc | taken_asc (按 EXIF 拍摄时间，NULLS LAST). Unknown values fall back to views_desc"),
+        ("taken_after" = Option<String>, Query, description = "Filter by EXIF taken date (inclusive), format YYYY-MM-DD"),
+        ("taken_before" = Option<String>, Query, description = "Filter by EXIF taken date (inclusive), format YYYY-MM-DD")
     ),
     responses((status = 200, description = "Paginated video list", body = PagedVideoResponse))
 )]
@@ -60,6 +78,15 @@ pub async fn list_videos(
     let source_type = params.source_type.as_deref().unwrap_or("");
     let category = params.category.as_deref().unwrap_or("");
     let sort = params.sort.as_deref();
+    // 拍摄日期筛选：before 取次日零点作为开区间上界（含 before 当天）
+    let taken_after = match params.taken_after.as_deref().filter(|s| !s.is_empty()) {
+        Some(value) => Some(parse_taken_date(value)?),
+        None => None,
+    };
+    let taken_before = match params.taken_before.as_deref().filter(|s| !s.is_empty()) {
+        Some(value) => Some(parse_taken_date(value)? + chrono::Duration::days(1)),
+        None => None,
+    };
 
     if query.len() > MAX_SEARCH_QUERY_LEN {
         return Err(error_response(
@@ -79,15 +106,23 @@ pub async fn list_videos(
     } else {
         Some(auth_user.id)
     };
+    let taken_after_key = taken_after
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
+    let taken_before_key = taken_before
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
     let cache_key = format!(
-        "lv:{}:{}:{}:{}:{}:{}:{}",
+        "lv:{}:{}:{}:{}:{}:{}:{}:{}:{}",
         page,
         size,
         query,
         source_type,
         category,
         uploader_id.unwrap_or(0),
-        sort.unwrap_or("")
+        sort.unwrap_or(""),
+        taken_after_key,
+        taken_before_key
     );
     if let Some(resp) = state.video_cache.get(&cache_key) {
         return Ok((
@@ -103,7 +138,7 @@ pub async fn list_videos(
     let (items, total) = state
         .services
         .video
-        .list_videos_paged(
+        .list_videos_paged_filtered(
             page,
             size,
             (!query.is_empty()).then_some(query),
@@ -112,6 +147,8 @@ pub async fn list_videos(
             None,
             uploader_id,
             sort,
+            taken_after,
+            taken_before,
         )
         .await
         .map_err(|e| internal_error_log("list_videos", &e))?;

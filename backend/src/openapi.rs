@@ -205,6 +205,7 @@ impl Modify for SecurityAddon {
         crate::handlers::admin::admin_video::delete_videos,
         crate::handlers::admin::admin_video::upload_cover,
         crate::handlers::admin::admin_video::backfill_thumbnails,
+        crate::handlers::admin::admin_video::backfill_exif,
         crate::handlers::admin::admin_video::batch_update_category,
         // admin: transcode / HLS
         crate::handlers::admin::admin_transcode::transcode_video,
@@ -284,6 +285,7 @@ impl Modify for SecurityAddon {
         crate::models::video::SearchResponse,
         crate::models::video::SearchResultItem,
         crate::models::video::VideoVariantResponse,
+        crate::models::video::ImageExif,
         crate::models::video::VideoItem,
         crate::models::video::PagedVideoResponse,
         crate::models::video::VideoQuery,

@@ -892,6 +892,29 @@ pub async fn backfill_thumbnails(State(state): State<Arc<AppState>>) -> Json<ser
     }
 }
 
+/// POST /admin/videos/backfill-exif
+#[utoipa::path(
+    post,
+    path = "/admin/videos/backfill-exif",
+    tag = "admin",
+    description = "Scan local images whose EXIF metadata has not been extracted yet, parse the original image files and backfill the EXIF columns. Runs in batches to avoid memory spikes.",
+    security(("bearerAuth" = []), ("adminAuth" = [])),
+    responses(
+        (status = 200, description = "Backfill result", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden")
+    )
+)]
+pub async fn backfill_exif(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    match state.services.media.backfill_image_exif().await {
+        Ok((processed, errors)) => {
+            state.invalidate_caches();
+            Json(serde_json::json!({"ok": true, "processed": processed, "errors": errors}))
+        }
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
 /// PUT /admin/videos/batch-category — 批量修改分类
 #[derive(Deserialize)]
 pub struct BatchCategoryRequest {

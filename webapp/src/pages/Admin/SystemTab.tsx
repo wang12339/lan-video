@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { health } from '../../api'
-import { getSystemInfo, scanMedia, backfillThumbnails, getRegistrationEnabled, setRegistrationEnabled } from '../../api/admin'
+import { getSystemInfo, scanMedia, backfillThumbnails, backfillExif, getRegistrationEnabled, setRegistrationEnabled } from '../../api/admin'
 import type { SystemInfo } from '../../api/admin'
 import { AlertDialog, SkeletonLoader } from '../../components/ui'
 
@@ -17,6 +17,9 @@ export default function SystemTab() {
   const [backfillResult, setBackfillResult] = useState('')
   const [backfillError, setBackfillError] = useState(false)
   const [backfilling, setBackfilling] = useState(false)
+  const [exifResult, setExifResult] = useState('')
+  const [exifError, setExifError] = useState(false)
+  const [exifBackfilling, setExifBackfilling] = useState(false)
   const [alertMsg, setAlertMsg] = useState('')
 
   const { data: serverOk, isLoading: healthLoading } = useQuery({
@@ -86,6 +89,27 @@ export default function SystemTab() {
       setBackfilling(false)
     }
   }, [backfilling, t])
+
+  const handleBackfillExif = useCallback(async () => {
+    if (exifBackfilling) return
+    setExifBackfilling(true)
+    setExifResult('')
+    setExifError(false)
+    try {
+      const res = await backfillExif()
+      if (res.ok) {
+        setExifResult(t('admin.system.backfillExifDone', { count: res.processed }))
+      } else {
+        setExifError(true)
+        setExifResult(t('admin.system.backfillExifFailed'))
+      }
+    } catch (e) {
+      setExifError(true)
+      setExifResult(e instanceof Error ? e.message : t('admin.system.backfillExifFailed'))
+    } finally {
+      setExifBackfilling(false)
+    }
+  }, [exifBackfilling, t])
 
   if (sysLoading) return <SkeletonLoader type="card" lines={4} />
 
@@ -157,6 +181,13 @@ export default function SystemTab() {
             </button>
           </div>
           {backfillResult && <div className={`admin-info-extra ${backfillError ? 'admin-info-extra-error' : ''}`}>{backfillResult}</div>}
+          <div className="admin-info-row">
+            <span className="admin-info-label">{t('admin.system.backfillExif')}</span>
+            <button type="button" className="admin-btn" disabled={exifBackfilling} onClick={() => void handleBackfillExif()}>
+              {exifBackfilling ? t('admin.system.backfillExifRunning') : t('admin.system.backfillExif')}
+            </button>
+          </div>
+          {exifResult && <div className={`admin-info-extra ${exifError ? 'admin-info-extra-error' : ''}`}>{exifResult}</div>}
         </div>
       </div>
 

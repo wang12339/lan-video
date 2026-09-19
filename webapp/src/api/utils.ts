@@ -2,7 +2,7 @@
 
 import i18n from '../i18n';
 import { mediaUrl } from './client';
-import type { Video, PlaybackHistory, MappedPlaylist, MappedVideo, MappedImage, MappedHistory } from './types'
+import type { Video, ImageExif, PlaybackHistory, MappedPlaylist, MappedVideo, MappedImage, MappedHistory } from './types'
 import type { Playlist } from './playlists'
 
 // 占位图缓存
@@ -75,6 +75,24 @@ export function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// 安全映射 EXIF：逐字段校验类型，非法/缺失字段一律丢弃，不透传未知字段，坏数据不抛错
+function mapExif(raw: unknown): ImageExif | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const e = raw as Record<string, unknown>;
+  const out: ImageExif = {};
+  if (typeof e.takenAt === 'string' && e.takenAt) out.takenAt = e.takenAt;
+  if (typeof e.lat === 'number' && Number.isFinite(e.lat)) out.lat = e.lat;
+  if (typeof e.lon === 'number' && Number.isFinite(e.lon)) out.lon = e.lon;
+  if (typeof e.camera === 'string' && e.camera) out.camera = e.camera;
+  if (typeof e.lens === 'string' && e.lens) out.lens = e.lens;
+  if (typeof e.aperture === 'number' && Number.isFinite(e.aperture)) out.aperture = e.aperture;
+  if (typeof e.shutter === 'string' && e.shutter) out.shutter = e.shutter;
+  if (typeof e.iso === 'number' && Number.isFinite(e.iso)) out.iso = e.iso;
+  if (typeof e.focalLength === 'number' && Number.isFinite(e.focalLength)) out.focalLength = e.focalLength;
+  if (typeof e.orientation === 'number' && Number.isFinite(e.orientation)) out.orientation = e.orientation;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // 数据映射
 export function mapVideo(v: Video | null): MappedVideo | null {
   if (!v) return null;
@@ -95,6 +113,7 @@ export function mapVideo(v: Video | null): MappedVideo | null {
     progress: v.watchPosition || 0,
     hasVariants: v.hasVariants,
     uploaderId: v.uploaderId,
+    exif: mapExif(v.exif),
   };
 }
 
@@ -107,6 +126,7 @@ export function mapImage(v: Video | null): MappedImage | null {
     thumb: mediaUrl(v.thumbUrl) || mediaUrl(v.streamUrl) || placeholderDataURL(v.id, 'local_image'),
     original: mediaUrl(v.streamUrl) || mediaUrl(v.thumbUrl) || placeholderDataURL(v.id, 'local_image'),
     sourceType: v.sourceType || 'local_image',
+    exif: mapExif(v.exif),
   };
 }
 

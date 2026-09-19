@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::repositories::video_repo::{SaveVideoOutcome, VideoRepository};
+use crate::services::exif_service::parse_exif_file;
 use crate::util::error::ServiceError;
 
 pub mod session;
@@ -29,6 +30,9 @@ const THUMBNAIL_FFMPEG_TIMEOUT_SECS: u64 = 60;
 
 /// 上传临时文件清扫任务的执行间隔。
 pub const UPLOAD_TEMP_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// EXIF 回填的每批数量（`backfill_image_exif`），避免一次性加载全部图片。
+const EXIF_BACKFILL_BATCH: i64 = 200;
 
 /// Cap on the number of concurrent thumbnail-generation ffmpeg processes.
 /// Each one is CPU-heavy, so unlimited parallelism would saturate the host.
@@ -405,6 +409,33 @@ impl MediaService {
             }
         });
 
+        // 图片：后台解析原图 EXIF。解析不到（截图/导出图）也要把
+        // exif_extracted 置 TRUE，否则后台回填任务会对同一张图反复重试。
+        // 所有失败仅告警，绝不影响上传主流程。
+        if is_image {
+            let svc = self.clone();
+            let vid = id;
+            let path = dest_path.clone();
+            tokio::spawn(async move {
+                let parsed = tokio::task::spawn_blocking(move || parse_exif_file(&path)).await;
+                match parsed {
+                    Ok(Some(exif)) => {
+                        if let Err(e) = svc.repo.update_video_exif(vid, &exif).await {
+                            tracing::warn!(video_id = vid, error = %e, "exif update failed");
+                        }
+                    }
+                    Ok(None) => {
+                        if let Err(e) = mark_exif_extracted(svc.repo.pool(), vid).await {
+                            tracing::warn!(video_id = vid, error = %e, "exif mark failed");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(video_id = vid, error = %e, "exif parse task failed");
+                    }
+                }
+            });
+        }
+
         Ok(id)
     }
 
@@ -671,6 +702,72 @@ impl MediaService {
         Ok((generated, errors))
     }
 
+    /// Backfill EXIF metadata for local images that have not been parsed yet.
+    ///
+    /// 分批（每批 [`EXIF_BACKFILL_BATCH`]）取 `exif_extracted = FALSE`
+    /// 的本地图片，把 `/media/...` 的 `stream_url` 经 `media_root` 映射为真实
+    /// 文件后在阻塞线程池解析：
+    /// - 解析出 EXIF：写入全部 exif 列并置 `exif_extracted = TRUE`
+    /// - 无 EXIF / 文件缺失 / 非法路径：仅置 `exif_extracted = TRUE`
+    ///
+    /// 返回 `(处理数量, 错误列表)`；单个文件失败不中止整体回填。
+    /// 本地 `attempted` 集合保证 DB 抖动导致置位失败时循环仍会终止
+    /// （`find_images_without_exif` 无游标，失败行下一轮会被再次返回）。
+    pub async fn backfill_image_exif(&self) -> Result<(i64, Vec<String>), ServiceError> {
+        let mut processed = 0i64;
+        let mut errors: Vec<String> = Vec::new();
+        let mut attempted: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+        loop {
+            let rows = self
+                .repo
+                .find_images_without_exif(EXIF_BACKFILL_BATCH)
+                .await
+                .map_err(|e| ServiceError::Internal(e.to_string()))?;
+            if rows.is_empty() {
+                break;
+            }
+
+            let mut progressed = false;
+            for (id, stream_url) in rows {
+                if !attempted.insert(id) {
+                    continue;
+                }
+                progressed = true;
+                processed += 1;
+
+                let Some(path) = safe_media_path(&stream_url, &self.config.media_root) else {
+                    // 文件缺失 / 路径非法：标记已尝试，避免每轮重复处理
+                    if let Err(e) = mark_exif_extracted(self.repo.pool(), id).await {
+                        errors.push(format!("id={}: {}", id, e));
+                    }
+                    continue;
+                };
+
+                let parsed = tokio::task::spawn_blocking(move || parse_exif_file(&path)).await;
+                match parsed {
+                    Ok(Some(exif)) => {
+                        if let Err(e) = self.repo.update_video_exif(id, &exif).await {
+                            errors.push(format!("id={}: {}", id, e));
+                        }
+                    }
+                    Ok(None) => {
+                        if let Err(e) = mark_exif_extracted(self.repo.pool(), id).await {
+                            errors.push(format!("id={}: {}", id, e));
+                        }
+                    }
+                    Err(e) => errors.push(format!("id={}: parse task failed: {}", id, e)),
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+
+        Ok((processed, errors))
+    }
+
     pub async fn update_cover(
         &self,
         id: i64,
@@ -746,4 +843,17 @@ impl MediaService {
         }
         Ok(())
     }
+}
+
+/// 仅标记"已尝试解析 EXIF"（无 EXIF / 文件缺失），不写任何 exif 列。
+///
+/// `videos` 表的这条 `UPDATE` 语义与 `VideoRepository::update_video_exif`
+/// 的 `exif_extracted = TRUE` 收尾一致；参数化绑定，无注入面。放在 service
+/// 层是因为仓储层未提供单独的 mark 方法，而避免为此新增跨文件改动。
+async fn mark_exif_extracted(pool: &sqlx::PgPool, video_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE videos SET exif_extracted = TRUE WHERE id = $1")
+        .bind(video_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
 }

@@ -637,6 +637,10 @@ pub async fn build_router(config: AppConfig) -> Router {
                 post(handlers::admin::backfill_thumbnails),
             )
             .route(
+                "/admin/videos/backfill-exif",
+                post(handlers::admin::backfill_exif),
+            )
+            .route(
                 "/admin/videos/batch",
                 delete(handlers::admin::delete_videos),
             )

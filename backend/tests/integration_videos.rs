@@ -1533,6 +1533,8 @@ async fn test_list_videos_handler_clamps_pagination() {
         size: Some(-1),
         uploader_id: None,
         sort: None,
+        taken_after: None,
+        taken_before: None,
     };
     let (status, _, Json(resp)) =
         handlers::videos::list_videos(State(state.clone()), Extension(user.clone()), Query(q))
@@ -1551,6 +1553,8 @@ async fn test_list_videos_handler_clamps_pagination() {
         size: Some(999_999),
         uploader_id: None,
         sort: None,
+        taken_after: None,
+        taken_before: None,
     };
     let (_, _, Json(resp)) =
         handlers::videos::list_videos(State(state.clone()), Extension(user.clone()), Query(q))
@@ -1568,6 +1572,8 @@ async fn test_list_videos_handler_clamps_pagination() {
         size: None,
         uploader_id: None,
         sort: None,
+        taken_after: None,
+        taken_before: None,
     };
     let (_, _, Json(resp)) =
         handlers::videos::list_videos(State(state.clone()), Extension(user.clone()), Query(q))
@@ -1585,6 +1591,8 @@ async fn test_list_videos_handler_clamps_pagination() {
         size: None,
         uploader_id: None,
         sort: None,
+        taken_after: None,
+        taken_before: None,
     };
     let res =
         handlers::videos::list_videos(State(state.clone()), Extension(user.clone()), Query(q))

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::Read;
@@ -6,7 +7,8 @@ use tracing::info;
 use crate::config::AppConfig;
 use crate::models::video::{FileCheckItem, VideoItem};
 use crate::repositories::playback_repo::PlaybackRepository;
-use crate::repositories::video_repo::{LocalVideoValues, VideoRepository};
+use crate::repositories::video_repo::{LocalVideoExif, LocalVideoValues, VideoRepository};
+use crate::services::exif_service::parse_exif_file;
 use crate::util::error::ServiceError;
 
 #[derive(Clone)]
@@ -61,11 +63,48 @@ impl VideoService {
         uploader_id: Option<i64>,
         sort: Option<&str>,
     ) -> Result<(Vec<VideoItem>, i64), ServiceError> {
+        self.list_videos_paged_filtered(
+            page,
+            size,
+            query,
+            source_type,
+            category,
+            username,
+            uploader_id,
+            sort,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// 与 [`Self::list_videos_paged`] 相同，另支持 EXIF 拍摄时间范围过滤
+    /// （半开区间 `[taken_after, taken_before)`，用于图库按日期筛选）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_videos_paged_filtered(
+        &self,
+        page: i64,
+        size: i64,
+        query: Option<&str>,
+        source_type: Option<&str>,
+        category: Option<&str>,
+        username: Option<&str>,
+        uploader_id: Option<i64>,
+        sort: Option<&str>,
+        taken_after: Option<DateTime<Utc>>,
+        taken_before: Option<DateTime<Utc>>,
+    ) -> Result<(Vec<VideoItem>, i64), ServiceError> {
         // Run the count and the page query concurrently instead of serially —
         // both hit the pool, so this roughly halves list latency.
         let (total, rows) = tokio::try_join!(
-            self.repo
-                .count_all(query, source_type, category, uploader_id),
+            self.repo.count_all(
+                query,
+                source_type,
+                category,
+                uploader_id,
+                taken_after,
+                taken_before
+            ),
             self.repo.find_all_paged(
                 page,
                 size,
@@ -75,6 +114,8 @@ impl VideoService {
                 username,
                 uploader_id,
                 sort,
+                taken_after,
+                taken_before,
             ),
         )?;
         let items: Vec<VideoItem> = rows.into_iter().map(VideoItem::from).collect();
@@ -359,6 +400,9 @@ impl VideoService {
             source_type: &'static str,
             file_hash: String,
             file_size: i64,
+            /// EXIF 入库值（图片在此处同步解析；视频/无 EXIF 图片为
+            /// `extracted = true` + 全 None，避免后台回填反复重试）。
+            exif: LocalVideoExif,
         }
 
         let candidates: Vec<FileCandidate> = tokio::task::spawn_blocking(move || {
@@ -413,12 +457,30 @@ impl VideoService {
                     }
                 }
                 let file_hash = format!("{:x}", hasher.finalize());
+                // 图片同步解析 EXIF（已处于 blocking 线程池；解析失败返回
+                // None，不 panic）。非图片与解析失败都写 extracted = true，
+                // 让后台回填任务跳过这些行。
+                let exif = if source_type == "local_image" {
+                    match parse_exif_file(&path) {
+                        Some(parsed) => LocalVideoExif::from_parsed(&parsed, true),
+                        None => LocalVideoExif {
+                            extracted: true,
+                            ..Default::default()
+                        },
+                    }
+                } else {
+                    LocalVideoExif {
+                        extracted: true,
+                        ..Default::default()
+                    }
+                };
                 out.push(FileCandidate {
                     file_name,
                     stream_url,
                     source_type,
                     file_hash,
                     file_size,
+                    exif,
                 });
                 // Stop hashing as soon as we've reached the insert cap —
                 // otherwise a huge directory gets fully hashed for nothing.
@@ -458,6 +520,7 @@ impl VideoService {
                 Some(&cand.file_hash),
                 Some(cand.file_size),
                 Some(&cand.file_name),
+                cand.exif.clone(),
             ));
             added += 1;
 

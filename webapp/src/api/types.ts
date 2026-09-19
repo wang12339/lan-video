@@ -47,6 +47,21 @@ export interface Video {
   watchPosition?: number;
   hasVariants?: boolean;
   uploaderId?: string;
+  exif?: ImageExif;
+}
+
+// 图片 EXIF 元数据（后端可选返回；所有字段均可能缺失）
+export interface ImageExif {
+  takenAt?: string;
+  lat?: number;
+  lon?: number;
+  camera?: string;
+  lens?: string;
+  aperture?: number;
+  shutter?: string;
+  iso?: number;
+  focalLength?: number;
+  orientation?: number;
 }
 
 export interface VideoVariant {
@@ -131,6 +146,7 @@ export interface MappedVideo {
   progress: number;
   hasVariants?: boolean;
   uploaderId?: string;
+  exif?: ImageExif;
 }
 
 export interface MappedImage {
@@ -140,6 +156,7 @@ export interface MappedImage {
   thumb: string | null;
   original: string | null;
   sourceType: SourceType;
+  exif?: ImageExif;
 }
 
 export interface MappedHistory {

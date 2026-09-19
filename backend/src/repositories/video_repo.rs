@@ -1,5 +1,6 @@
 use crate::db::log_slow_query;
-use crate::models::video::VideoItem;
+use crate::models::video::{ImageExif, VideoItem};
+use crate::services::exif_service::ParsedExif;
 use moka::sync::Cache;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -16,8 +17,62 @@ use std::time::Duration;
 const STREAM_URL_CACHE_TTL: Duration = Duration::from_secs(30);
 const STREAM_URL_CACHE_MAX: u64 = 5_000;
 
+/// EXIF 元数据的入库形态（剥离 `ParsedExif` 与 DB 列类型的耦合）。
+///
+/// `extracted` 表示“已尝试解析”：即使一个字段都没解析出来也应写 `true`，
+/// 否则 `find_images_without_exif` 后台任务会对无 EXIF 的文件反复重试。
+#[derive(Debug, Clone, Default)]
+pub struct LocalVideoExif {
+    pub taken_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub camera: Option<String>,
+    pub lens: Option<String>,
+    pub aperture: Option<f64>,
+    pub shutter: Option<String>,
+    pub iso: Option<i32>,
+    pub focal_length: Option<f64>,
+    pub orientation: Option<i32>,
+    pub extracted: bool,
+}
+
+impl LocalVideoExif {
+    /// 把解析结果转换为入库值。
+    ///
+    /// 数值/文本字段统一经 `Display` 中转，因此 `ParsedExif` 各字段用
+    /// `String`、`f64`、`i32` 等具体类型均可（shutter 以 `"1/250"` 这类
+    /// 展示文本存储，光圈/焦距按数值列存储）。
+    pub fn from_parsed(exif: &ParsedExif, extracted: bool) -> Self {
+        Self {
+            taken_at: exif.taken_at,
+            lat: exif_to_f64(&exif.lat),
+            lon: exif_to_f64(&exif.lon),
+            camera: exif_to_text(&exif.camera),
+            lens: exif_to_text(&exif.lens),
+            aperture: exif_to_f64(&exif.aperture),
+            shutter: exif_to_text(&exif.shutter),
+            iso: exif_to_i32(&exif.iso),
+            focal_length: exif_to_f64(&exif.focal_length),
+            orientation: exif_to_i32(&exif.orientation),
+            extracted,
+        }
+    }
+}
+
+fn exif_to_text<T: std::fmt::Display>(value: &Option<T>) -> Option<String> {
+    value.as_ref().map(ToString::to_string)
+}
+
+fn exif_to_f64<T: std::fmt::Display>(value: &Option<T>) -> Option<f64> {
+    value.as_ref().and_then(|v| v.to_string().parse().ok())
+}
+
+fn exif_to_i32<T: std::fmt::Display>(value: &Option<T>) -> Option<i32> {
+    value.as_ref().and_then(|v| v.to_string().parse().ok())
+}
+
 /// Tuple type for batch inserting local videos:
-/// (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name)
+/// (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, exif)
 pub type LocalVideoValues<'a> = (
     &'a str,
     &'a str,
@@ -29,11 +84,12 @@ pub type LocalVideoValues<'a> = (
     Option<&'a str>,
     Option<i64>,
     Option<&'a str>,
+    LocalVideoExif,
 );
 
 /// Explicit columns for VideoRow — avoids SELECT * fetching unnecessary data
-const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id";
-const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id";
+const VIDEO_COLUMNS: &str = "id, title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, created_at, views, duration, uploader_id, exif_taken_at, exif_lat, exif_lon, exif_camera, exif_lens, exif_aperture, exif_shutter, exif_iso, exif_focal_length, exif_orientation, exif_extracted";
+const VIDEO_COLUMNS_PREFIXED: &str = "v.id, v.title, v.description, v.source_type, v.cover_url, v.thumb_url, v.stream_url, v.category, v.file_hash, v.file_size, v.original_name, v.created_at, v.views, v.duration, v.uploader_id, v.exif_taken_at, v.exif_lat, v.exif_lon, v.exif_camera, v.exif_lens, v.exif_aperture, v.exif_shutter, v.exif_iso, v.exif_focal_length, v.exif_orientation, v.exif_extracted";
 
 fn push_video_filters(
     builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
@@ -41,6 +97,8 @@ fn push_video_filters(
     source_type: Option<&str>,
     category: Option<&str>,
     uploader_id: Option<i64>,
+    taken_after: Option<chrono::DateTime<chrono::Utc>>,
+    taken_before: Option<chrono::DateTime<chrono::Utc>>,
 ) {
     if let Some(q) = query {
         // 'simple' 是标准 PostgreSQL 自带配置(zhparser 不一定安装);
@@ -66,11 +124,24 @@ fn push_video_filters(
         builder.push(" AND v.uploader_id = ");
         builder.push_bind(uid);
     }
+    // EXIF 拍摄时间范围（半开区间 [after, before)，仅筛选有拍摄时间的图片）
+    if let Some(after) = taken_after {
+        builder.push(" AND v.exif_taken_at >= ");
+        builder.push_bind(after);
+    }
+    if let Some(before) = taken_before {
+        builder.push(" AND v.exif_taken_at < ");
+        builder.push_bind(before);
+    }
 }
 
 /// Whitelisted ORDER BY clause (leading space included, `ORDER BY` handled by
 /// the caller). Unknown sort values fall back to the default ranking — the
 /// caller-supplied string is never interpolated into the SQL.
+///
+/// Supported: `views_asc`, `id`/`id_desc`, `id_asc`, `duration`/`duration_desc`,
+/// `duration_asc`, `title`/`title_asc`, `title_desc`, `taken`/`taken_desc`
+/// (EXIF 拍摄时间，NULLS LAST), `taken_asc`.
 fn push_video_sort_clause(
     builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
     sort: Option<&str>,
@@ -83,6 +154,10 @@ fn push_video_sort_clause(
         Some("duration_asc") => builder.push(" v.duration ASC, v.id ASC"),
         Some("title") | Some("title_asc") => builder.push(" v.title ASC, v.id ASC"),
         Some("title_desc") => builder.push(" v.title DESC, v.id DESC"),
+        Some("taken") | Some("taken_desc") => {
+            builder.push(" v.exif_taken_at DESC NULLS LAST, v.id DESC")
+        }
+        Some("taken_asc") => builder.push(" v.exif_taken_at ASC NULLS LAST, v.id ASC"),
         _ => builder.push(" v.views DESC, v.id DESC"),
     };
 }
@@ -117,10 +192,63 @@ pub struct VideoRow {
     pub watch_position: Option<i64>,
     #[sqlx(default)]
     pub has_variants: bool,
+    #[sqlx(default)]
+    pub exif_taken_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(default)]
+    pub exif_lat: Option<f64>,
+    #[sqlx(default)]
+    pub exif_lon: Option<f64>,
+    #[sqlx(default)]
+    pub exif_camera: Option<String>,
+    #[sqlx(default)]
+    pub exif_lens: Option<String>,
+    #[sqlx(default)]
+    pub exif_aperture: Option<f64>,
+    #[sqlx(default)]
+    pub exif_shutter: Option<String>,
+    #[sqlx(default)]
+    pub exif_iso: Option<i32>,
+    #[sqlx(default)]
+    pub exif_focal_length: Option<f64>,
+    #[sqlx(default)]
+    pub exif_orientation: Option<i32>,
+    /// 是否已尝试过 EXIF 解析（后台补扫任务据此跳过，不进入 API 响应）。
+    #[allow(dead_code)]
+    #[sqlx(default)]
+    pub exif_extracted: bool,
 }
 
 impl From<VideoRow> for VideoItem {
     fn from(r: VideoRow) -> Self {
+        // 任一 EXIF 字段非空才返回 exif 对象；解析过但无 EXIF 的记录保持 None，
+        // 前端据此隐藏"拍摄信息"面板。
+        let exif = if r.exif_taken_at.is_some()
+            || r.exif_lat.is_some()
+            || r.exif_lon.is_some()
+            || r.exif_camera.is_some()
+            || r.exif_lens.is_some()
+            || r.exif_aperture.is_some()
+            || r.exif_shutter.is_some()
+            || r.exif_iso.is_some()
+            || r.exif_focal_length.is_some()
+            || r.exif_orientation.is_some()
+        {
+            Some(ImageExif {
+                taken_at: r.exif_taken_at,
+                lat: r.exif_lat,
+                lon: r.exif_lon,
+                camera: r.exif_camera,
+                lens: r.exif_lens,
+                aperture: r.exif_aperture,
+                shutter: r.exif_shutter,
+                iso: r.exif_iso,
+                focal_length: r.exif_focal_length,
+                orientation: r.exif_orientation,
+            })
+        } else {
+            None
+        };
+
         VideoItem {
             id: r.id,
             title: r.title,
@@ -136,6 +264,7 @@ impl From<VideoRow> for VideoItem {
             has_variants: r.has_variants,
             uploader_id: r.uploader_id,
             created_at: r.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            exif,
         }
     }
 }
@@ -228,10 +357,20 @@ impl VideoRepository {
         source_type: Option<&str>,
         category: Option<&str>,
         uploader_id: Option<i64>,
+        taken_after: Option<chrono::DateTime<chrono::Utc>>,
+        taken_before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<i64, sqlx::Error> {
         let mut builder =
             sqlx::QueryBuilder::new("SELECT COUNT(*) as count FROM videos v WHERE 1=1");
-        push_video_filters(&mut builder, query, source_type, category, uploader_id);
+        push_video_filters(
+            &mut builder,
+            query,
+            source_type,
+            category,
+            uploader_id,
+            taken_after,
+            taken_before,
+        );
         builder.build_query_scalar().fetch_one(&self.pool).await
     }
 
@@ -259,7 +398,9 @@ impl VideoRepository {
     ///
     /// # 排序选项 (`sort`)
     /// `views_asc`, `id`/`id_desc`, `id_asc`, `duration`/`duration_desc`,
-    /// `duration_asc`, `title`/`title_asc`, `title_desc`；默认 `v.views DESC, v.id DESC`。
+    /// `duration_asc`, `title`/`title_asc`, `title_desc`,
+    /// `taken`/`taken_desc`/`taken_asc`（按 EXIF 拍摄时间，NULLS LAST 置底）；
+    /// 默认 `v.views DESC, v.id DESC`。
     ///
     /// # 性能
     /// - `OFFSET` 使用 `saturating_mul` 防止溢出
@@ -276,6 +417,8 @@ impl VideoRepository {
         username: Option<&str>,
         uploader_id: Option<i64>,
         sort: Option<&str>,
+        taken_after: Option<chrono::DateTime<chrono::Utc>>,
+        taken_before: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<VideoRow>, sqlx::Error> {
         // Defense in depth: handlers already clamp `page`, but saturating
         // multiplication guarantees `OFFSET` can never overflow/wrap.
@@ -296,7 +439,15 @@ impl VideoRepository {
             ));
         }
         builder.push(" WHERE 1=1");
-        push_video_filters(&mut builder, query, source_type, category, uploader_id);
+        push_video_filters(
+            &mut builder,
+            query,
+            source_type,
+            category,
+            uploader_id,
+            taken_after,
+            taken_before,
+        );
 
         match username {
             Some(_uname) => {
@@ -598,6 +749,34 @@ impl VideoRepository {
         .await
     }
 
+    /// 查找尚未尝试解析 EXIF 的本地图片（供后台补扫任务使用）。
+    ///
+    /// # SQL
+    /// ```sql
+    /// SELECT id, stream_url FROM videos
+    /// WHERE source_type = 'local_image'
+    ///   AND exif_extracted = FALSE
+    ///   AND deleted_at IS NULL
+    /// ORDER BY id
+    /// LIMIT $1
+    /// ```
+    ///
+    /// # 返回
+    /// `(id, stream_url)` 列表；调用方解析成功与否都应调用
+    /// [`update_video_exif`](Self::update_video_exif) 把 `exif_extracted`
+    /// 置 TRUE，避免无 EXIF 的文件被反复扫描。
+    pub async fn find_images_without_exif(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(i64, String)>, sqlx::Error> {
+        sqlx::query_as::<_, (i64, String)>(
+            "SELECT id, stream_url FROM videos WHERE source_type = 'local_image' AND exif_extracted = FALSE AND deleted_at IS NULL ORDER BY id LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
     /// 全量列出本地视频的 `(id, stream_url)`,供后台
     /// “视频记录 ↔ 物理文件”一致性清扫使用(文件丢失的记录会被删除)。
     pub async fn list_local_video_media(&self) -> Result<Vec<(i64, String)>, sqlx::Error> {
@@ -775,8 +954,8 @@ impl VideoRepository {
         uploader_id: Option<i64>,
     ) -> Result<i64, sqlx::Error> {
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id"
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id, exif_extracted) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE) RETURNING id"
         )
         .bind(title)
         .bind(description)
@@ -847,8 +1026,8 @@ impl VideoRepository {
         }
 
         let insert = sqlx::query_as::<_, VideoRow>(&format!(
-            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {}",
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, uploader_id, exif_extracted) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE) RETURNING {}",
             VIDEO_COLUMNS
         ))
         .bind(title)
@@ -899,7 +1078,8 @@ impl VideoRepository {
     /// # SQL
     /// ```sql
     /// INSERT INTO videos (title, description, source_type, cover_url, thumb_url,
-    ///                     stream_url, category, file_hash, file_size, original_name)
+    ///                     stream_url, category, file_hash, file_size, original_name,
+    ///                     exif_taken_at, ..., exif_orientation, exif_extracted)
     /// VALUES ($1, $2, ...), ($3, $4, ...), ...
     /// ```
     ///
@@ -916,7 +1096,7 @@ impl VideoRepository {
             return Ok(0);
         }
         let mut builder = sqlx::QueryBuilder::new(
-            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name) ",
+            "INSERT INTO videos (title, description, source_type, cover_url, thumb_url, stream_url, category, file_hash, file_size, original_name, exif_taken_at, exif_lat, exif_lon, exif_camera, exif_lens, exif_aperture, exif_shutter, exif_iso, exif_focal_length, exif_orientation, exif_extracted) ",
         );
         builder.push_values(videos, |mut b, v| {
             b.push_bind(v.0)
@@ -928,7 +1108,18 @@ impl VideoRepository {
                 .push_bind(v.6)
                 .push_bind(v.7)
                 .push_bind(v.8)
-                .push_bind(v.9);
+                .push_bind(v.9)
+                .push_bind(v.10.taken_at)
+                .push_bind(v.10.lat)
+                .push_bind(v.10.lon)
+                .push_bind(v.10.camera.as_deref())
+                .push_bind(v.10.lens.as_deref())
+                .push_bind(v.10.aperture)
+                .push_bind(v.10.shutter.as_deref())
+                .push_bind(v.10.iso)
+                .push_bind(v.10.focal_length)
+                .push_bind(v.10.orientation)
+                .push_bind(v.10.extracted);
         });
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
@@ -1039,6 +1230,43 @@ impl VideoRepository {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// 写入 EXIF 解析结果（10 个 exif 列 + `exif_extracted = TRUE`）。
+    ///
+    /// # SQL
+    /// ```sql
+    /// UPDATE videos SET
+    ///   exif_taken_at = $2, exif_lat = $3, ..., exif_orientation = $11,
+    ///   exif_extracted = TRUE
+    /// WHERE id = $1
+    /// ```
+    ///
+    /// # 用途
+    /// 图片/视频上传或后台补扫完成 EXIF 解析后调用。无论是否解析出字段都
+    /// 应调用（`ParsedExif` 全空表示“无 EXIF”），把 `exif_extracted` 置 TRUE
+    /// 以结束后台补扫。
+    pub async fn update_video_exif(&self, id: i64, exif: &ParsedExif) -> Result<(), sqlx::Error> {
+        let e = LocalVideoExif::from_parsed(exif, true);
+        sqlx::query(
+            "UPDATE videos SET exif_taken_at = $2, exif_lat = $3, exif_lon = $4, exif_camera = $5, \
+             exif_lens = $6, exif_aperture = $7, exif_shutter = $8, exif_iso = $9, \
+             exif_focal_length = $10, exif_orientation = $11, exif_extracted = TRUE WHERE id = $1",
+        )
+        .bind(id)
+        .bind(e.taken_at)
+        .bind(e.lat)
+        .bind(e.lon)
+        .bind(e.camera.as_deref())
+        .bind(e.lens.as_deref())
+        .bind(e.aperture)
+        .bind(e.shutter.as_deref())
+        .bind(e.iso)
+        .bind(e.focal_length)
+        .bind(e.orientation)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

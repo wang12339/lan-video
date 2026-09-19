@@ -685,3 +685,349 @@ html.overflow-hidden {
     padding: 8px;
   }
 }
+
+/* ── 时间线分组（?group=date） ───────────────────────────────────────────── */
+.gallery-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.timeline-group {
+  position: relative;
+}
+
+.timeline-date {
+  position: sticky;
+  top: var(--nav-h-actual, var(--nav-h));
+  z-index: 5;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text2);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* ── 灯箱：照片信息按钮 / 幻灯片控制条 ──────────────────────────────────── */
+.lightbox-icon-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.lightbox-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  transform: scale(1.08);
+}
+
+.lightbox-icon-btn.active {
+  background: var(--accent);
+}
+
+.lightbox-bottombar {
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lightbox-slideshow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.slideshow-toggle {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: background 0.2s;
+}
+
+.slideshow-toggle:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.slideshow-toggle-icon {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.slideshow-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 50ms linear;
+}
+
+.slideshow-interval {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.slideshow-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.slideshow-option input {
+  accent-color: var(--accent);
+}
+
+/* ── EXIF 信息面板 ──────────────────────────────────────────────────────── */
+.exif-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+}
+
+.exif-panel-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.exif-panel-content {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 90vw);
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 18, 24, 0.96);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: exifPanelIn 0.22s var(--ease-out);
+}
+
+@keyframes exifPanelIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.exif-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.exif-panel-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.exif-panel-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 16px;
+}
+
+.exif-panel-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.exif-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+}
+
+.exif-panel-empty {
+  padding: 40px 18px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+}
+
+.exif-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exif-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.exif-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.exif-value {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  word-break: break-word;
+}
+
+.exif-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exif-action-btn,
+.exif-action-link {
+  font-size: 12px;
+  color: var(--accent2);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.exif-action-btn:hover,
+.exif-action-link:hover {
+  background: rgba(var(--accent-rgb), 0.22);
+}
+
+/* 移动端：底部抽屉 */
+.exif-panel--mobile .exif-panel-content {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: 70vh;
+  border-left: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px 16px 0 0;
+  animation: exifDrawerIn 0.24s var(--ease-out);
+}
+
+@keyframes exifDrawerIn {
+  from {
+    transform: translateY(32px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .lightbox-bottombar {
+    justify-content: center;
+  }
+
+  .lightbox-slideshow {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .slideshow-option {
+    font-size: 11px;
+  }
+
+  .timeline-date {
+    font-size: 13px;
+  }
+}
+
+/* ── 拍摄日期筛选 ───────────────────────────────────────────────────────── */
+.gallery-date-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gallery-date-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text3);
+}
+
+.gallery-date-field input[type='date'] {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.gallery-date-clear {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 12px;
+}
+
+.gallery-date-clear:hover {
+  background: var(--bg4);
+}

@@ -4,6 +4,7 @@ pub mod chat_service;
 pub mod chat_video;
 pub mod comment_service;
 pub mod email_service;
+pub mod exif_service;
 pub mod gateway_service;
 pub mod log_parser;
 pub mod media_service;

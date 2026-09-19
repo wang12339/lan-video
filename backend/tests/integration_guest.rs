@@ -72,6 +72,8 @@ async fn guest_session_created_and_scoped() {
             size: None,
             uploader_id: None,
             sort: None,
+            taken_after: None,
+            taken_before: None,
         }),
     )
     .await

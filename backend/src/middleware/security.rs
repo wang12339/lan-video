@@ -115,7 +115,7 @@ static CSP_POLICY: &str = "default-src 'self'; \
     frame-ancestors 'none'; \
     frame-src 'none'; \
     object-src 'none'; \
-    img-src 'self' data:; \
+    img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; \
     media-src 'self' blob:; \
     style-src 'self'; \
     font-src 'self' data:; \
@@ -134,7 +134,7 @@ static CSP_POLICY_HTTP: &str = "default-src 'self'; \
     frame-ancestors 'none'; \
     frame-src 'none'; \
     object-src 'none'; \
-    img-src 'self' data:; \
+    img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; \
     media-src 'self' blob:; \
     style-src 'self'; \
     font-src 'self' data:; \

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -43,6 +44,36 @@ pub struct VideoVariantResponse {
 
 // ── Video item & list ──
 
+/// 图片/视频的 EXIF 元数据，字段与 `exif_service::ParsedExif` 一一对应。
+///
+/// 全部字段可空：解析不到 EXIF 的记录不会返回该对象（见 `VideoItem::exif`）。
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageExif {
+    /// 拍摄时间（EXIF DateTimeOriginal，UTC）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub taken_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lon: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aperture: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iso: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focal_length: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<i32>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoItem {
@@ -66,6 +97,9 @@ pub struct VideoItem {
     /// 用 `#[serde(default)]` 保持反序列化兼容。
     #[serde(default)]
     pub created_at: String,
+    /// EXIF 元数据：所有 exif 字段均为空时省略该字段（旧版响应兼容）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub exif: Option<ImageExif>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
@@ -86,6 +120,10 @@ pub struct VideoQuery {
     pub size: Option<i64>,
     pub uploader_id: Option<String>,
     pub sort: Option<String>,
+    /// 按 EXIF 拍摄日期筛选（含当天），格式 `YYYY-MM-DD`
+    pub taken_after: Option<String>,
+    /// 按 EXIF 拍摄日期筛选（含当天），格式 `YYYY-MM-DD`
+    pub taken_before: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

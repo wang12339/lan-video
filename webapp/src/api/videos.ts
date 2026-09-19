@@ -30,8 +30,16 @@ interface ListVideosParams {
   size?: number;
   /** 上传者 ID，用于筛选特定用户的视频 */
   uploaderId?: string;
-  /** 排序方式（如 'newest', 'oldest', 'popular' 等） */
-  sort?: string;
+  /**
+   * 排序方式（如 'newest', 'oldest', 'popular' 等）。
+   * 按拍摄时间排序：'taken_desc'（新→旧）| 'taken_asc'（旧→新），
+   * 无拍摄时间的条目由后端置于末尾（NULLS LAST）。
+   */
+  sort?: 'newest' | 'oldest' | 'popular' | 'duration_desc' | 'duration_asc' | 'title_asc' | 'title_desc' | 'taken_desc' | 'taken_asc' | string;
+  /** 按 EXIF 拍摄日期筛选（含当天），格式 YYYY-MM-DD */
+  takenAfter?: string;
+  /** 按 EXIF 拍摄日期筛选（含当天），格式 YYYY-MM-DD */
+  takenBefore?: string;
 }
 
 /**
@@ -73,6 +81,8 @@ export async function listVideos({
   size = 20,
   uploaderId,
   sort,
+  takenAfter,
+  takenBefore,
 }: ListVideosParams = {}): Promise<VideoListResponse> {
   const params = new URLSearchParams();
   if (query) params.set('query', query);
@@ -80,6 +90,8 @@ export async function listVideos({
   if (category) params.set('category', category);
   if (uploaderId !== undefined) params.set('uploader_id', String(uploaderId));
   if (sort) params.set('sort', sort);
+  if (takenAfter) params.set('taken_after', takenAfter);
+  if (takenBefore) params.set('taken_before', takenBefore);
   params.set('page', String(Math.max(0, page)));
   params.set('size', String(Math.min(size, MAX_PAGE_SIZE)));
   return request<VideoListResponse>(`/videos?${params}`);
