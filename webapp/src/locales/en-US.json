@@ -82,7 +82,10 @@
       "tokenExchangeFailed": "Gateway token exchange failed. Please try again",
       "unreachable": "Authentication gateway is temporarily unavailable",
       "userinfoFailed": "Failed to fetch gateway user info",
-      "signInFailed": "Failed to link gateway account. Please contact the administrator"
+      "signInFailed": "Failed to link gateway account. Please contact the administrator",
+      "disabled": "Auth gateway is not enabled",
+      "missingParams": "Missing gateway callback parameters",
+      "internal": "Gateway sign-in internal error. Please try again"
     }
   },
   "toast": {

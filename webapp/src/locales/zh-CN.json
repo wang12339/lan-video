@@ -82,7 +82,10 @@
       "tokenExchangeFailed": "网关令牌交换失败，请重试",
       "unreachable": "认证网关暂时不可用",
       "userinfoFailed": "获取网关用户信息失败",
-      "signInFailed": "网关账号关联失败，请联系管理员"
+      "signInFailed": "网关账号关联失败，请联系管理员",
+      "disabled": "认证网关未启用",
+      "missingParams": "网关回调参数缺失",
+      "internal": "网关登录内部错误，请重试"
     }
   },
   "toast": {

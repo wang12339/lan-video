@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { forgotPassword, resetPassword } from '../../api'
 import { verifyEmail } from '../../api/auth'
-import { request, APIError } from '../../api/client'
+import { request, APIError, BASE } from '../../api/client'
 import type { AuthResponse } from '../../api/types'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { useScrollLock } from '../../hooks/useScrollLock'
@@ -114,6 +114,9 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
         gateway_unreachable: 'auth.gatewayError.unreachable',
         userinfo_failed: 'auth.gatewayError.userinfoFailed',
         sign_in_failed: 'auth.gatewayError.signInFailed',
+        gateway_disabled: 'auth.gatewayError.disabled',
+        missing_params: 'auth.gatewayError.missingParams',
+        internal_error: 'auth.gatewayError.internal',
       }
       setError(t(GW_ERR_KEY[gwErrorFromUrl] || 'auth.gatewayError.generic'))
     }
@@ -580,7 +583,7 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
               type="button"
               className="auth-gateway-btn"
               id="auth-gateway-login"
-              onClick={() => { window.location.href = '/auth/gateway/start' }}
+              onClick={() => { window.location.href = BASE + '/auth/gateway/start' }}
             >
               🛡️ {t('auth.gatewayLogin')}
             </button>
