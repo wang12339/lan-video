@@ -301,15 +301,15 @@ describe('VolumeControl', () => {
     const slider = screen.getByRole('slider', { name: '音量' })
     expect(slider).toHaveAttribute('type', 'range')
     expect(slider).toHaveAttribute('min', '0')
-    expect(slider).toHaveAttribute('max', '1')
-    expect(slider).toHaveAttribute('step', '0.05')
+    expect(slider).toHaveAttribute('max', '100')
+    expect(slider).toHaveAttribute('step', '5')
   })
 
   it('显示正确的音量值', () => {
     render(<VolumeControl {...defaultProps} volume={0.6} />)
 
     const slider = screen.getByRole('slider', { name: '音量' })
-    expect(slider).toHaveValue('0.6')
+    expect(slider).toHaveValue('60')
   })
 
   it('静音时显示 0', () => {
@@ -344,23 +344,25 @@ describe('VolumeControl', () => {
     const setVolumeValue = vi.fn()
     render(<VolumeControl {...defaultProps} setVolume={setVolume} setVolumeValue={setVolumeValue} />)
 
-    fireEvent.change(screen.getByRole('slider', { name: '音量' }), { target: { value: '0.3' } })
+    fireEvent.change(screen.getByRole('slider', { name: '音量' }), { target: { value: '30' } })
     expect(setVolume).toHaveBeenCalledWith(0.3)
     expect(setVolumeValue).toHaveBeenCalledWith(0.3)
   })
 
-  it('aria-valuenow 反映当前音量百分比', () => {
+  it('aria-valuetext 反映当前音量百分比', () => {
     render(<VolumeControl {...defaultProps} volume={0.5} muted={false} />)
 
     const slider = screen.getByRole('slider', { name: '音量' })
-    expect(slider).toHaveAttribute('aria-valuenow', '50')
+    expect(slider).toHaveValue('50')
+    expect(slider).toHaveAttribute('aria-valuetext', '50%')
   })
 
-  it('静音时 aria-valuenow 为 0', () => {
+  it('静音时 aria-valuetext 为 0%', () => {
     render(<VolumeControl {...defaultProps} volume={0.8} muted={true} />)
 
     const slider = screen.getByRole('slider', { name: '音量' })
-    expect(slider).toHaveAttribute('aria-valuenow', '0')
+    expect(slider).toHaveValue('0')
+    expect(slider).toHaveAttribute('aria-valuetext', '0%')
   })
 })
 

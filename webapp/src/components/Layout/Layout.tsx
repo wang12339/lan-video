@@ -1,29 +1,59 @@
 import { Outlet, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, Suspense, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../context/AuthContext'
 import { useChatRoom } from '../../context/ChatContext'
 import { searchSuggest, getPendingUserCount, PENDING_USERS_CHANGED_EVENT } from '../../api'
 import { addToSearchHistory } from '../../utils/searchHistory'
-import { trackClick } from '../../utils/track'
+import { trackClick, trackPage } from '../../utils/track'
 import { useToast } from '../Toast/Toast'
 import PageTransition from '../ui/PageTransition'
+import ErrorBoundary from '../ui/ErrorBoundary'
 import AuthDialog from '../AuthDialog/AuthDialog'
 import ThemeToggle from '../ui/ThemeToggle'
 import { useScrollLock } from '../../hooks/useScrollLock'
 import './Layout.css'
 
+// 懒加载路由的局部 fallback：复用全局 Loading 的样式与文案，
+// 内层 Suspense 先于 App 顶层边界捕获，导航栏不会被卸载重挂。
+const PageLoading = memo(function PageLoading() {
+  const { t } = useTranslation()
+  return (
+    <div className="page-loading" role="status" aria-busy="true">
+      <div className="page-loading-spinner" aria-hidden="true" />
+      <span>{t('common.loading')}</span>
+    </div>
+  )
+})
+
 export default function Layout() {
   const location = useLocation()
   const { t } = useTranslation()
+
+  // 路由变化时上报页面访问。SPA 的 pushState/replaceState 不触发原生事件，
+  // 故由 Layout 主动调用；trackPage 内部按路径去重，重复渲染不会重复上报。
+  // popstate（浏览器前进/后退）由 initTrackRouter 监听，此处无需区分。
+  useEffect(() => {
+    try {
+      trackPage(location.pathname)
+    } catch {
+      // 测试环境可能用仅含 trackClick 的局部 mock 替换 track 模块，忽略
+    }
+  }, [location.pathname])
+
   return (
     <>
       <a href="#main-content" className="skip-link">{t('common.skipToContent') || '跳至主内容'}</a>
       <NavBar />
       <main id="main-content" className="page-content">
-        <PageTransition transitionKey={location.pathname}>
-          <Outlet />
-        </PageTransition>
+        <Suspense fallback={<PageLoading />}>
+          {/* key=pathname：路由切换时重置错误态，避免上一页的崩溃残留 */}
+          <ErrorBoundary key={location.pathname}>
+            <PageTransition transitionKey={location.pathname}>
+              <Outlet />
+            </PageTransition>
+          </ErrorBoundary>
+        </Suspense>
       </main>
     </>
   )
@@ -78,6 +108,14 @@ function NavBar() {
   }, [searchParams])
   const suggestTimer = useRef<ReturnType<typeof setTimeout>>()
   const suggestSeq = useRef(0)
+  // 卸载 / 登录态切换时清理搜索建议防抖定时器；-1 使在途请求序号失配，
+  // 避免旧响应回来后再 setState（纯写入，不读取 ref）。
+  useEffect(() => {
+    return () => {
+      if (suggestTimer.current) clearTimeout(suggestTimer.current)
+      suggestSeq.current = -1
+    }
+  }, [user])
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
   const linksRef = useRef<HTMLDivElement>(null)
@@ -284,6 +322,11 @@ function NavBar() {
               placeholder={t('nav.search')}
               value={searchQuery}
               aria-label={t('common.search')}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={showSuggestions && suggestions.length > 0}
+              aria-controls="nav-suggest-list"
+              aria-activedescendant={showSuggestions && selectedIdx >= 0 ? `nav-suggest-${selectedIdx}` : undefined}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
@@ -293,7 +336,7 @@ function NavBar() {
             </kbd>
           </form>
           {showSuggestions && (
-            <div className="search-suggestions" role="listbox">
+            <div className="search-suggestions" role="listbox" id="nav-suggest-list">
               {searchLoading ? (
                 <div className="search-suggestions-loading">
                   <span className="search-spinner" aria-hidden="true" />
@@ -303,6 +346,7 @@ function NavBar() {
                 suggestions.map((s, i) => (
                   <div
                     key={s}
+                    id={`nav-suggest-${i}`}
                     className={`search-suggestion ${i === selectedIdx ? 'selected' : ''}`}
                     role="option"
                     aria-selected={i === selectedIdx}

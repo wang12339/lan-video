@@ -7,6 +7,15 @@ interface Props {
   onClose: () => void
 }
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value, window.location.origin)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export default function AddExternalModal({ onSave, onClose }: Props) {
   const { t } = useTranslation()
   const [title, setTitle] = useState('')
@@ -15,20 +24,28 @@ export default function AddExternalModal({ onSave, onClose }: Props) {
   const [cover, setCover] = useState('')
   const [cat, setCat] = useState('local')
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSave = useCallback(async () => {
     if (!title.trim() || !url.trim() || saving) return
+    const streamUrl = url.trim()
+    const coverUrl = cover.trim()
+    if (!isHttpUrl(streamUrl) || (coverUrl !== '' && !isHttpUrl(coverUrl))) {
+      setError(t('admin.media.invalidUrl'))
+      return
+    }
+    setError('')
     setSaving(true)
     try {
       await onSave({
         title: title.trim(),
         description: desc.trim() || undefined,
         category: cat.trim() || undefined,
-        stream_url: url.trim(),
-        cover_url: cover.trim() || undefined,
+        stream_url: streamUrl,
+        cover_url: coverUrl || undefined,
       })
     } finally { setSaving(false) }
-  }, [title, desc, url, cover, cat, saving, onSave])
+  }, [title, desc, url, cover, cat, saving, onSave, t])
 
   return (
     <AdminModal
@@ -42,8 +59,9 @@ export default function AddExternalModal({ onSave, onClose }: Props) {
       }
     >
       <label><span>{t('admin.media.titleField')} *</span><input value={title} onChange={e => setTitle(e.target.value)} maxLength={500} placeholder={t('admin.media.titleField')} autoFocus /></label>
-      <label><span>{t('admin.media.videoLink')} *</span><input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..." /></label>
-      <label><span>{t('admin.media.coverLink')}</span><input type="url" value={cover} onChange={e => setCover(e.target.value)} placeholder={t('admin.media.coverOptional')} /></label>
+      <label><span>{t('admin.media.videoLink')} *</span><input type="url" value={url} onChange={e => { setUrl(e.target.value); if (error) setError('') }} placeholder="https://..." /></label>
+      <label><span>{t('admin.media.coverLink')}</span><input type="url" value={cover} onChange={e => { setCover(e.target.value); if (error) setError('') }} placeholder={t('admin.media.coverOptional')} /></label>
+      {error && <p role="alert" style={{ color: '#ef4444', fontSize: 13, margin: 0 }}>{error}</p>}
       <label><span>{t('admin.media.categoryField')}</span><input value={cat} onChange={e => setCat(e.target.value)} maxLength={100} placeholder="local" /></label>
       <label><span>{t('admin.media.description')}</span><textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={t('admin.media.description')} /></label>
     </AdminModal>

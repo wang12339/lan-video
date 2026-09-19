@@ -1,6 +1,7 @@
 // 管理员 API
 
 import { request, cacheClear, APIError } from './client';
+import type { VideoListResponse as PaginatedVideoListResponse } from './types';
 
 /** 待审批用户数变化事件：管理页审批操作后派发，导航徽标立即刷新 */
 export const PENDING_USERS_CHANGED_EVENT = 'atmos:pending-users-changed'
@@ -46,12 +47,10 @@ export interface AdminVideo {
   createdAt?: string;
 }
 
-export interface VideoListResponse {
+/** 复用 types.ts 的分页信封定义，仅将 items 收窄为管理员视频结构 */
+export type VideoListResponse = Omit<PaginatedVideoListResponse, 'items'> & {
   items: AdminVideo[];
-  total: number;
-  page: number;
-  size: number;
-}
+};
 
 // ── 用户管理 ──
 
@@ -88,13 +87,9 @@ export async function updateVideo(
   return request(`/admin/videos/${id}`, { method: 'PUT', body: data });
 }
 
-export async function deleteVideo(id: string): Promise<{ ok: boolean; error?: string }> {
-  return request(`/admin/videos/${id}`, { method: 'DELETE' });
-}
-
-export async function deleteVideos(ids: string[]): Promise<{ ok: boolean; deleted?: number }> {
-  return request('/admin/videos/batch', { method: 'DELETE', body: ids });
-}
+// 与 videos.ts 完全重复的删除实现在此移除，直接转出以保持唯一实现；
+// 调用方（Admin/VideosTab）不依赖返回值，返回类型收窄为 void 无行为影响。
+export { deleteVideo, deleteVideos } from './videos';
 
 // ── 外部视频 ──
 

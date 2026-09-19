@@ -4,7 +4,13 @@ import { useAuth } from '../../context/AuthContext'
 import { useChatRoom } from '../../context/ChatContext'
 import { fetchChatHistory, uploadChatImage, uploadChatVideo } from '../../api'
 import type { ChatEvent, ChatMessage } from '../../api'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 import './Chat.css'
+
+// 用户名仅过滤控制字符，可能含正则元字符，拼进正则前必须转义
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 function formatTs(ts: string): string {
   const d = new Date(ts)
@@ -31,6 +37,12 @@ const EMOJI_GROUPS: { label: string; items: string[] }[] = [
   },
 ]
 
+// 实时追加缓冲区上限：只保留最近 MAX_MESSAGES 条，防止长时间挂机无限累积
+const MAX_MESSAGES = 500
+// 含手动加载历史时的硬上限：loadOlder 是头部插入，若也裁到 500 会立刻丢掉
+// 刚加载的内容并破坏"加载更早"语义，因此仅在超过该值时才从头部丢弃最旧的
+const MAX_MESSAGES_WITH_HISTORY = 1000
+
 function Chat() {
   const { t } = useTranslation()
   const { user } = useAuth()
@@ -55,6 +67,7 @@ function Chat() {
   const [lightbox, setLightbox] = useState<string | null>(null)
 
   const listRef = useRef<HTMLDivElement>(null)
+  const lightboxRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const videoInputRef = useRef<HTMLInputElement>(null)
@@ -67,7 +80,12 @@ function Chat() {
   const appendMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => {
       if (prev.some((x) => x.id === m.id)) return prev // 去重（自己发送的消息会经广播回来）
-      return [...prev, m]
+      const next = [...prev, m]
+      // 追加路径统一裁剪：常规保留最近 MAX_MESSAGES 条；
+      // 若用户已手动翻出更多历史（长度超软上限），放宽到硬上限，
+      // 避免来一条新消息就把正在阅读的历史裁掉。
+      const cap = prev.length > MAX_MESSAGES ? MAX_MESSAGES_WITH_HISTORY : MAX_MESSAGES
+      return next.length > cap ? next.slice(-cap) : next
     })
   }, [])
 
@@ -161,6 +179,19 @@ function Chat() {
     }
   }, [])
 
+  // 灯箱 Esc 关闭：仅在灯箱打开时挂载监听，避免与全局键盘事件/输入框冲突
+  useEffect(() => {
+    if (!lightbox) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightbox(null)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [lightbox])
+
+  // 灯箱打开时陷阱焦点，关闭后由 hook 恢复到触发元素
+  useFocusTrap(lightboxRef, lightbox !== null)
+
   const loadOlder = useCallback(async () => {
     const oldest = messages[0]
     if (!oldest || loadingOlder) return
@@ -170,7 +201,13 @@ function Chat() {
       const prevHeight = el?.scrollHeight ?? 0
       const resp = await fetchChatHistory(oldest.id, 50)
       if (resp.items.length > 0) {
-        setMessages((prev) => [...resp.items.slice().reverse(), ...prev])
+        setMessages((prev) => {
+          const next = [...resp.items.slice().reverse(), ...prev]
+          // 头部插入历史不做软裁剪，仅保留硬上限保护，保持"加载更早"可用
+          return next.length > MAX_MESSAGES_WITH_HISTORY
+            ? next.slice(-MAX_MESSAGES_WITH_HISTORY)
+            : next
+        })
         setHasMore(resp.hasMore)
         // 保持视口位置：新内容插入顶部后补偿滚动差
         requestAnimationFrame(() => {
@@ -443,7 +480,9 @@ function Chat() {
         {messages.map((m) => {
           const mine = m.userId !== undefined && m.userId.toString() === myUserId
           const mentionsMe =
-            !mine && myUsername && new RegExp(`@${myUsername}(?![a-zA-Z0-9_-])`).test(m.content)
+            !mine &&
+            myUsername &&
+            new RegExp(`@${escapeRegExp(myUsername)}(?![a-zA-Z0-9_-])`).test(m.content)
           return (
             <div key={m.id} className={`chat-msg ${mine ? 'mine' : ''} ${mentionsMe ? 'mentions-me' : ''}`}>
               <div className="chat-msg-head">
@@ -583,7 +622,15 @@ function Chat() {
       </div>
 
       {lightbox && (
-        <div className="chat-lightbox" role="dialog" aria-label={t('chat.imageAlt', { name: '' })} onClick={() => setLightbox(null)}>
+        <div
+          ref={lightboxRef}
+          className="chat-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('chat.imageAlt', { name: '' })}
+          tabIndex={-1}
+          onClick={() => setLightbox(null)}
+        >
           <img src={lightbox} alt="" />
         </div>
       )}

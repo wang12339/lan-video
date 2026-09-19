@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useRef } from 'react'
 import { getPref } from '../../../api/prefs'
 import { normalizeSpeed } from './usePlayerControls'
 import { MIN_PROGRESS_SAVE_S } from '../constants'
@@ -11,6 +11,9 @@ export interface UseVideoSourceParams {
   setShowLoading: (v: boolean) => void
   setControlsVisible: (v: boolean) => void
   restoreRef: React.MutableRefObject<number>
+  // true 时只应用 poster/进度/倍速等非源逻辑，不触碰原生 v.src/v.load()，
+  // 源由 HLS hook 统一设置，避免 MSE 与原生源互相覆盖。
+  skipNativeSource?: boolean
 }
 
 export interface UseVideoSourceReturn {
@@ -30,13 +33,23 @@ export function useVideoSource({
   videoRef, videoId, video,
   setSpeed, setShowLoading, setControlsVisible,
   restoreRef,
+  skipNativeSource = false,
 }: UseVideoSourceParams): UseVideoSourceReturn {
+  // skipNativeSource 不放进 applySource 依赖：画质切到 variant 时它会 true→false，
+  // 若因此重跑 applySource，会把 HLS hook 刚设好的 variant 源覆盖回默认源。
+  // 用 ref 读取最新值，applySource 仅在 video/videoId 变化时重跑。
+  const skipNativeSourceRef = useRef(skipNativeSource)
+  skipNativeSourceRef.current = skipNativeSource
+
   const applySource = useCallback(() => {
     const v = videoRef.current
-    if (!v || !video?.stream) return
-    v.src = video.stream!
+    if (!v || !video) return
+    if (!skipNativeSourceRef.current) {
+      if (!video.stream) return
+      v.src = video.stream
+      v.load()
+    }
     v.poster = video.thumb || ''
-    v.load()
     restoreRef.current = 0
 
     if (shouldRestoreProgress(video.progress || 0)) {

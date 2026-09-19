@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 import AuthDialog from '../../components/AuthDialog/AuthDialog'
@@ -13,6 +14,18 @@ import VideoGrid from './VideoGrid'
 import './Home.css'
 
 let homeScrollY = 0
+
+// JSON-LD 注入 <script> 前必须转义：i18n 配置了 escapeValue: false，
+// 翻译文案可能包含 </script>、<!--、U+2028/U+2029 从而突破 script 标签。
+// 转义为 \uXXXX 后 JSON.parse 语义不变。
+function escapeJsonLd(json: string): string {
+  return json
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+}
 
 const ScrollTopButton = memo(function ScrollTopButton({ ariaLabel }: { ariaLabel: string }) {
   const scrollToTop = useCallback(() => {
@@ -33,10 +46,17 @@ const ScrollTopButton = memo(function ScrollTopButton({ ariaLabel }: { ariaLabel
 export default function Home() {
   const { t } = useTranslation()
   const { user } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [showAuth, setShowAuth] = useState(false)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() =>
-    (localStorage.getItem('home-view-mode') as 'grid' | 'list') || 'grid'
-  )
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    try {
+      return (localStorage.getItem('home-view-mode') as 'grid' | 'list') || 'grid'
+    } catch {
+      // localStorage 不可用（隐私模式/沙箱 iframe）：回退默认值
+      return 'grid'
+    }
+  })
   const [showScrollTop, setShowScrollTop] = useState(false)
 
   const {
@@ -60,6 +80,15 @@ export default function Home() {
   } = useHomeData()
 
   const filteredVideos = videos
+
+  // 未登录深链被 RequireAuth 拦回首页后，登录成功再回到原目标：
+  // from 仅接受站内绝对路径（排除 // 协议相对跳转），跳转后清空 state 防重复触发。
+  const from = (location.state as { from?: unknown } | null)?.from
+  useEffect(() => {
+    if (!user) return
+    if (typeof from !== 'string' || !from.startsWith('/') || from.startsWith('//') || from === '/') return
+    navigate(from, { replace: true, state: null })
+  }, [user, from, navigate])
 
   // 返回首页时恢复滚动位置
   const restoredRef = useRef(false)
@@ -186,7 +215,7 @@ export default function Home() {
     <div className="home">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        dangerouslySetInnerHTML={{ __html: escapeJsonLd(JSON.stringify(structuredData)) }}
       />
 
       {user && (

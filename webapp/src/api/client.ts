@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────
 // 项目存在两层响应缓存：
 //   1. LRU 响应缓存（下方 cache Map，GET 30s TTL，键含登录态标识）
-//   2. react-query 查询缓存（../lib/queryClient.ts，staleTime 30s）
+//   2. react-query 查询缓存（../lib/queryClient.ts，staleTime 60s）
 // 规则：任何 POST/PUT/DELETE 成功返回后，统一由 invalidateCacheForPath()
 // 让"可能受影响的读数据"失效 —— 同一规则表同时作用于两层：
 //   - LRU：按 INVALIDATION_RULES.lruPrefixes 前缀清除（跨登录态一并清）
@@ -18,8 +18,9 @@
 //     queryClient.clear），避免登出后读到他人残留数据
 //   - POST /playback/session/*（心跳/启停）：不改变任何可缓存 GET，跳过失效
 //   - POST /playback/history（进度上报，播放中每 10s 一次）：只精确失效
-//     对应视频的 /playback/history/{id} 与 /videos/{id}，不扫全表，
-//     避免看视频期间 /playback 缓存永远打不中
+//     对应视频的 /playback/history 与 /videos/{id}，并标记历史类查询
+//     （my-history / recent-videos）陈旧，不扫全表，避免看视频期间
+//     /playback 缓存永远打不中
 //   - 高频写（分片上传）用 noInvalidate 主动跳过本流程
 //   - 页面自建 sessionCache（auth.ts）与 rq 无关，不受本约定约束
 // ─────────────────────────────────────────────────────────────
@@ -32,8 +33,10 @@ const ERROR_LOG_KEY = 'atmos_error_log';
 const MAX_ERRORS = 50;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
+// 幂等方法可安全重试；写请求（POST/PUT/PATCH/DELETE）默认不重试，避免重复副作用
+const IDEMPOTENT_METHODS: readonly string[] = ['GET', 'HEAD', 'OPTIONS'];
 
-function getCsrfToken(): string | null {
+export function getCsrfToken(): string | null {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
@@ -164,10 +167,19 @@ function sanitizePath(path: string): string {
   return path;
 }
 
+// 缓存键格式为 METHOD:token:url。JWT 不含 ':'（base64url + '.'），
+// 因此按第二个 ':' 之后取出 url 是安全的。BASE 非空（file: 协议下为
+// http://localhost:8082）时先剥掉还原为 path，再做路径前缀匹配，
+// 避免 URL 中段包含相同片段时被误删（如 /admin/videos 命中 /videos）。
 function cacheInvalidatePrefix(urlPrefix: string) {
   if (!urlPrefix) { cache.clear(); return; }
   for (const key of cache.keys()) {
-    if (key.startsWith('GET:') && key.indexOf(urlPrefix, 4) !== -1) {
+    if (!key.startsWith('GET:')) continue;
+    const urlStart = key.indexOf(':', 4);
+    if (urlStart === -1) continue;
+    let path = key.slice(urlStart + 1);
+    if (BASE && path.startsWith(BASE)) path = path.slice(BASE.length);
+    if (path === urlPrefix || path.startsWith(urlPrefix + '/') || path.startsWith(urlPrefix + '?')) {
       cache.delete(key);
     }
   }
@@ -188,20 +200,36 @@ const INVALIDATION_RULES: readonly InvalidationRule[] = [
   { writePrefix: '/auth/user/shares', lruPrefixes: ['/auth/user/shares'], queryKeyPrefixes: ['my-shares'] },
   // 播放列表增删改 → 我的播放列表（含 item_count 变化）
   { writePrefix: '/playlists', lruPrefixes: ['/playlists'], queryKeyPrefixes: ['my-playlists'] },
-  // 评论删除 → 回复列表
+  // 评论删除 → 清 /comments LRU；评论列表由 Comments 组件乐观更新并自行 invalidate
   { writePrefix: '/comments', lruPrefixes: ['/comments'], queryKeyPrefixes: [] },
-  // 视频域写操作（增删改/播放量/评论/标签/分享/转码/扫描）
-  { writePrefix: '/admin/videos', lruPrefixes: ['/videos', '/playback', '/admin/videos'], queryKeyPrefixes: ['home-videos', 'trending-videos', 'my-works', 'my-favorites', 'admin-stats'] },
-  { writePrefix: '/videos', lruPrefixes: ['/videos', '/playback'], queryKeyPrefixes: ['home-videos', 'trending-videos', 'my-works', 'my-favorites', 'admin-stats'] },
+  // 视频域写操作（增删改/播放量/评论/标签/分享/转码/扫描）：
+  //   - my-history / recent-videos：删除/焚毁级联清理播放历史，编辑改变历史中的标题
+  //   - my-shares：/videos/{id}/share 创建/删除分享，删视频级联清理分享记录
+  //   - /auth/user/shares、/admin/stats 的 LRU 必须同步清，否则 rq 重取仍命中旧 LRU
+  { writePrefix: '/admin/videos', lruPrefixes: ['/videos', '/playback', '/admin/videos', '/auth/user/shares', '/admin/stats'], queryKeyPrefixes: ['home-videos', 'trending-videos', 'my-works', 'my-favorites', 'my-history', 'recent-videos', 'my-shares', 'admin-stats'] },
+  { writePrefix: '/videos', lruPrefixes: ['/videos', '/playback', '/auth/user/shares', '/admin/stats'], queryKeyPrefixes: ['home-videos', 'trending-videos', 'my-works', 'my-favorites', 'my-history', 'recent-videos', 'my-shares', 'admin-stats'] },
   // 标签管理 → 标签列表
   { writePrefix: '/admin/tags', lruPrefixes: ['/tags'], queryKeyPrefixes: ['admin-tags'] },
-  // 用户管理 → 用户列表
-  { writePrefix: '/admin/users', lruPrefixes: ['/admin/users'], queryKeyPrefixes: [] },
-  // 日志清空
+  // 用户管理 → 用户列表（UsersTab 亦手动 invalidate）；删除/审批改变
+  // admin-stats 的 userCount/pendingCount，需连 /admin/stats 的 LRU 一起清
+  { writePrefix: '/admin/users', lruPrefixes: ['/admin/users', '/admin/stats'], queryKeyPrefixes: ['admin-stats'] },
+  // 日志清空（日志页非 react-query，只需清 LRU）
   { writePrefix: '/admin/logs', lruPrefixes: ['/admin/logs'], queryKeyPrefixes: [] },
+  // 聊天室消息清空 → 聊天统计 + 已缓存的聊天历史
+  { writePrefix: '/admin/chat', lruPrefixes: ['/admin/chat', '/chat/messages'], queryKeyPrefixes: ['admin-chat-stats'] },
   // 注册开关
   { writePrefix: '/admin/config/registration', lruPrefixes: ['/admin/config/registration'], queryKeyPrefixes: ['admin-registration-enabled'] },
 ];
+
+// 未列入规则表的 react-query 键（有意不失效）：
+//   - favorite-status：useFavoriteHandler 写后 setQueryData 直接改缓存
+//   - admin-users：UsersTab 每次写操作后手动 invalidateQueries
+//   - health / admin-system-info：SystemTab（30s）与 DashboardTab（60s）
+//     轮询自动刷新，写后无需立即失效
+//   - my-playlists：/playlists 写规则已覆盖；视频删除对 item_count 的影响
+//     由组件挂载重取兜底
+//   - user-profile：头像/邮箱有专属规则；观看统计字段的变化源是播放历史，
+//     Profile 查询 staleTime 60s 且窗口聚焦自动重取，不为其扩大视频域规则
 
 function invalidateReactQuery(keyPrefixes: readonly string[]) {
   for (const prefix of keyPrefixes) {
@@ -217,7 +245,39 @@ function extractVideoId(body: unknown): number | undefined {
   return undefined;
 }
 
+// 写事件注册表：写请求成功后由 invalidateCacheForPath 统一广播。
+// 供无法用 INVALIDATION_RULES 表达的模块私有缓存（如 playback.ts 的
+// historyCache）自行失效 —— 监听方从 client 单向 import，避免反向依赖成环。
+export type WriteListener = (path: string, body?: unknown) => void;
+
+const writeListeners = new Set<WriteListener>();
+
+/** 注册写操作监听，返回退订函数；监听器异常不影响请求主流程 */
+export function registerWriteListener(cb: WriteListener): () => void {
+  writeListeners.add(cb);
+  return () => {
+    writeListeners.delete(cb);
+  };
+}
+
+function notifyWriteListeners(path: string, body?: unknown) {
+  for (const cb of writeListeners) {
+    try {
+      cb(path, body);
+    } catch {
+      // 监听器失败不应影响写请求本身
+    }
+  }
+}
+
 function invalidateCacheForPath(path: string, body?: unknown) {
+  // 播放会话心跳/启停：不改变任何可缓存的 GET 响应，跳过失效与事件广播
+  if (path.startsWith('/playback/session/')) return;
+
+  // 先广播写事件，再按规则表失效两层响应缓存；
+  // 调用方传 noInvalidate 的高频写不会进入本函数，无需额外屏蔽
+  notifyWriteListeners(path, body);
+
   // 会话边界：登出后两层缓存整体作废，后续读取从服务器取最新数据
   if (path === '/auth/logout') {
     cache.clear();
@@ -225,16 +285,14 @@ function invalidateCacheForPath(path: string, body?: unknown) {
     return;
   }
 
-  // 播放会话心跳/启停：不改变任何可缓存的 GET 响应，跳过失效
-  if (path.startsWith('/playback/session/')) return;
-
   // 播放进度上报（播放中每 10s 一次）：只精确失效对应视频的进度/详情，
   // 不扫全表，避免看视频期间 /playback 缓存永远打不中
   if (path === '/playback/history') {
     const videoId = extractVideoId(body);
     cacheInvalidatePrefix('/playback/history');
     cacheInvalidatePrefix(typeof videoId === 'number' ? `/videos/${videoId}` : '/videos');
-    invalidateReactQuery(['my-history']);
+    // my-history（个人历史）与 recent-videos（首页最近观看）同源，必须一起标记
+    invalidateReactQuery(['my-history', 'recent-videos']);
     return;
   }
 
@@ -361,8 +419,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     signal,
     silent = false,
     noInvalidate = false,
-    retries = MAX_RETRIES
+    retries
   } = options;
+
+  // 仅幂等方法默认重试；写请求默认 0 次，显式传入的 retries 始终优先
+  const maxRetries = retries ?? (IDEMPOTENT_METHODS.includes(method.toUpperCase()) ? MAX_RETRIES : 0);
 
   const cacheKey = method === 'GET' && !skipCache ? getCacheKey(url, method) : null;
   if (cacheKey) {
@@ -390,7 +451,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   const execRequest = async (): Promise<T> => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       let timedOut = false;
       const effectiveTimeout = timeout || API_TIMEOUT;
@@ -470,14 +531,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
             const delay = retryAfter
               ? Math.min(Number(retryAfter) * 1000, 30000)
               : getRetryDelay(attempt);
-            if (attempt < retries) {
+            if (attempt < maxRetries) {
               await new Promise(resolve => setTimeout(resolve, delay));
               continue;
             }
             throw new RateLimitError(msg, retryAfter ? Number(retryAfter) : undefined);
           }
 
-          if (shouldRetry(res.status, attempt)) {
+          if (attempt < maxRetries && shouldRetry(res.status, attempt)) {
             await new Promise(resolve => setTimeout(resolve, getRetryDelay(attempt)));
             continue;
           }

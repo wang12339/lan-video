@@ -1,7 +1,8 @@
-import { useMemo, useCallback, useRef } from 'react'
+import { useMemo, useCallback, useRef, useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useHlsPlayer } from '../../../hooks/useHlsPlayer'
 import { mediaUrl } from '../../../api/client'
+import { trackClick } from '../../../utils/track'
 import { usePlayerSession } from './usePlayerSession'
 import { usePlayerPreload } from './usePlayerPreload'
 import { useVideoData } from './useVideoData'
@@ -9,6 +10,17 @@ import { useVideoEvents } from './useVideoEvents'
 import { usePlayerControls } from './usePlayerControls'
 import { usePlayerEffects } from './usePlayerEffects'
 import { usePlayerMetrics } from './usePlayerMetrics'
+
+function isValidMediaUrl(url: string): boolean {
+  if (!url) return false
+  try {
+    const parsed = new URL(url, window.location.origin)
+    const protocol = parsed.protocol
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'blob:'
+  } catch {
+    return false
+  }
+}
 
 export function usePlayerState(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -46,7 +58,7 @@ export function usePlayerState(
     showShortcut, showControls, resetHideTimer,
     togglePlay, setSpeedValue, setVolumeValue, toggleMute,
     toggleFullscreen, togglePiP, seekBy,
-    switchQuality: switchQualityRaw, retryLoad: retryLoadRaw,
+    retryLoad: retryLoadRaw,
     onMouseMove, onVolumeChange,
     saveProgress: saveProgressRaw, debouncedSaveProgress: debouncedSaveProgressRaw,
     saveProgressKeepalive: saveProgressKeepaliveRaw,
@@ -69,19 +81,59 @@ export function usePlayerState(
   const { preloadingNext, checkPreload, resetPreload, cleanupPreload } = usePlayerPreload(videoId, related, videoRef)
 
   // ── HLS player ──
-  useHlsPlayer({
+  // 画质覆盖源：null 表示用默认源（HLS 优先，其次原生 stream）。
+  const [qualityOverrideSrc, setQualityOverrideSrc] = useState<string | null>(null)
+  const [hlsReloadKey, setHlsReloadKey] = useState(0)
+  const pendingPlayRef = useRef(false)
+  const baseSrc = hlsUrl || (video?.stream ? mediaUrl(video.stream) : null)
+  const activeSrc = qualityOverrideSrc ?? baseSrc
+  // `?? {}` 兜底 hook 未返回对象的情况（如测试替身），destroyHls 用可选调用保护。
+  const { destroy: destroyHls } = useHlsPlayer({
     videoRef,
-    src: hlsUrl || (video?.stream ? mediaUrl(video.stream) : null),
+    src: activeSrc,
     autoPlay: false,
-  })
+    reloadKey: hlsReloadKey,
+  }) ?? {}
 
+  useEffect(() => {
+    setQualityOverrideSrc(null)
+  }, [videoId])
+
+  // 源的设置统一交给 useHlsPlayer（HLS 分支 attachMedia，非 HLS 分支设 v.src）；
+  // 本 hook 只负责状态与进度交接，避免与 MSE 互相覆盖。
   const switchQuality = useCallback((quality: string) => {
-    switchQualityRaw(quality, video, variants)
-  }, [switchQualityRaw, video, variants])
+    if (quality === currentQuality) { setShowQualityMenu(false); return }
+    const v = videoRef.current
+    if (!v) return
+    trackClick('画质', `${currentQuality}→${quality}`)
+    metrics.recordQualitySwitchStart(currentQuality, quality)
+    const src = quality === 'original'
+      ? (video?.stream || '')
+      : (mediaUrl(variants.find(variant => variant.resolution === quality)?.filePath || '') || '')
+    if (!src || !isValidMediaUrl(src)) { setShowQualityMenu(false); return }
+    pendingPlayRef.current = !v.paused
+    pendingSeekRef.current = v.currentTime
+    setQualityOverrideSrc(quality === 'original' ? null : src)
+    setCurrentQuality(quality)
+    setShowLoading(true)
+    setShowQualityMenu(false)
+  }, [videoRef, currentQuality, video, variants, metrics, pendingSeekRef, setCurrentQuality, setShowLoading, setShowQualityMenu])
 
   const retryLoad = useCallback(() => {
+    const isHls = !!baseSrc && (/\.m3u8(\?|$)/.test(baseSrc) || baseSrc.includes('/hls/'))
+    if (isHls) {
+      const v = videoRef.current
+      pendingPlayRef.current = !!v && !v.paused
+      setShowLoading(true)
+      setHlsReloadKey(k => k + 1)
+      return
+    }
+    destroyHls?.()
     retryLoadRaw(video, variants)
-  }, [retryLoadRaw, video, variants])
+  }, [baseSrc, videoRef, destroyHls, retryLoadRaw, video, variants, setShowLoading])
+
+  // 只有默认 HLS 源需要跳过原生设源；切到 variant 后由 useHlsPlayer 负责。
+  const skipNativeSource = !!hlsUrl && qualityOverrideSrc === null
 
   // ── Video events ──
   const videoEvents = useVideoEvents(
@@ -93,6 +145,16 @@ export function usePlayerState(
     setPaused, setVideoError, setShowLoading, setDuration, setSpeed,
     metrics,
   )
+
+  const { onLoadedMetadata: handleLoadedMetadata } = videoEvents
+
+  const onLoadedMetadata = useCallback(() => {
+    handleLoadedMetadata()
+    if (pendingPlayRef.current) {
+      pendingPlayRef.current = false
+      videoRef.current?.play().catch(() => {})
+    }
+  }, [handleLoadedMetadata, videoRef])
 
   const throttledTimeUpdate = useMemo(
     () => makeThrottledTimeUpdate(videoId, isShared, debouncedSaveProgress, checkPreload),
@@ -115,6 +177,7 @@ export function usePlayerState(
     throttledMouseMoveRef, throttledVolumeChangeRef,
     shortcutTimerRef, hideTimerRef,
     lastVolumeRef, video,
+    skipNativeSource,
   })
 
   // ── Debug snapshot ──
@@ -144,7 +207,7 @@ export function usePlayerState(
     onTimeUpdate,
     onPlay: videoEvents.onPlay,
     onPause: videoEvents.onPause,
-    onLoadedMetadata: videoEvents.onLoadedMetadata,
+    onLoadedMetadata,
     onWaiting: videoEvents.onWaiting,
     onCanPlay: videoEvents.onCanPlay,
     onPlaying: videoEvents.onPlaying,

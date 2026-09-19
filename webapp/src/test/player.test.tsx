@@ -431,8 +431,8 @@ describe('Player 页面', () => {
     expect(volumeSlider).toBeInTheDocument()
     expect(volumeSlider).toHaveAttribute('type', 'range')
     expect(volumeSlider).toHaveAttribute('min', '0')
-    expect(volumeSlider).toHaveAttribute('max', '1')
-    expect(volumeSlider).toHaveAttribute('step', '0.05')
+    expect(volumeSlider).toHaveAttribute('max', '100')
+    expect(volumeSlider).toHaveAttribute('step', '5')
 
     // 音量容器存在
     expect(document.querySelector('.volume-wrap')).toBeInTheDocument()
@@ -442,7 +442,7 @@ describe('Player 页面', () => {
     expect(muteBtn).toBeInTheDocument()
 
     // 改变音量
-    fireEvent.change(volumeSlider, { target: { value: '0.5' } })
+    fireEvent.change(volumeSlider, { target: { value: '50' } })
 
     const videoEl = document.querySelector('video') as HTMLVideoElement
     expect(videoEl.volume).toBe(0.5)

@@ -36,6 +36,9 @@ const ChatContext = createContext<ChatContextValue | null>(null)
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
+  // 仅以 userId 作为连接标识：资料刷新/401 复验会返回新的 user 对象引用，
+  // 但同一账号不应因此断开并重建 WebSocket。
+  const userId = user?.id
   const location = useLocation()
   const [status, setStatus] = useState<ChatStatus>('init')
   const [unread, setUnread] = useState(0)
@@ -46,14 +49,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [client, setClient] = useState<ChatClient | null>(null)
   const subscribersRef = useRef(new Set<(ev: ChatEvent) => void>())
   const onChatPageRef = useRef(location.pathname === '/chat')
-  onChatPageRef.current = location.pathname === '/chat'
 
+  // 渲染阶段只读 ref：页面归属在 effect 中更新（可与未读清零合并）
   useEffect(() => {
+    onChatPageRef.current = location.pathname === '/chat'
     if (location.pathname === '/chat') setUnread(0)
   }, [location.pathname])
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       // 登出：断开并复位
       setClient((prev) => {
         prev?.close()
@@ -86,7 +90,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       c.close()
       setClient(null)
     }
-  }, [user])
+  }, [userId])
 
   const subscribe = useCallback((cb: (ev: ChatEvent) => void) => {
     subscribersRef.current.add(cb)

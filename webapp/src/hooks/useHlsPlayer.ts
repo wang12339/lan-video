@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type Hls from 'hls.js'
 import type { ErrorData, HlsConfig } from 'hls.js'
-import { getToken } from '../api/client'
+import { getToken, BASE } from '../api/client'
 
 /**
  * HLS 播放器 Hook 的配置选项。
@@ -29,6 +29,17 @@ interface HlsPlayerOptions {
    * @defaultValue `false`
    */
   autoPlay?: boolean
+  /**
+   * 强制触发播放器重建的版本号。
+   *
+   * @remarks
+   * 当 `src` 未发生变化但需要重新加载播放器（例如用户点击“重试”）时，
+   * 递增该值会触发完整重建流程：先销毁旧的 HLS 实例，再按原有逻辑
+   * 基于当前 `src` 重新加载。未传或保持不变时，行为与之前完全一致。
+   *
+   * @defaultValue `0`
+   */
+  reloadKey?: number
 }
 
 /**
@@ -60,6 +71,38 @@ async function loadHls(): Promise<typeof Hls> {
 }
 
 /**
+ * 判断 HLS 请求目标是否可信（允许注入 Authorization）。
+ *
+ * 仅当目标与页面同源，或与 API `BASE` 同源时返回 `true`；
+ * 后者覆盖 Android WebView 的 `file:` 协议场景（页面 origin 为 `null`，
+ * 但后端接口固定为 `http://localhost:8082`）。
+ * URL 解析失败时一律按不可信处理，避免把 Token 发往未知主机。
+ *
+ * @param rawUrl - hls.js `xhrSetup` 回调收到的请求 URL（清单或分片）。
+ * @returns 是否允许向该请求注入 Bearer Token。
+ */
+function isTrustedStreamUrl(rawUrl: string): boolean {
+  let targetOrigin: string
+  try {
+    targetOrigin = new URL(rawUrl, window.location.href).origin
+  } catch {
+    return false
+  }
+
+  if (targetOrigin === window.location.origin) return true
+
+  if (BASE) {
+    try {
+      return targetOrigin === new URL(BASE, window.location.href).origin
+    } catch {
+      return false
+    }
+  }
+
+  return false
+}
+
+/**
  * React Hook —— 为 `<video>` 元素提供 HLS 自适应码率播放能力。
  *
  * ## 功能概述
@@ -73,8 +116,9 @@ async function loadHls(): Promise<typeof Hls> {
  * 3. **hls.js 动态加载**：在不支持原生 HLS 的浏览器中，
  *    以本地打包 chunk(动态 `import()`)方式加载 hls.js,与站点同源。
  *
- * 4. **认证支持**：通过 `xhrSetup` 将当前用户的 Bearer Token 注入到
- *    所有 HLS 分片请求的 `Authorization` 头中，确保受保护资源可正常加载。
+ * 4. **认证支持**：仅对同源/同 API 源的分片请求注入 Bearer Token
+ *    （通过 `xhrSetup` 设置 `Authorization` 头），跨域请求一律不注入，
+ *    防止外部 m3u8 指向的第三方主机窃取登录凭证。
  *
  * 5. **自动错误恢复**：
  *    - **网络错误** → 指数退避后重试（最多 3 次，间隔 `1s × 第 N 次`）。
@@ -112,6 +156,7 @@ async function loadHls(): Promise<typeof Hls> {
  * @param options.videoRef - 指向目标 `<video>` 元素的 React ref（必须已挂载到 DOM）。
  * @param options.src - 视频资源 URL；`null` 表示停止播放并清理资源。
  * @param options.autoPlay - 是否在 manifest 解析完成后自动播放（默认 `false`）。
+ * @param options.reloadKey - 强制重建版本号（默认 `0`）；`src` 不变但该值变化时，销毁旧实例并按原逻辑重新加载。
  *
  * @returns 包含以下字段的对象：
  *
@@ -139,7 +184,7 @@ async function loadHls(): Promise<typeof Hls> {
  * useHlsPlayer({ videoRef, src: null })
  * ```
  */
-export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptions) {
+export function useHlsPlayer({ videoRef, src, autoPlay = false, reloadKey = 0 }: HlsPlayerOptions) {
   const hlsRef = useRef<Hls | null>(null)
   const retryCountRef = useRef<number>(0)
   const maxRetries = 3
@@ -203,7 +248,9 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
           startFragPrefetch: true,
           enableWorker: true,
           lowLatencyMode: false,
-          xhrSetup: (xhr: XMLHttpRequest, _url: string) => {
+          xhrSetup: (xhr: XMLHttpRequest, url: string) => {
+            // 仅同源 / 同 API 源注入凭证：外部 m3u8 指向的第三方主机不得获取 Token
+            if (!isTrustedStreamUrl(url)) return
             const t = getToken()
             if (t) {
               xhr.setRequestHeader('Authorization', `Bearer ${t}`)
@@ -268,7 +315,7 @@ export function useHlsPlayer({ videoRef, src, autoPlay = false }: HlsPlayerOptio
       clearRetryTimer()
       destroyHls()
     }
-  }, [videoRef, src, autoPlay, destroyHls])
+  }, [videoRef, src, autoPlay, reloadKey, destroyHls])
 
   return {
     destroy: destroyHls,

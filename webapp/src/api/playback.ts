@@ -1,4 +1,7 @@
 import { request, getToken } from './client';
+// 命名空间导入仅用于能力检测：测试环境可能把 client 整体 mock 成不含
+// registerWriteListener 的对象，直接命名导入会在访问时抛错（属性 get 陷阱）
+import * as client from './client';
 import type { PlaybackHistory } from './types';
 
 const MAX_HISTORY_LIMIT = 200;
@@ -20,6 +23,27 @@ const HISTORY_TTL = 30_000;
 export function clearPlaybackHistoryCache(): void {
   historyCache.clear();
 }
+
+// 视频增删改/进度上报/登出都会让首页"最近观看"与个人历史变得陈旧。
+// client 的规则表感知不到本模块私有的 historyCache，反向 import 又会成环，
+// 故通过写事件注册表单向订阅：仅命中相关前缀时清缓存，其余写路径不动。
+const HISTORY_INVALIDATION_PREFIXES = ['/videos', '/admin/videos', '/playback/history', '/auth/logout'];
+
+let writeListenerRegistered = false;
+
+function ensureHistoryWriteListener(): void {
+  if (writeListenerRegistered) return;
+  writeListenerRegistered = true;
+  if (!('registerWriteListener' in client)) return;
+  client.registerWriteListener((path) => {
+    if (HISTORY_INVALIDATION_PREFIXES.some(prefix => path.startsWith(prefix))) {
+      clearPlaybackHistoryCache();
+    }
+  });
+}
+
+// 模块加载时注册一次（幂等标志防止重复注册）
+ensureHistoryWriteListener();
 
 export async function savePlayback(
   videoId: string,

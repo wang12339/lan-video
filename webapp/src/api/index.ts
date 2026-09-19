@@ -1,15 +1,15 @@
 // API 模块导出
 
 export { BASE, getToken, clearToken, mediaUrl, cacheClear, APIError, AuthError, ValidationError, RateLimitError, NotFoundError, NetworkError, TimeoutError, setOnAuthRequired, setOnError } from './client';
-export { saveToken } from './client';
-export { health } from './client';
+export { saveToken, getCsrfToken, request, health } from './client';
 export type { VideoListResponse, Video, PlaybackHistory, UserInfo, UserProfile, AuthResponse, ServerInfo, HealthResponse, MappedVideo, MappedImage, MappedHistory, MappedPlaylist, VideoVariant, TranscodeStatusResponse } from './types';
-export { login, register, logout, getUserInfo, getUserProfile, checkSession, enterGuestMode, uploadAvatar, sendVerificationEmail, updateEmail, forgotPassword, resetPassword, verifyEmail } from './auth';
+export { login, register, logout, getUserInfo, getUserProfile, checkSession, enterGuestMode, uploadAvatar, sendVerificationEmail, updateEmail, forgotPassword, resetPassword, verifyEmail, clearSessionCache } from './auth';
 export { listVideos, getVideo, incrementViews, deleteVideo, deleteVideos, burnVideo, listFavorites, toggleFavorite, getFavoriteStatus, getUploadStatus, uploadResumeChunk, transcodeVideo, getTranscodeStatus, searchVideos, searchSuggest } from './videos';
 export type { SearchResult, SearchResponse } from './videos';
 export { fetchChatHistory, uploadChatImage, uploadChatVideo, fetchChatStats, clearAllChatMessages, ChatClient } from './chat';
 export type { ChatMessage, ChatEvent, ChatHistoryResponse } from './chat';
-export { savePlayback, listPlaybackHistory, startPlaybackSession, heartbeatPlaybackSession, stopPlaybackSession } from './playback';
+export { savePlayback, listPlaybackHistory, startPlaybackSession, heartbeatPlaybackSession, stopPlaybackSession, clearPlaybackHistoryCache } from './playback';
+export { getGalleryCacheKey, getGalleryCachedData, setGalleryCacheData, clearGalleryCache } from './galleryCache';
 export { mapVideo, mapImage, mapHistory, mapPlaylist, formatDuration, formatViews, formatCount, formatBytes, getCatColor } from './utils';
 export { loadPrefs, getPref, setPref } from './prefs';
 export { listTags, getPopularTags, createTag, updateTag, deleteTag, getVideoTags, addVideoTags, removeVideoTag } from './tags';

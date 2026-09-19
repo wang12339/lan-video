@@ -158,7 +158,7 @@ const VideoCard: React.FC<VideoCardProps> = memo(({ video, onClick, compact = fa
         <h3 className="title">{video.title}</h3>
         <div className="video-meta">
           {video.views > 0
-            ? <span className="views" aria-label={`${video.views} views`}>
+            ? <span className="views" aria-label={viewsText}>
                 <svg className="views-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                   <path d="M8 3C4.5 3 1.5 5.5 0.5 8c1 2.5 4 5 7.5 5s6.5-2.5 7.5-5c-1-2.5-4-5-7.5-5zm0 8a3 3 0 110-6 3 3 0 010 6zm0-5a2 2 0 100 4 2 2 0 000-4z"/>
                 </svg>

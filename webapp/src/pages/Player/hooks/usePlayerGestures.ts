@@ -44,6 +44,7 @@ export function usePlayerGestures({
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
   const isSwipingRef = useRef(false)
   const gestureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const showGestureIndicator = useCallback((type: GestureIndicatorType, value: number) => {
     if (gestureTimeoutRef.current) clearTimeout(gestureTimeoutRef.current)
@@ -163,7 +164,11 @@ export function usePlayerGestures({
       } else {
         tapCountRef.current = 1
         const capturedCount = tapCountRef.current
-        setTimeout(() => { if (tapCountRef.current === capturedCount && tapCountRef.current === 1) { togglePlay(); resetHideTimer() } }, DOUBLE_TAP_DELAY_MS)
+        if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+        clickTimerRef.current = setTimeout(() => {
+          clickTimerRef.current = null
+          if (tapCountRef.current === capturedCount && tapCountRef.current === 1) { togglePlay(); resetHideTimer() }
+        }, DOUBLE_TAP_DELAY_MS)
       }
       lastTapRef.current = now
     }
@@ -184,10 +189,12 @@ export function usePlayerGestures({
   useEffect(() => {
     return () => {
       clearLongPressTimer()
-      if (gestureTimeoutRef.current) clearTimeout(gestureTimeoutRef.current)
-      setGestureIndicator(null)
-      setGestureValue(0)
-      setIsLongPressing(false)
+      if (gestureTimeoutRef.current) { clearTimeout(gestureTimeoutRef.current); gestureTimeoutRef.current = null }
+      if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
+      touchStartRef.current = null
+      isSwipingRef.current = false
+      tapCountRef.current = 0
+      lastTapRef.current = 0
     }
   }, [clearLongPressTimer])
 

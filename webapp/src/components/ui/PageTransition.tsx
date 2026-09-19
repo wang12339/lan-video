@@ -11,6 +11,8 @@ function PageTransitionImpl({ children, transitionKey }: Props) {
   const [state, setState] = useState<'entering' | 'entered' | 'exiting'>('entered')
   const [displayChildren, setDisplayChildren] = useState(children)
   const prevKeyRef = useRef(transitionKey)
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (transitionKey === prevKeyRef.current) return
@@ -18,19 +20,41 @@ function PageTransitionImpl({ children, transitionKey }: Props) {
 
     setState('exiting')
 
-    const exitTimer = setTimeout(() => {
+    exitTimerRef.current = setTimeout(() => {
+      exitTimerRef.current = null
       setDisplayChildren(children)
       setState('entering')
 
-      const enterTimer = setTimeout(() => {
+      enterTimerRef.current = setTimeout(() => {
+        enterTimerRef.current = null
         setState('entered')
       }, 300)
-
-      return () => clearTimeout(enterTimer)
     }, 200)
 
-    return () => clearTimeout(exitTimer)
+    return () => {
+      if (exitTimerRef.current !== null) {
+        clearTimeout(exitTimerRef.current)
+        exitTimerRef.current = null
+      }
+      if (enterTimerRef.current !== null) {
+        clearTimeout(enterTimerRef.current)
+        enterTimerRef.current = null
+      }
+    }
   }, [transitionKey, children])
+
+  useEffect(() => {
+    return () => {
+      if (exitTimerRef.current !== null) {
+        clearTimeout(exitTimerRef.current)
+        exitTimerRef.current = null
+      }
+      if (enterTimerRef.current !== null) {
+        clearTimeout(enterTimerRef.current)
+        enterTimerRef.current = null
+      }
+    }
+  }, [])
 
   // Keep children in sync when not transitioning (e.g. same-route state change)
   useEffect(() => {

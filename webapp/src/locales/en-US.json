@@ -71,7 +71,19 @@
       "passwordStrength": "Password is too weak: use at least 3 of uppercase, lowercase, digits and special characters",
       "tokenRequired": "Reset token is required"
     },
-    "guestEnter": "Just browsing — enter as guest"
+    "guestEnter": "Just browsing — enter as guest",
+    "gatewayLogin": "Sign in with SSO",
+    "gatewayOr": "or",
+    "gatewayError": {
+      "generic": "Gateway sign-in failed",
+      "retry": "Gateway sign-in failed. Please try again",
+      "denied": "You cancelled the gateway authorization",
+      "stateExpired": "Authorization session expired. Please sign in again",
+      "tokenExchangeFailed": "Gateway token exchange failed. Please try again",
+      "unreachable": "Authentication gateway is temporarily unavailable",
+      "userinfoFailed": "Failed to fetch gateway user info",
+      "signInFailed": "Failed to link gateway account. Please contact the administrator"
+    }
   },
   "toast": {
     "close": "Dismiss notification"
@@ -540,6 +552,7 @@
       "titleField": "Title",
       "videoLink": "Video URL",
       "coverLink": "Cover URL",
+      "invalidUrl": "Enter a valid http(s) URL",
       "description": "Description",
       "categoryField": "Category",
       "save": "Save",

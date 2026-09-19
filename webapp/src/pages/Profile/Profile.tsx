@@ -52,6 +52,7 @@ export default function Profile() {
 
   // Tabs 横向滚动状态：右缘渐隐提示（滚到底自动隐藏）
   const tabsRef = useRef<HTMLDivElement>(null)
+  const tabButtonRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({})
   const [tabsAtEnd, setTabsAtEnd] = useState(false)
   useEffect(() => {
     const el = tabsRef.current
@@ -181,6 +182,22 @@ export default function Profile() {
     { key: 'settings', icon: '⚙️', label: t('profile.settings') },
   ], [t])
 
+  // Tabs 横向排列，方向键优先 Left/Right（同时兼容 Up/Down）；Home/End 跳首尾，选择跟随焦点
+  const handleTabsKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const { key } = event
+    const current = tabs.findIndex((x) => x.key === activeTab)
+    let nextIndex: number
+    if (key === 'ArrowRight' || key === 'ArrowDown') nextIndex = (current + 1) % tabs.length
+    else if (key === 'ArrowLeft' || key === 'ArrowUp') nextIndex = (current - 1 + tabs.length) % tabs.length
+    else if (key === 'Home') nextIndex = 0
+    else if (key === 'End') nextIndex = tabs.length - 1
+    else return
+    event.preventDefault()
+    const next = tabs[nextIndex]!
+    handleTabChange(next.key, next.label)
+    tabButtonRefs.current[next.key]?.focus()
+  }, [activeTab, tabs, handleTabChange])
+
   const handleLogoutClick = useCallback(() => {
     setConfirmAction({
       title: t('profile.logout'),
@@ -286,12 +303,17 @@ export default function Profile() {
         className={`profile-tabs ${tabsAtEnd ? 'tabs-at-end' : ''}`}
         role="tablist"
         aria-label={t('profile.tabsAria')}
+        onKeyDown={handleTabsKeyDown}
       >
         {tabs.map((tab) => (
           <button
             key={tab.key}
+            ref={(el) => { tabButtonRefs.current[tab.key] = el }}
             role="tab"
+            id={`profile-tab-${tab.key}`}
             aria-selected={activeTab === tab.key}
+            aria-controls={`profile-panel-${tab.key}`}
+            tabIndex={activeTab === tab.key ? 0 : -1}
             className={`ptab ${activeTab === tab.key ? 'active' : ''}`}
             onClick={() => handleTabChange(tab.key, tab.label)}
           >
@@ -300,69 +322,75 @@ export default function Profile() {
         ))}
       </div>
 
-      <Suspense fallback={<div className="tab-loading">{t('common.loading')}</div>}>
-        {activeTab === 'works' && (
-          <WorksTab
-            works={works}
-            pending={worksQuery.isPending}
-            error={worksQuery.isError}
-            isFetchingNextPage={worksQuery.isFetchingNextPage}
-            hasNextPage={worksQuery.hasNextPage}
-            fetchNextPage={worksQuery.fetchNextPage}
-            refetch={worksQuery.refetch}
-          />
-        )}
+      <div
+        id={`profile-panel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`profile-tab-${activeTab}`}
+      >
+        <Suspense fallback={<div className="tab-loading">{t('common.loading')}</div>}>
+          {activeTab === 'works' && (
+            <WorksTab
+              works={works}
+              pending={worksQuery.isPending}
+              error={worksQuery.isError}
+              isFetchingNextPage={worksQuery.isFetchingNextPage}
+              hasNextPage={worksQuery.hasNextPage}
+              fetchNextPage={worksQuery.fetchNextPage}
+              refetch={worksQuery.refetch}
+            />
+          )}
 
-        {activeTab === 'history' && (
-          <HistoryTab
-            history={history.data ?? []}
-            pending={history.isPending}
-            error={history.isError}
-            refetch={history.refetch}
-          />
-        )}
+          {activeTab === 'history' && (
+            <HistoryTab
+              history={history.data ?? []}
+              pending={history.isPending}
+              error={history.isError}
+              refetch={history.refetch}
+            />
+          )}
 
-        {activeTab === 'likes' && (
-          <FavoritesTab
-            favorites={favorites.data ?? []}
-            pending={favorites.isPending}
-            error={favorites.isError}
-            refetch={favorites.refetch}
-          />
-        )}
+          {activeTab === 'likes' && (
+            <FavoritesTab
+              favorites={favorites.data ?? []}
+              pending={favorites.isPending}
+              error={favorites.isError}
+              refetch={favorites.refetch}
+            />
+          )}
 
-        {activeTab === 'playlists' && (
-          <PlaylistsTab
-            playlists={playlists.data ?? []}
-            pending={playlists.isPending}
-            error={playlists.isError}
-            refetch={playlists.refetch}
-            onCreate={handleCreatePlaylist}
-            onDelete={handleDeletePlaylist}
-          />
-        )}
+          {activeTab === 'playlists' && (
+            <PlaylistsTab
+              playlists={playlists.data ?? []}
+              pending={playlists.isPending}
+              error={playlists.isError}
+              refetch={playlists.refetch}
+              onCreate={handleCreatePlaylist}
+              onDelete={handleDeletePlaylist}
+            />
+          )}
 
-        {activeTab === 'shares' && (
-          <SharesTab
-            shares={shares.data ?? []}
-            pending={shares.isPending}
-            error={shares.isError}
-            refetch={shares.refetch}
-            onRevoke={handleRevokeShare}
-          />
-        )}
+          {activeTab === 'shares' && (
+            <SharesTab
+              shares={shares.data ?? []}
+              pending={shares.isPending}
+              error={shares.isError}
+              refetch={shares.refetch}
+              onRevoke={handleRevokeShare}
+            />
+          )}
 
-        {activeTab === 'settings' && (
-          <SettingsTab
-            autoPlay={autoPlay}
-            speedMem={speedMem}
-            onAutoPlayChange={handleAutoPlayChange}
-            onSpeedMemChange={handleSpeedMemChange}
-            onLogout={handleLogoutClick}
-            onAlert={setAlertMsg}
-          />
-        )}
-      </Suspense>
+          {activeTab === 'settings' && (
+            <SettingsTab
+              autoPlay={autoPlay}
+              speedMem={speedMem}
+              onAutoPlayChange={handleAutoPlayChange}
+              onSpeedMemChange={handleSpeedMemChange}
+              onLogout={handleLogoutClick}
+              onAlert={setAlertMsg}
+            />
+          )}
+        </Suspense>
+      </div>
 
       {alertMsg && <AlertDialog open={!!alertMsg} message={alertMsg} onClose={() => setAlertMsg(null)} />}
       {confirmAction && (

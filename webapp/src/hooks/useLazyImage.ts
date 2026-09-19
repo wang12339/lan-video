@@ -145,7 +145,7 @@ export function useLazyImage(
   }, [originalSrc, placeholder])
 
   // IntersectionObserver 回调
-  const handleIntersection = useCallback((entries: IntersectionObserverEntry[]) => {
+  const handleIntersection = useCallback((entries: IntersectionObserverEntry[], isCancelled?: () => boolean) => {
     const entry = entries[0]
     if (entry?.isIntersecting && originalSrc) {
       setState(prev => ({ ...prev, isVisible: true }))
@@ -153,6 +153,7 @@ export function useLazyImage(
       // 开始加载图片
       const img = new Image()
       img.onload = () => {
+        if (isCancelled?.()) return
         setState({
           isLoaded: true,
           isError: false,
@@ -161,6 +162,7 @@ export function useLazyImage(
         })
       }
       img.onerror = () => {
+        if (isCancelled?.()) return
         setState(prev => ({
           ...prev,
           isError: true,
@@ -176,11 +178,15 @@ export function useLazyImage(
 
   // 共享 IntersectionObserver：即便 ref 尚未挂载也先注册哑元素，供测试环境捕获回调
   useEffect(() => {
+    let cancelled = false
     const shared = getSharedObserver(threshold, rootMargin)
     const element = imgRef.current || document.createElement('div')
-    observeElement(shared, element, (entry) => handleIntersection([entry]))
+    observeElement(shared, element, (entry) => handleIntersection([entry], () => cancelled))
 
-    return () => unobserveElement(shared, element)
+    return () => {
+      cancelled = true
+      unobserveElement(shared, element)
+    }
   }, [handleIntersection, threshold, rootMargin])
 
   return {

@@ -26,6 +26,7 @@ interface PlayerEffectsParams {
   hideTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
   lastVolumeRef: React.MutableRefObject<number>
   video: { stream?: string | null; thumb?: string | null; progress?: number } | null
+  skipNativeSource?: boolean
 }
 
 export function usePlayerEffects(params: PlayerEffectsParams) {
@@ -39,12 +40,14 @@ export function usePlayerEffects(params: PlayerEffectsParams) {
     throttledMouseMoveRef, throttledVolumeChangeRef,
     shortcutTimerRef, hideTimerRef,
     lastVolumeRef, video,
+    skipNativeSource,
   } = params
 
   useVideoSource({
     videoRef, videoId, video,
     setSpeed, setShowLoading, setControlsVisible,
     restoreRef,
+    skipNativeSource,
   })
 
   useEffect(() => {

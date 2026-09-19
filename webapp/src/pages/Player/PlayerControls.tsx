@@ -100,7 +100,7 @@ function PlayerControlsImpl({
         isLongPressing={isLongPressing}
       />
 
-      <div className={`player-controls ${controlsVisible ? 'show' : ''}`} style={{ transition: 'opacity var(--player-transition-speed, 280ms) cubic-bezier(0.4, 0, 0.2, 1)' }}>
+      <div className={`player-controls ${controlsVisible ? 'show' : ''}`}>
         <ProgressBar
           videoRef={videoRef}
           currentTime={currentTime}

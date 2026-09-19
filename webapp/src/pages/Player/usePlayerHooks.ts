@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react'
+import { BASE } from '../../api/client'
 
 // ============================================================
 // 预加载管理器
@@ -17,7 +18,7 @@ export function usePreloadManager(): PreloadManager {
     preloadedRef.current.add(videoId)
     const link = document.createElement('link')
     link.rel = 'prefetch'
-    link.href = `/api/videos/${videoId}`
+    link.href = `${BASE}/videos/${videoId}`
     link.as = 'fetch'
     document.head.appendChild(link)
     linkElementsRef.current.set(videoId, link)

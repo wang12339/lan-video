@@ -97,25 +97,25 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
             setError('')
             return loginWithToken(res.token).then(() => onClose?.())
           }
-          setError(res.error || '网关登录失败')
+          setError(res.error || t('auth.gatewayError.generic'))
         })
         .catch((e: unknown) => {
-          setError(e instanceof APIError ? e.message : '网关登录失败，请重试')
+          setError(e instanceof APIError ? e.message : t('auth.gatewayError.retry'))
         })
     } else if (gwErrorFromUrl) {
       gwHandledRef.current = true
       const next = new URLSearchParams(searchParams)
       next.delete('gw_error')
       setSearchParams(next, { replace: true })
-      const GW_ERR_CN: Record<string, string> = {
-        gateway_denied: '你取消了网关授权',
-        state_invalid_or_expired: '授权会话已过期，请重新登录',
-        token_exchange_failed: '网关令牌交换失败，请重试',
-        gateway_unreachable: '认证网关暂时不可用',
-        userinfo_failed: '获取网关用户信息失败',
-        sign_in_failed: '网关账号关联失败，请联系管理员',
+      const GW_ERR_KEY: Record<string, string> = {
+        gateway_denied: 'auth.gatewayError.denied',
+        state_invalid_or_expired: 'auth.gatewayError.stateExpired',
+        token_exchange_failed: 'auth.gatewayError.tokenExchangeFailed',
+        gateway_unreachable: 'auth.gatewayError.unreachable',
+        userinfo_failed: 'auth.gatewayError.userinfoFailed',
+        sign_in_failed: 'auth.gatewayError.signInFailed',
       }
-      setError(GW_ERR_CN[gwErrorFromUrl] || '网关登录失败')
+      setError(t(GW_ERR_KEY[gwErrorFromUrl] || 'auth.gatewayError.generic'))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -575,14 +575,14 @@ export default function AuthDialog({ onClose, closable = true }: AuthDialogProps
         )}
         {mode === 'login' && gatewayEnabled && (
           <>
-            <div className="auth-divider" aria-hidden="true"><span>或</span></div>
+            <div className="auth-divider" aria-hidden="true"><span>{t('auth.gatewayOr')}</span></div>
             <button
               type="button"
               className="auth-gateway-btn"
               id="auth-gateway-login"
               onClick={() => { window.location.href = '/auth/gateway/start' }}
             >
-              🛡️ 使用认证网关登录
+              🛡️ {t('auth.gatewayLogin')}
             </button>
           </>
         )}

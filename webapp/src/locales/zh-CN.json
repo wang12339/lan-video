@@ -71,7 +71,19 @@
       "passwordStrength": "密码过于简单，请包含大写字母、小写字母、数字、特殊字符中至少三种",
       "tokenRequired": "请输入重置令牌"
     },
-    "guestEnter": "先逛逛，以访客身份进入"
+    "guestEnter": "先逛逛，以访客身份进入",
+    "gatewayLogin": "使用认证网关登录",
+    "gatewayOr": "或",
+    "gatewayError": {
+      "generic": "网关登录失败",
+      "retry": "网关登录失败，请重试",
+      "denied": "你取消了网关授权",
+      "stateExpired": "授权会话已过期，请重新登录",
+      "tokenExchangeFailed": "网关令牌交换失败，请重试",
+      "unreachable": "认证网关暂时不可用",
+      "userinfoFailed": "获取网关用户信息失败",
+      "signInFailed": "网关账号关联失败，请联系管理员"
+    }
   },
   "toast": {
     "close": "关闭提示"
@@ -540,6 +552,7 @@
       "titleField": "标题",
       "videoLink": "视频链接",
       "coverLink": "封面链接",
+      "invalidUrl": "请输入有效的 http(s) 链接",
       "description": "描述",
       "categoryField": "分类",
       "save": "保存",

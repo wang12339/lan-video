@@ -82,6 +82,8 @@ export function useVideoData(
   const lastVideoIdRef = useRef(videoId)
   // 同一 videoId 只上报一次观看：身份重验导致的 effect 重跑不再重复计数
   const countedViewsRef = useRef<Set<string>>(new Set())
+  // 进入播放器前的页面标题：本 hook 会在加载成功/分享链接时改写 document.title
+  const previousTitleRef = useRef<string | null>(null)
 
   const safeSetVideo = useCallback((updater: React.SetStateAction<MappedVideo | null>) => {
     setVideo(prev => {
@@ -94,6 +96,17 @@ export function useVideoData(
       }
       return next
     })
+  }, [])
+
+  // 仅在挂载时记录一次原标题，卸载时恢复：
+  // 覆盖加载成功/分享两条改写路径，避免离开播放器后标题残留。
+  useEffect(() => {
+    previousTitleRef.current = document.title
+    return () => {
+      if (previousTitleRef.current !== null) {
+        document.title = previousTitleRef.current
+      }
+    }
   }, [])
 
   const loadRelated = useCallback(async (category?: string) => {

@@ -15,11 +15,21 @@ function LogEntry({ entry, formatted, nodeKey, isExpanded, onToggle }: LogEntryP
   const { t } = useTranslation()
   const style = TYPE_STYLES[formatted.type] || { color: '#6b7280', labelKey: 'admin.logs.types.default' }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    if (e.key === ' ') e.preventDefault()
+    onToggle(nodeKey)
+  }
+
   return (
     <div
       className={`a-route-node ${isExpanded ? 'expanded' : ''}`}
       style={{ '--node-color': style.color } as React.CSSProperties}
+      role="button"
+      tabIndex={0}
+      aria-expanded={isExpanded}
       onClick={() => onToggle(nodeKey)}
+      onKeyDown={handleKeyDown}
     >
       <div className="a-node-dot">{TYPE_ICONS[formatted.type] || '·'}</div>
       <div className="a-node-content">

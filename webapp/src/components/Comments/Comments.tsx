@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback, memo, forwardRef } from 'react'
+import { useState, useRef, useMemo, useCallback, useEffect, memo, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { InfiniteData } from '@tanstack/react-query'
@@ -40,6 +40,11 @@ export default function Comments({ videoId }: Props) {
   const [loadMoreFailed, setLoadMoreFailed] = useState(false)
   const newCommentRef = useRef<HTMLDivElement>(null)
   const commentsListRef = useRef<HTMLDivElement>(null)
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
+  }, [])
 
   // 评论列表由 react-query 缓存（staleTime 30s，组件卸载后 gcTime 5min 内命中）；
   // queryFn 走 request 但 skipCache=true，绕过 client 层 LRU，避免双重缓存失效不一致
@@ -118,7 +123,9 @@ export default function Comments({ videoId }: Props) {
             : p)),
         }
       })
-      setTimeout(() => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
+      scrollTimerRef.current = setTimeout(() => {
+        scrollTimerRef.current = null
         newCommentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 100)
     },

@@ -125,12 +125,24 @@
   padding: env(safe-area-inset-top) 16px 0;
   background: linear-gradient(rgba(0, 0, 0, 0.85), transparent);
   opacity: 0;
-  transition: opacity 250ms;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 250ms, visibility 0s linear;
+}
+
+.controls-hidden .player-top {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 250ms, visibility 0s linear 250ms;
 }
 
 .player-top.show,
 .player-wrap:hover .player-top {
   opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 250ms, visibility 0s linear;
 }
 
 .player-back {
@@ -363,13 +375,28 @@
   padding: 36px 14px calc(12px + env(safe-area-inset-bottom));
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.9) 35%);
   opacity: 0;
-  transition: opacity var(--player-transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--player-transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear;
   will-change: opacity;
+}
+
+.controls-hidden .player-controls {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--player-transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear var(--player-transition-speed);
 }
 
 .player-controls.show,
 .player-wrap:hover .player-controls {
   opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity var(--player-transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear;
 }
 
 .progress-wrap {

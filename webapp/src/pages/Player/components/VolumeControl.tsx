@@ -20,14 +20,11 @@ function VolumeControlImpl({ volume, muted, toggleMute, setVolumeValue, setVolum
         type="range"
         className="volume-slider"
         min="0"
-        max="1"
-        step="0.05"
-        value={muted ? 0 : volume}
-        onChange={(e) => { const val = parseFloat(e.target.value); setVolume(val); setVolumeValue(val) }}
+        max="100"
+        step="5"
+        value={Math.round((muted ? 0 : volume) * 100)}
+        onChange={(e) => { const val = parseFloat(e.target.value) / 100; setVolume(val); setVolumeValue(val) }}
         aria-label={t('player.volume')}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round((muted ? 0 : volume) * 100)}
         aria-valuetext={`${Math.round((muted ? 0 : volume) * 100)}%`}
       />
     </div>

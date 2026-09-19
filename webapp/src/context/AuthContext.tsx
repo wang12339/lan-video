@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { getUserInfo, login as apiLogin, register as apiRegister, logout as apiLogout, enterGuestMode, setOnAuthRequired, AuthError, saveToken } from '../api'
+import { clearSessionCache } from '../api/auth'
 import type { UserInfo } from '../api/types'
 import { clearPlaybackHistoryCache } from '../api/playback'
 import { clearGalleryCache } from '../api/galleryCache'
@@ -76,7 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 401 先以 cookie 复验会话：登出前发出的旧请求返回的 401 不应误杀新会话
       revalidatingRef.current = true
       const session = sessionRef.current
-      getUserInfo()
+      // skipCache：绕过 client.ts 的 30s GET LRU，确保复验拿到实时会话结果
+      getUserInfo({ skipCache: true })
         .then((info) => {
           if (session === sessionRef.current) setUser(info)
         })
@@ -100,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 网关 SSO：后端已换好 token，直接落盘并拉取用户信息
   const loginWithToken = useCallback(async (token: string) => {
     saveToken(token)
+    clearSessionCache()
     sessionRef.current += 1
     await refreshUser()
   }, [refreshUser])

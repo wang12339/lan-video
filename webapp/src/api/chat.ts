@@ -79,14 +79,22 @@ export async function clearAllChatMessages(): Promise<{ ok: boolean; deleted: nu
 
 export interface ChatClientHandlers {
   onEvent: (ev: ChatEvent) => void;
-  /** 连接状态变化：connected / reconnecting / closed（手动） */
+  /** 连接状态变化：connected / reconnecting / closed（手动关闭或超过最大重连次数） */
   onStatus: (s: 'connected' | 'reconnecting' | 'closed') => void;
 }
+
+/** 重连退避基数（1s 起步） */
+const RECONNECT_BASE_DELAY_MS = 1000;
+/** 重连退避上限（30s） */
+const RECONNECT_MAX_DELAY_MS = 30000;
+/** 连续重连最大次数，超过后停止重连并回调 closed（登录期常驻连接不再无限空转） */
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 /**
  * 聊天室 WebSocket 客户端。
  * - cookie 会话鉴权（同源 WS 升级自动携带 HttpOnly cookie）
- * - 指数退避自动重连（1s 起步、上限 30s，抖动防惊群）
+ * - 指数退避自动重连（1s 起步、上限 30s，抖动防惊群；
+ *   连续失败超过 MAX_RECONNECT_ATTEMPTS 次后停止并回调 closed）
  * - 发送在未连接/连接中时抛错，由调用方提示
  */
 export class ChatClient {
@@ -94,6 +102,8 @@ export class ChatClient {
   private closedByUser = false;
   private retry = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 连接代次：新建/关闭 socket 时自增，用于丢弃旧 socket 的迟到回调（关闭竞态） */
+  private generation = 0;
 
   constructor(private handlers: ChatClientHandlers) {}
 
@@ -102,15 +112,27 @@ export class ChatClient {
       return;
     }
     this.closedByUser = false;
+    this.retry = 0;
+    this.clearReconnectTimer();
+    this.openSocket();
+  }
+
+  private openSocket(): void {
+    const generation = ++this.generation;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${window.location.host}/ws/chat`);
     this.ws = ws;
 
     ws.onopen = () => {
+      if (generation !== this.generation) {
+        ws.close();
+        return;
+      }
       this.retry = 0;
       this.handlers.onStatus('connected');
     };
     ws.onmessage = (e) => {
+      if (generation !== this.generation) return;
       try {
         const ev = JSON.parse(e.data as string) as ChatEvent;
         this.handlers.onEvent(ev);
@@ -119,8 +141,17 @@ export class ChatClient {
       }
     };
     ws.onclose = () => {
-      this.handlers.onStatus(this.closedByUser ? 'closed' : 'reconnecting');
-      if (this.closedByUser) return;
+      if (generation !== this.generation) return;
+      this.ws = null;
+      if (this.closedByUser) {
+        this.handlers.onStatus('closed');
+        return;
+      }
+      if (this.retry >= MAX_RECONNECT_ATTEMPTS) {
+        this.handlers.onStatus('closed');
+        return;
+      }
+      this.handlers.onStatus('reconnecting');
       this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -130,12 +161,20 @@ export class ChatClient {
 
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
-    const delay = Math.min(30000, 1000 * 2 ** this.retry) + Math.random() * 500;
+    const delay =
+      Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** this.retry) + Math.random() * 500;
     this.retry += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
+      this.openSocket();
     }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   /** 发送一条文本消息。未连接时抛错。 */
@@ -162,12 +201,14 @@ export class ChatClient {
 
   close(): void {
     this.closedByUser = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.ws?.close();
+    this.retry = 0;
+    this.clearReconnectTimer();
+    // 自增代次：旧 socket 的 onclose/onopen 回调全部作废，避免关闭中竞态触发重连
+    this.generation += 1;
+    const ws = this.ws;
     this.ws = null;
+    ws?.close();
+    this.handlers.onStatus('closed');
   }
 
   get connected(): boolean {

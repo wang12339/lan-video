@@ -34,6 +34,14 @@ export default function LogsTab() {
   const [selectedUser, setSelectedUser] = useState<string | null>(null)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
 
+  const toggleUser = (user: string) => setSelectedUser(prev => (prev === user ? null : user))
+
+  const handleUserKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, user: string) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    if (e.key === ' ') e.preventDefault()
+    toggleUser(user)
+  }
+
   // silent：轮询静默请求——失败只显示页内小提示，不触发全局 toast（request 的 silent 跳过 onErrorCb）
   const loadLogs = useCallback(async (p: number, opts?: { silent?: boolean }) => {
     const silent = !!opts?.silent
@@ -241,7 +249,11 @@ export default function LogsTab() {
               <div
                 key={user}
                 className={`a-user-card ${selectedUser === user ? 'selected' : ''}`}
-                onClick={() => setSelectedUser(selectedUser === user ? null : user)}
+                role="button"
+                tabIndex={0}
+                aria-expanded={selectedUser === user}
+                onClick={() => toggleUser(user)}
+                onKeyDown={e => handleUserKeyDown(e, user)}
               >
                 <div className="a-user-header">
                   <div className="a-user-avatar" style={{ background: TYPE_STYLES[Object.entries(types).sort((a, b) => b[1] - a[1])[0]?.[0] || 'default']?.color || '#6b7280' }}>

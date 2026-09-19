@@ -9,6 +9,10 @@ import './styles/globals.css'
 
 initTrackRouter()
 
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/webapp/sw.js', { scope: '/webapp/' }).catch(() => {})
+}
+
 if (import.meta.env.DEV) {
   performance.mark('app:start')
 }

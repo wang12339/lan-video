@@ -41,12 +41,20 @@ function CategoryFilter({
 
   const switchToGrid = useCallback(() => {
     onViewModeChange('grid')
-    localStorage.setItem('home-view-mode', 'grid')
+    try {
+      localStorage.setItem('home-view-mode', 'grid')
+    } catch {
+      // localStorage 不可用（隐私模式/沙箱 iframe）：仅内存态生效
+    }
   }, [onViewModeChange])
 
   const switchToList = useCallback(() => {
     onViewModeChange('list')
-    localStorage.setItem('home-view-mode', 'list')
+    try {
+      localStorage.setItem('home-view-mode', 'list')
+    } catch {
+      // localStorage 不可用（隐私模式/沙箱 iframe）：仅内存态生效
+    }
   }, [onViewModeChange])
 
   return (

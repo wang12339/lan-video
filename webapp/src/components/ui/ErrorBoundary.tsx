@@ -29,7 +29,40 @@ function classifyError(error: Error): ErrorCategory {
   return 'runtime'
 }
 
-// ─── 错误上报（动态加载 Sentry，失败时静默降级） ───────────────
+// ─── 错误上报（可选端点，未配置时仅 console） ─────────────────
+const SENSITIVE_PARAM_NAMES = new Set([
+  'token',
+  'share_token',
+  'reset_token',
+  'verify_token',
+  'gw_code',
+])
+const SENSITIVE_HASH_PATTERN = /(\b(?:share|reset_token|verify_token|gw_code)=)[^&#]*/gi
+
+/** 清理 URL 中的敏感凭证：query 参数统一删除，hash 值替换为 [REDACTED] */
+function sanitizeUrl(href: string): string {
+  try {
+    const u = new URL(href)
+    // 先收集 key 再删除，避免边遍历边修改 URLSearchParams
+    for (const key of [...new Set(u.searchParams.keys())]) {
+      if (SENSITIVE_PARAM_NAMES.has(key.toLowerCase())) {
+        u.searchParams.delete(key)
+      }
+    }
+    u.hash = u.hash.replace(SENSITIVE_HASH_PATTERN, '$1[REDACTED]')
+    return u.toString()
+  } catch {
+    return '[REDACTED]'
+  }
+}
+
+/** 读取可选上报端点；未配置时返回 undefined（不发起任何网络请求） */
+function getErrorReportUrl(): string | undefined {
+  const env = import.meta.env as Record<string, string | undefined>
+  const url = env.VITE_ERROR_REPORT_URL
+  return typeof url === 'string' && url.trim() !== '' ? url.trim() : undefined
+}
+
 async function reportError(error: Error, errorInfo: React.ErrorInfo, category: ErrorCategory) {
   // 1. 始终打 console
   console.error('[ErrorBoundary]', {
@@ -53,28 +86,21 @@ async function reportError(error: Error, errorInfo: React.ErrorInfo, category: E
   //   // @sentry/react 未安装，静默跳过
   // }
 
-  // 3. Navigator.sendBeacon 降级上报（页面卸载前也可靠）
+  // 3. 可选端点上报（页面卸载前也可靠）；未配置端点时不组装 payload、不发请求
+  const reportUrl = getErrorReportUrl()
+  if (!reportUrl || typeof navigator.sendBeacon !== 'function') return
+
   try {
     const payload = JSON.stringify({
       message: error.message,
       category,
       stack: error.stack?.slice(0, 2000),
       componentStack: errorInfo.componentStack?.slice(0, 1000),
-      url: (() => {
-        try {
-          const u = new URL(window.location.href)
-          u.searchParams.delete('token')
-          u.searchParams.delete('share_token')
-          u.hash = u.hash.replace(/share=[^&]*/g, 'share=[REDACTED]')
-          return u.toString()
-        } catch { return '[REDACTED]' }
-      })(),
+      url: sanitizeUrl(window.location.href),
       ua: navigator.userAgent,
       ts: new Date().toISOString(),
     })
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon('/api/errors', new Blob([payload], { type: 'application/json' }))
-    }
+    navigator.sendBeacon(reportUrl, new Blob([payload], { type: 'application/json' }))
   } catch {
     // 降级上报失败，静默
   }
@@ -232,25 +258,6 @@ export default class ErrorBoundary extends Component<Props, State> {
 
     return this.props.children
   }
-}
-
-// ─── 高阶包装器 ────────────────────────────────────────────────
-export function withErrorBoundary<P extends object>(
-  WrappedComponent: React.ComponentType<P>,
-  errorBoundaryProps?: Omit<Props, 'children'>
-) {
-  const displayName = WrappedComponent.displayName || WrappedComponent.name || 'Component'
-
-  function WithErrorBoundary(props: P) {
-    return (
-      <ErrorBoundary {...errorBoundaryProps}>
-        <WrappedComponent {...props} />
-      </ErrorBoundary>
-    )
-  }
-
-  WithErrorBoundary.displayName = `withErrorBoundary(${displayName})`
-  return WithErrorBoundary
 }
 
 export type { ErrorCategory }

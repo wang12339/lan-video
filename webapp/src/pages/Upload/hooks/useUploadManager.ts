@@ -41,6 +41,7 @@ export function useUploadManager() {
   const [uploading, setUploading] = useState(false)
   const [resumeNotice, setResumeNotice] = useState(0)
   const abortRef = useRef(false)
+  const mountedRef = useRef(true)
   const dragDepthRef = useRef(0)
   const filesRef = useRef<UploadItem[]>([])
   filesRef.current = files
@@ -95,6 +96,16 @@ export function useUploadManager() {
     return () => {
       window.removeEventListener('dragover', prevent)
       window.removeEventListener('drop', prevent)
+    }
+  }, [])
+
+  // 卸载时中止仍在进行的分片/并发循环（下一个检查点生效），并标记组件已卸载，
+  // 避免后续 setState/toast 泄漏到其它页面。startUpload 开始时仍会重新置 false。
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      abortRef.current = true
     }
   }, [])
 
@@ -155,11 +166,17 @@ export function useUploadManager() {
     }
   }, [category, toast, t])
 
+  // 分片循环可能在卸载后才走到检查点，此时丢弃状态更新，避免对已卸载组件 setState。
+  const setFilesSafe = useCallback((updater: (prev: UploadItem[]) => UploadItem[]) => {
+    if (mountedRef.current) setFiles(updater)
+  }, [])
+
   const startUpload = useCallback(async () => {
     if (!(await checkSession())) {
-      toast(t('upload.loginRequired'), 'error')
+      if (mountedRef.current) toast(t('upload.loginRequired'), 'error')
       return
     }
+    if (!mountedRef.current) return
     const targets = filesRef.current.filter((f) => f.status === 'pending' || f.status === 'error')
     if (targets.length === 0) return
     abortRef.current = false
@@ -169,12 +186,14 @@ export function useUploadManager() {
     try {
       await runPool(targets, CONCURRENT_UPLOADS, async (item) => {
         if (abortRef.current) return
-        if (await uploadSingleFile(item, setFiles, abortRef)) okCount++
+        if (await uploadSingleFile(item, setFilesSafe, abortRef)) okCount++
       })
     } finally {
-      setUploading(false)
+      if (mountedRef.current) setUploading(false)
     }
 
+    // 组件已卸载：中止属于生命周期清理，不应把“用户取消”toast 带到其它页面。
+    if (!mountedRef.current) return
     if (abortRef.current) {
       toast(i18n.t('upload.cancelledToast'), 'info')
     } else if (okCount === targets.length) {
@@ -184,7 +203,7 @@ export function useUploadManager() {
     } else {
       toast(i18n.t('upload.uploadFailedRetry'), 'error')
     }
-  }, [toast, t])
+  }, [setFilesSafe, toast, t])
 
   const cancelUpload = useCallback(() => {
     abortRef.current = true

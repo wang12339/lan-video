@@ -1,6 +1,8 @@
-import { useRef, useEffect } from 'react'
+import { useRef } from 'react'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useModalEscape } from './useModalEscape'
+import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { useScrollLock } from '../../../hooks/useScrollLock'
 import './AdminModal.css'
 
@@ -23,19 +25,13 @@ export default function AdminModal({
   hideCloseButton = false,
 }: AdminModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation()
 
   useModalEscape(onClose)
   // 弹窗打开期间锁背景滚动（移动端防穿透）
   useScrollLock(true)
-
-  useEffect(() => {
-    const el = dialogRef.current
-    if (!el) return
-    const focusable = el.querySelector<HTMLElement>(
-      'input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])',
-    )
-    focusable?.focus()
-  }, [])
+  // 焦点陷阱：打开时自动聚焦首个可聚焦元素，关闭/卸载后还原触发元素焦点
+  useFocusTrap(dialogRef, true)
 
   return (
     <div className="admin-modal-overlay" onClick={onClose}>
@@ -55,7 +51,7 @@ export default function AdminModal({
               type="button"
               className="admin-modal-close"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={t('common.close')}
             >
               ×
             </button>

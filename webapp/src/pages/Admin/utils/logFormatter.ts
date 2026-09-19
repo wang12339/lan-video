@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import i18n from '../../../i18n'
 import type { LogEntry } from '../../../api/logs'
 
 // 无用户名的日志（系统/静态资源请求）统一归入该虚拟账号，便于在账号路线视图中展示
@@ -169,14 +170,14 @@ export const TYPE_ICONS: Record<string, string> = {
 
 export const LEVELS = ['INFO', 'WARN', 'ERROR', 'DEBUG']
 
-export function fmtTime(ts: string): string {
+export function fmtTime(ts: string, locale?: string): string {
   if (!ts) return ''
-  try { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+  try { return new Date(ts).toLocaleTimeString(locale || i18n.language || 'zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
   catch { return ts }
 }
 
-export function fmtTimeFull(ts: string): string {
+export function fmtTimeFull(ts: string, locale?: string): string {
   if (!ts) return '--'
-  try { return new Date(ts).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  try { return new Date(ts).toLocaleString(locale || i18n.language || 'zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
   catch { return ts }
 }

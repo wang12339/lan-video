@@ -40,14 +40,12 @@ export function initTrackRouter(): void {
   if (routerInitialized) return
   routerInitialized = true
 
+  // 首次访问（main.tsx 在应用挂载前调用）
   trackPage(window.location.pathname)
 
-  const originalPushState = history.pushState.bind(history)
-  history.pushState = (data: unknown, unused: string, url?: string | URL | null) => {
-    originalPushState(data, unused, url)
-    trackPage(window.location.pathname)
-  }
-
+  // SPA 的 pushState/replaceState 导航不触发任何原生事件，也不再猴补丁
+  // history.pushState（脆弱且与 React Router 内部实现耦合）——由 Layout 在
+  // 路由变化时主动调用 trackPage；此处只负责浏览器后退/前进。
   window.addEventListener('popstate', () => {
     trackPage(window.location.pathname)
   })

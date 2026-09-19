@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { savePlayback } from '../../../api'
-import { getToken, BASE, mediaUrl } from '../../../api/client'
+import { getToken, getCsrfToken, BASE, mediaUrl } from '../../../api/client'
 import type { MappedVideo, VideoVariant } from '../../../api/types'
 import { getPref } from '../../../api/prefs'
 import { throttle, debounce } from '../../../utils/throttle'
@@ -276,6 +276,8 @@ export function usePlayerControls(
     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
     const token = getToken()
     if (token) headers['Authorization'] = 'Bearer ' + token
+    const csrf = getCsrfToken()
+    if (csrf) headers['X-CSRF-Token'] = csrf
     try { fetch(BASE + '/playback/history', { method: 'POST', headers, body: JSON.stringify(payload), keepalive: true, credentials: 'same-origin' }).catch(() => {}) } catch { /* ignore */ }
   }, [getPlaybackPayload])
 

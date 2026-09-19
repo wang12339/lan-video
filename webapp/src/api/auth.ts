@@ -22,6 +22,9 @@ function handleAuthResponse(res: AuthResponse): AuthResponse {
  */
 function persistToken(res: AuthResponse): AuthResponse {
   if (res.token) saveToken(res.token);
+  // 登录/注册成功即会话边界变更（可能仅以 HttpOnly cookie 建会话、不返回 token），
+  // 必须清掉旧匿名会话的探测缓存，否则 checkSession() 最长 5s 仍返回 false
+  clearSessionCache();
   return res;
 }
 
@@ -75,6 +78,8 @@ export async function enterGuestMode(): Promise<AuthResponse> {
       auth: false,
     })
   );
+  // 访客会话由 HttpOnly cookie 承载，同样需要让旧会话探测缓存失效
+  clearSessionCache();
   return res;
 }
 
@@ -101,18 +106,20 @@ export async function logout(): Promise<boolean> {
     } catch { /* 仍然失败：交给调用方提示 */ }
   }
   // 清除会话缓存，避免登出后 60 秒内 checkSession() 仍返回旧结果
-  resetSessionCache();
+  clearSessionCache();
   clearToken();
   return serverOk;
 }
 
 /**
  * 获取当前登录用户的基本信息
+ * @param options - skipCache 为 true 时跳过 client.ts 的 30s GET LRU 缓存，
+ *   供 401 后复验会话等需要实时结果的场景使用；默认行为不变
  * @returns 用户信息（用户名、邮箱、头像 URL 等）
  * @throws {APIError} 未登录或 token 过期时抛出 401
  */
-export async function getUserInfo(): Promise<UserInfo> {
-  return request<UserInfo>('/auth/user', { silent: true });
+export async function getUserInfo(options?: { skipCache?: boolean }): Promise<UserInfo> {
+  return request<UserInfo>('/auth/user', { silent: true, skipCache: options?.skipCache });
 }
 
 /**
@@ -127,8 +134,11 @@ export async function getUserProfile(): Promise<UserProfile> {
 /** 会话缓存：避免频繁请求 /auth/user 接口 */
 let sessionCache: { valid: boolean; expires: number } | null = null;
 
-/** 重置会话缓存（登出或 token 变更时调用） */
-function resetSessionCache() {
+/**
+ * 清空会话探测缓存（登录/注册/访客/token 变更/登出等会话边界调用）
+ * 不清除失败结果的 5s 防抖逻辑本身，仅让下一次 checkSession() 重新探测。
+ */
+export function clearSessionCache() {
   sessionCache = null;
 }
 
@@ -189,7 +199,10 @@ export async function updateEmail(
     body: { email, password },
   });
   // 邮箱变更后服务端可能重新签发 token，立即持久化，避免旧 token 后续请求 401
-  if (res.token) saveToken(res.token);
+  if (res.token) {
+    saveToken(res.token);
+    clearSessionCache();
+  }
   return res;
 }
 
