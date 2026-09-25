@@ -1,0 +1,26 @@
+name: temp-dump-postgres
+
+# 临时工具 workflow：在海外 runner 上拉取 postgres 镜像并打包为 artifact，
+# 供 ECS 服务器下载加载（ECS 直连 docker hub 的 mirror 对该镜像不稳定）。
+# 用途完成后可删除此文件。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dump:
+    name: Dump postgres image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Pull and save image
+        run: |
+          docker pull postgres:16-alpine
+          docker save postgres:16-alpine | gzip > /tmp/postgres-16-alpine.tar.gz
+          ls -lh /tmp/postgres-16-alpine.tar.gz
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-image
+          path: /tmp/postgres-16-alpine.tar.gz
+          retention-days: 1
