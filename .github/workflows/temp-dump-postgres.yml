@@ -1,26 +1,25 @@
 name: temp-dump-postgres
 
-# 临时工具 workflow：在海外 runner 上拉取 postgres 镜像并打包为 artifact，
-# 供 ECS 服务器下载加载（ECS 直连 docker hub 的 mirror 对该镜像不稳定）。
+# 临时工具 workflow：在海外 runner 上拉取 postgres 镜像并推送到 GHCR，
+# 供 ECS 服务器从 ghcr.io 快速拉取（ECS 直连 docker hub/mirror 对该镜像不稳定）。
 # 用途完成后可删除此文件。
 
 on:
   workflow_dispatch:
 
 jobs:
-  dump:
-    name: Dump postgres image
+  push:
+    name: Push postgres to GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Pull and save image
+      - name: Pull, tag, push to GHCR
         run: |
           docker pull postgres:16-alpine
-          docker save postgres:16-alpine | gzip > /tmp/postgres-16-alpine.tar.gz
-          ls -lh /tmp/postgres-16-alpine.tar.gz
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: postgres-image
-          path: /tmp/postgres-16-alpine.tar.gz
-          retention-days: 1
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker tag postgres:16-alpine ghcr.io/wang12339/lan-video:postgres-16-alpine
+          docker push ghcr.io/wang12339/lan-video:postgres-16-alpine
+          echo "pushed OK"
