@@ -36,7 +36,7 @@ harsh = "0.2"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "smtp-transport", "builder", "hostname", "pool"] }
-sysinfo = "0.30"
+sysinfo = "0.39"
 utoipa = { version = "5", features = ["macros"] }
 kamadak-exif = "0.6"
 
