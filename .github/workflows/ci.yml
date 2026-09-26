@@ -400,6 +400,15 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Without this the remote script's output is discarded, so a failed
+          # deploy reports only "exit code 1" with no way to tell a failed pull
+          # from a failed health check.
+          capture_stdout: true
+          # Default is 10m, which is not enough: pulling a ~550 MB image (ffmpeg
+          # + the release binary) from GHCR to the server plus decompressing it
+          # already consumed most of that, and the action then killed the script
+          # mid-deploy. 30m leaves room for a cold pull on a slow link.
+          command_timeout: 30m
           script: |
             set -eu
             cd /opt/atmos-video
@@ -408,37 +417,55 @@ jobs:
             export IMAGE_NAME="${{ env.IMAGE_NAME }}"
             IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
 
+            # 每步都打时间戳：远程脚本被超时杀掉时，日志尾部就是卡在哪一步
+            step() { echo "[deploy $(date -u +%H:%M:%S)] $*"; }
+
             # 记录当前运行镜像为 :previous 供回滚；首次部署无容器时忽略失败
             PREVIOUS_IMAGE="$(docker compose images -q app 2>/dev/null | head -n1)"
+            step "当前运行镜像: ${PREVIOUS_IMAGE:-<无>}"
             if [ -n "$PREVIOUS_IMAGE" ]; then
               docker tag "$PREVIOUS_IMAGE" "$IMAGE_REF:previous" || true
             fi
 
             # 拉取 CI 刚推送的镜像；不再 `compose down`，缩短停机窗口
+            step "拉取 $IMAGE_REF:main"
             docker pull "$IMAGE_REF:main"
+            step "拉取完成: $(docker image inspect "$IMAGE_REF:main" --format '{{.Id}}')"
 
             # Dockerfile / compose 已配置 HEALTHCHECK，--wait 会等待容器健康；
             # 若服务器 Compose 版本过旧不支持 --wait，则退回 `up -d`，
             # 由下方 curl 轮询兜底健康检查。
+            step "重建 app 容器"
             IMAGE_TAG=main docker compose up -d --wait --no-deps app \
               || IMAGE_TAG=main docker compose up -d --no-deps app
 
-            # 显式轮询 /health（最多 30 次 × 2s），失败则回滚到 :previous
+            # 显式轮询 /health。60 次 × 3s = 180s，与容器 HEALTHCHECK 的
+            # start_period(40s) + interval(30s) × retries(3) ≈ 130s 对齐：
+            # 预算太短会在应用仍在正常启动时误判失败并回滚。
+            step "轮询 /health（最多 180s）"
             healthy=0
-            for _ in $(seq 1 30); do
+            for i in $(seq 1 60); do
               if curl -fsS http://127.0.0.1:8082/health >/dev/null 2>&1; then
                 healthy=1
+                step "健康检查通过（第 $i 次）"
                 break
               fi
-              sleep 2
+              if [ $((i % 10)) -eq 0 ]; then
+                step "仍在等待 /health …（$i/60）"
+              fi
+              sleep 3
             done
 
             if [ "$healthy" -ne 1 ]; then
               echo "::error::健康检查失败，回滚到 :previous 镜像"
+              echo "::group::失败时应用日志"
+              docker compose logs --tail=80 app || true
+              echo "::endgroup::"
               if [ -n "$PREVIOUS_IMAGE" ]; then
                 IMAGE_TAG=previous docker compose up -d --no-deps app
               fi
               exit 1
             fi
 
+            step "部署完成，运行镜像: $(docker inspect "$(docker compose ps -q app)" --format '{{.Image}}')"
             docker system prune -f
