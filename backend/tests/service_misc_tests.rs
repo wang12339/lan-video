@@ -25,7 +25,8 @@ use std::net::{Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use atmos_video_backend::repositories::playback_repo::PlaybackRepository;
-use atmos_video_backend::repositories::video_repo::VideoRepository;
+use atmos_video_backend::repositories::recommendation_repo::RecommendationRepository;
+use atmos_video_backend::repositories::search_repo::SearchRepository;
 use atmos_video_backend::services::playback_service::PlaybackService;
 use atmos_video_backend::services::recommendation_service::RecommendationService;
 use atmos_video_backend::services::search_service::SearchService;
@@ -306,7 +307,7 @@ fn client_ip_without_peer_returns_unknown() {
 
 #[tokio::test]
 async fn search_empty_query_short_circuits_before_db() {
-    let svc = SearchService::new(VideoRepository::new(dead_pool()));
+    let svc = SearchService::new(SearchRepository::new(dead_pool()));
     // 死池 + 空查询：若短路逻辑回归、开始查库，这里会返回 Err
     for q in ["", "   ", "\t\n  ", "   \u{3000}  "] {
         let (results, total) = svc
@@ -320,7 +321,7 @@ async fn search_empty_query_short_circuits_before_db() {
 
 #[tokio::test]
 async fn search_suggest_empty_query_short_circuits_before_db() {
-    let svc = SearchService::new(VideoRepository::new(dead_pool()));
+    let svc = SearchService::new(SearchRepository::new(dead_pool()));
     assert!(svc.search_suggest(None, "   ", 5).await.unwrap().is_empty());
     assert!(svc.search_suggest(None, "", 5).await.unwrap().is_empty());
 }
@@ -329,7 +330,7 @@ async fn search_suggest_empty_query_short_circuits_before_db() {
 async fn search_nonempty_query_reaches_db() {
     // 反证：非空查询必须真的走到数据库（死池 → Err）。
     // 证明上面的短路只发生在 normalize 后为空时，防止"假短路"掩盖查询。
-    let svc = SearchService::new(VideoRepository::new(dead_pool()));
+    let svc = SearchService::new(SearchRepository::new(dead_pool()));
     let err = svc
         .full_text_search(None, "hello", 1, 10)
         .await
@@ -520,7 +521,7 @@ async fn search_full_text_and_pagination_defense_with_real_db() {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let svc = SearchService::new(VideoRepository::new(pool.clone()));
+    let svc = SearchService::new(SearchRepository::new(pool.clone()));
 
     let title = format!("SvcMisc AlphaSearch Video {}", std::process::id());
     let id: i64 = sqlx::query(
@@ -590,7 +591,7 @@ async fn search_suggest_real_db_and_cache_consistency() {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let svc = SearchService::new(VideoRepository::new(pool.clone()));
+    let svc = SearchService::new(SearchRepository::new(pool.clone()));
 
     let title = format!("SvcMisc SuggestAlpha {}", std::process::id());
     let id: i64 = sqlx::query(
@@ -640,7 +641,7 @@ async fn recommendation_scoring_and_fallbacks_with_real_db() {
         eprintln!("DATABASE_URL not set, skipping");
         return;
     };
-    let svc = RecommendationService::new(VideoRepository::new(pool.clone()));
+    let svc = RecommendationService::new(RecommendationRepository::new(pool.clone()));
 
     let suffix = std::process::id().to_string();
     let user = format!("svcmisc_{suffix}");

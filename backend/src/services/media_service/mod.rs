@@ -425,7 +425,7 @@ impl MediaService {
                         }
                     }
                     Ok(None) => {
-                        if let Err(e) = mark_exif_extracted(svc.repo.pool(), vid).await {
+                        if let Err(e) = svc.repo.mark_exif_extracted(vid).await {
                             tracing::warn!(video_id = vid, error = %e, "exif mark failed");
                         }
                     }
@@ -738,7 +738,7 @@ impl MediaService {
 
                 let Some(path) = safe_media_path(&stream_url, &self.config.media_root) else {
                     // 文件缺失 / 路径非法：标记已尝试，避免每轮重复处理
-                    if let Err(e) = mark_exif_extracted(self.repo.pool(), id).await {
+                    if let Err(e) = self.repo.mark_exif_extracted(id).await {
                         errors.push(format!("id={}: {}", id, e));
                     }
                     continue;
@@ -752,7 +752,7 @@ impl MediaService {
                         }
                     }
                     Ok(None) => {
-                        if let Err(e) = mark_exif_extracted(self.repo.pool(), id).await {
+                        if let Err(e) = self.repo.mark_exif_extracted(id).await {
                             errors.push(format!("id={}: {}", id, e));
                         }
                     }
@@ -843,17 +843,4 @@ impl MediaService {
         }
         Ok(())
     }
-}
-
-/// 仅标记"已尝试解析 EXIF"（无 EXIF / 文件缺失），不写任何 exif 列。
-///
-/// `videos` 表的这条 `UPDATE` 语义与 `VideoRepository::update_video_exif`
-/// 的 `exif_extracted = TRUE` 收尾一致；参数化绑定，无注入面。放在 service
-/// 层是因为仓储层未提供单独的 mark 方法，而避免为此新增跨文件改动。
-async fn mark_exif_extracted(pool: &sqlx::PgPool, video_id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE videos SET exif_extracted = TRUE WHERE id = $1")
-        .bind(video_id)
-        .execute(pool)
-        .await
-        .map(|_| ())
 }

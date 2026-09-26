@@ -51,7 +51,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     // Database check
     let db_start = Instant::now();
-    let db_ok = state.repos.user.count_users().await.is_ok();
+    let db_ok = state.services.admin.count_users().await.is_ok();
     let db_duration = db_start.elapsed();
     checks.insert(
         "database".to_string(),
@@ -69,23 +69,31 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         all_ok = false;
     }
 
-    // Redis check (if configured)
-    if let Some(ref redis) = state.redis {
+    // Redis check (if configured). A configured-but-disconnected Redis is still
+    // reported, so health output distinguishes "not configured" from "down".
+    if state.redis.is_configured() {
         let redis_start = Instant::now();
-        let redis_ok = redis::cmd("PING")
-            .query_async::<String>(&mut redis.clone())
-            .await
-            .is_ok();
+        let (redis_ok, redis_message) = match state.redis.resolve() {
+            Some(conn) => {
+                let mut conn = conn.as_ref().clone();
+                match redis::cmd("PING").query_async::<String>(&mut conn).await {
+                    Ok(_) => (true, None),
+                    Err(e) => (false, Some(format!("Redis PING failed: {e}"))),
+                }
+            }
+            // Configured but not connected yet: the backend retries in the
+            // background, so this is a degraded (not misconfigured) state.
+            None => (
+                false,
+                Some("Redis configured but not connected (retrying in background)".to_string()),
+            ),
+        };
         let redis_duration = redis_start.elapsed();
         checks.insert(
             "redis".to_string(),
             CheckStatus {
                 status: if redis_ok { "healthy" } else { "unhealthy" }.to_string(),
-                message: if redis_ok {
-                    None
-                } else {
-                    Some("Redis connection failed".to_string())
-                },
+                message: redis_message,
                 response_time_ms: Some(redis_duration.as_millis() as u64),
             },
         );
@@ -230,7 +238,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Json<MetricsResponse
         auth_password_reset_total: metrics.auth_password_reset_total.get(),
         cache_hits_total: metrics.cache_hits_total.get(),
         cache_misses_total: metrics.cache_misses_total.get(),
-        active_connections: metrics.active_connections.get(),
+        active_connections: metrics.http_requests_in_flight.get(),
         database_pool_size: metrics.database_pool_size.get(),
         database_pool_active: metrics.database_pool_active.get(),
     })

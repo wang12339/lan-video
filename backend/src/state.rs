@@ -40,6 +40,32 @@ pub type RecommendationCache = Cache<String, (Vec<VideoRecommendation>, i64)>;
 pub type VideoDetailCache = Cache<i64, VideoItem>;
 
 /// Tracks active playback sessions: key = "username:video_id", value = last heartbeat time
+///
+/// # Why this is process-local
+///
+/// Unlike the HLS in-flight lock, this tracker is deliberately *not* backed by
+/// Redis, even in multi-instance deployments. The reasons:
+///
+/// 1. **It is a liveness signal, not an authorization decision.** It answers
+///    "is this browser currently playing this video?", which `media_auth` then
+///    combines with the real checks (path-derived `video_id`, ownership, or a
+///    share token bound to that specific video). Making the liveness half
+///    distributed does not strengthen the authorization half.
+/// 2. **It sits on the hottest path in the server.** A `<video>` element issues
+///    a `Range` request per segment; `media_auth` runs on every one of them. A
+///    Redis round trip there would add a network hop and a new failure mode to
+///    every media byte served.
+/// 3. **The TTL already bounds staleness.** A session dies 120 s after the last
+///    heartbeat regardless of which instance holds it, so a session started on
+///    instance A is honoured on instance B for as long as A keeps heartbeating
+///    — and no longer. The worst case is a viewer who is throttled to one
+///    instance by the load balancer, which is a correct outcome anyway.
+///
+/// The cost is that a session started on A is invisible to B if the client is
+/// load-balanced across instances and A then dies; the client re-starts its
+/// session, which is cheap. Sessions are *not* used for revocation: kicking a
+/// user invalidates their tokens in the database and, when Redis is available,
+/// the shared media-auth cache — see `middleware::auth::media`.
 pub struct PlaybackSessionTracker {
     sessions: DashMap<String, Instant>,
 }
@@ -237,7 +263,8 @@ pub struct AppState {
     /// 公共聊天室（在线成员 + 广播通道）
     pub chat_hub: Arc<ChatHub>,
     pub metrics: Metrics,
-    pub redis: Option<redis::aio::ConnectionManager>,
+    /// Shared Redis slot (resolved per use, so a late reconnect is picked up).
+    pub redis: crate::services::redis::SharedRedis,
     pub transcoder: Transcoder,
     pub task_queue: TaskQueue,
 }

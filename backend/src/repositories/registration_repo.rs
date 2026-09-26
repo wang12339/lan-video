@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sqlx::PgPool;
 
 #[derive(Clone)]
@@ -11,11 +12,15 @@ impl RegistrationRepository {
     }
 
     pub async fn get_enabled(&self) -> Result<bool, sqlx::Error> {
-        let result: Option<(String,)> =
-            sqlx::query_as("SELECT value FROM server_config WHERE key = 'registration_enabled'")
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(result.is_some_and(|r| r.0 == "true"))
+        log_slow_query("registration_repo::get_enabled", || async {
+            let result: Option<(String,)> = sqlx::query_as(
+                "SELECT value FROM server_config WHERE key = 'registration_enabled'",
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+            Ok(result.is_some_and(|r| r.0 == "true"))
+        })
+        .await
     }
 
     pub async fn set_enabled(&self, enabled: bool) -> Result<(), sqlx::Error> {

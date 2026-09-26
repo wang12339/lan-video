@@ -323,9 +323,10 @@ pub async fn transcode_to_hls(
     let video_path = safe_media_path(&video.stream_url, &state.config.media_root)
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "无效的视频路径"))?;
 
-    // 进程内 in-flight 去重：同一视频只允许一个 HLS 任务写 hls/{id}/。
+    // in-flight 去重：同一视频只允许一个 HLS 任务写 hls/{id}/。进程内集合去重
+    // 单实例，Redis 锁额外收口多实例（见 Transcoder::try_begin_hls）。
     // guard 随 spawned 任务一起移动，任务结束（含 panic）时自动释放。
-    let Some(hls_guard) = state.transcoder.try_begin_hls(video_id) else {
+    let Some(hls_guard) = state.transcoder.try_begin_hls(video_id, &state.redis).await else {
         return Err(error_response(
             StatusCode::CONFLICT,
             "该视频的 HLS 转码正在进行中",

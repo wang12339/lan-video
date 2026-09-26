@@ -15,7 +15,7 @@ pub async fn request_log(req: Request, next: Next) -> Response {
     let state = req.extensions().get::<Arc<AppState>>().cloned();
 
     if let Some(ref state) = state {
-        state.metrics.active_connections.inc();
+        state.metrics.record_request_started();
     }
 
     let path_ref = req.uri().path().to_string();
@@ -28,16 +28,23 @@ pub async fn request_log(req: Request, next: Next) -> Response {
     let res = next.run(req).await;
     let elapsed = start.elapsed();
 
+    let status = res.status().as_u16();
+    let method_str = method.as_str();
+
     if let Some(ref state) = state {
         state.metrics.record_request(elapsed);
-        state.metrics.active_connections.dec();
+        state
+            .metrics
+            .record_request_with_labels(method_str, status, elapsed);
+        if status >= 400 {
+            state.metrics.record_error(method_str, status, &path_ref);
+        }
+        state.metrics.record_request_finished();
     }
 
     if always_skip {
         return res;
     }
-
-    let status = res.status().as_u16();
 
     let is_api_path = path_ref.starts_with("/auth/")
         || path_ref.starts_with("/videos")

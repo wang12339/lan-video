@@ -18,9 +18,40 @@
 use atmos_video_backend::services::media_service::{
     infer_image, is_safe_external_url, safe_media_path, sanitize_filename, validate_file_type,
 };
-use atmos_video_backend::services::transcoder::{FormatInfo, Transcoder, VideoInfo};
+use atmos_video_backend::services::redis::SharedRedis;
+use atmos_video_backend::services::transcoder::{
+    FormatInfo, Transcoder, VideoInfo, HLS_LOCK_TTL_SECS,
+};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// `REDIS_URL` from the environment, or `None` to skip the distributed test.
+///
+/// In CI a missing `REDIS_URL` panics instead of skipping, so a lost
+/// `redis` service cannot quietly turn the cross-instance HLS dedup coverage
+/// into a no-op.
+fn redis_url() -> Option<String> {
+    match std::env::var("REDIS_URL") {
+        Ok(url) if !url.trim().is_empty() => Some(url),
+        _ => {
+            if std::env::var("CI").is_ok_and(|v| v == "true") {
+                panic!(
+                    "REDIS_URL must be set when CI=true: the distributed HLS dedup test \
+                     is the only coverage of the cross-instance transcode lock."
+                );
+            }
+            eprintln!("NOTE: REDIS_URL not set — distributed HLS dedup test SKIPPED");
+            None
+        }
+    }
+}
+
+async fn redis_manager(url: &str) -> redis::aio::ConnectionManager {
+    let client = redis::Client::open(url).expect("REDIS_URL must be a valid Redis URL");
+    redis::aio::ConnectionManager::new(client)
+        .await
+        .expect("test Redis must be reachable")
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // 测试辅助
@@ -1378,26 +1409,108 @@ fn test_transcoder_new_creates_variants_dir() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-#[test]
-fn test_hls_in_flight_rejects_same_video_until_guard_dropped() {
+#[tokio::test]
+async fn test_hls_in_flight_rejects_same_video_until_guard_dropped() {
     let root = temp_media_root();
     let tx = mock_transcoder(&root);
+    // No Redis: exercises the process-local layer on its own.
+    let no_redis = SharedRedis::disabled();
 
     // 同一 video_id 第一次可占用；未释放前重复请求被拒绝（对应 409）
-    let guard = tx.try_begin_hls(101_000).expect("首次应可开始");
+    let guard = tx
+        .try_begin_hls(101_000, &no_redis)
+        .await
+        .expect("首次应可开始");
     assert!(
-        tx.try_begin_hls(101_000).is_none(),
+        tx.try_begin_hls(101_000, &no_redis).await.is_none(),
         "同视频重复请求应被拒绝"
     );
     // 不同视频互不影响
-    let other = tx.try_begin_hls(101_001).expect("不同视频应可并行");
+    let other = tx
+        .try_begin_hls(101_001, &no_redis)
+        .await
+        .expect("不同视频应可并行");
     drop(other);
 
     // guard drop 后（任务结束/panic 展开）应可重新开始
     drop(guard);
-    let again = tx.try_begin_hls(101_000).expect("guard 释放后应可重新开始");
+    let again = tx
+        .try_begin_hls(101_000, &no_redis)
+        .await
+        .expect("guard 释放后应可重新开始");
     drop(again);
 
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// With Redis configured, the lock is taken cluster-wide: a *different*
+/// `Transcoder` instance (i.e. a different process, from Redis's point of view)
+/// must be rejected while the first one holds the guard. This is the property
+/// the process-local `HashSet` alone could not provide.
+#[tokio::test]
+async fn test_hls_in_flight_is_distributed_across_instances() {
+    let Some(url) = redis_url() else {
+        eprintln!("NOTE: REDIS_URL not set — distributed HLS dedup test SKIPPED");
+        return;
+    };
+    let root = temp_media_root();
+    let instance_a = mock_transcoder(&root);
+    let instance_b = mock_transcoder(&root);
+    let slot = SharedRedis::connected(redis_manager(&url).await);
+
+    let video_id = 202_000;
+    let key = format!("hls:transcode:{video_id}");
+
+    let guard_a = instance_a
+        .try_begin_hls(video_id, &slot)
+        .await
+        .expect("instance A must acquire the lock");
+    assert!(
+        instance_b.try_begin_hls(video_id, &slot).await.is_none(),
+        "instance B must be rejected while A holds the lock"
+    );
+
+    // The key really is in Redis, with the crash-safety TTL attached.
+    let mut conn = redis_manager(&url).await;
+    let ttl: i64 = redis::cmd("TTL")
+        .arg(&key)
+        .query_async(&mut conn)
+        .await
+        .expect("TTL");
+    assert!(
+        (1..=HLS_LOCK_TTL_SECS as i64).contains(&ttl),
+        "lock must carry the TTL fallback, got {ttl}"
+    );
+
+    // A different video is unaffected.
+    let other = instance_b
+        .try_begin_hls(video_id + 1, &slot)
+        .await
+        .expect("a different video must not be blocked");
+    drop(other);
+
+    // Releasing A's guard frees the lock for B. The release runs in a detached
+    // task, so poll for it rather than assuming it has already landed.
+    drop(guard_a);
+    let mut acquired_after_release = None;
+    for _ in 0..100 {
+        acquired_after_release = instance_b.try_begin_hls(video_id, &slot).await;
+        if acquired_after_release.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        acquired_after_release.is_some(),
+        "after A releases, B must be able to acquire the lock"
+    );
+    drop(acquired_after_release);
+
+    let _: i64 = redis::cmd("DEL")
+        .arg(&key)
+        .query_async(&mut conn)
+        .await
+        .expect("cleanup");
     let _ = std::fs::remove_dir_all(&root);
 }
 

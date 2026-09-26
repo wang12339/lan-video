@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use crate::models::playback::RecentWatchItem;
 use sqlx::PgPool;
 
@@ -73,14 +74,17 @@ impl PlaybackRepository {
         username: &str,
         video_id: i64,
     ) -> Result<Option<(i64, i64)>, sqlx::Error> {
-        let row = sqlx::query_as::<_, PlaybackRow>(
-            "SELECT position_ms, duration_ms FROM playback_history WHERE username = $1 AND video_id = $2"
-        )
-        .bind(username)
-        .bind(video_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|r| (r.position_ms, r.duration_ms)))
+        log_slow_query("playback_repo::get_playback_data", || async {
+            let row = sqlx::query_as::<_, PlaybackRow>(
+                "SELECT position_ms, duration_ms FROM playback_history WHERE username = $1 AND video_id = $2"
+            )
+            .bind(username)
+            .bind(video_id)
+            .fetch_optional(&self.pool)
+            .await?;
+            Ok(row.map(|r| (r.position_ms, r.duration_ms)))
+        })
+        .await
     }
 
     /// 查询指定用户的播放历史列表（分页）。
@@ -100,33 +104,39 @@ impl PlaybackRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<RecentWatchItem>, i64), sqlx::Error> {
-        let rows = sqlx::query_as::<_, HistoryRow>(
-            r#"SELECT h.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
-                      h.position_ms, h.duration_ms, h.updated_at
-               FROM playback_history h
-               JOIN videos v ON h.video_id = v.id
-               WHERE h.username = $1
-               ORDER BY h.updated_at DESC
-               LIMIT $2 OFFSET $3"#,
+        log_slow_query(
+            "playback_repo::find_playback_history_by_username",
+            || async {
+                let rows = sqlx::query_as::<_, HistoryRow>(
+                r#"SELECT h.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
+                          h.position_ms, h.duration_ms, h.updated_at
+                   FROM playback_history h
+                   JOIN videos v ON h.video_id = v.id
+                   WHERE h.username = $1
+                   ORDER BY h.updated_at DESC
+                   LIMIT $2 OFFSET $3"#,
+            )
+            .bind(username)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
+
+                let total = if (rows.len() as i64) < limit {
+                    rows.len() as i64 + offset
+                } else {
+                    let (cnt,): (i64,) =
+                        sqlx::query_as("SELECT COUNT(*) FROM playback_history WHERE username = $1")
+                            .bind(username)
+                            .fetch_one(&self.pool)
+                            .await?;
+                    cnt
+                };
+
+                Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
+            },
         )
-        .bind(username)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let total = if (rows.len() as i64) < limit {
-            rows.len() as i64 + offset
-        } else {
-            let (cnt,): (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM playback_history WHERE username = $1")
-                    .bind(username)
-                    .fetch_one(&self.pool)
-                    .await?;
-            cnt
-        };
-
-        Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
+        .await
     }
 
     /// 插入或更新播放进度记录（upsert）。
@@ -146,19 +156,22 @@ impl PlaybackRepository {
         position_ms: i64,
         duration_ms: i64,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO playback_history (username, video_id, position_ms, duration_ms, updated_at) \
-             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP) \
-             ON CONFLICT (username, video_id) DO UPDATE SET \
-             position_ms = $3, duration_ms = $4, updated_at = CURRENT_TIMESTAMP"
-        )
-        .bind(username)
-        .bind(video_id)
-        .bind(position_ms)
-        .bind(duration_ms)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        log_slow_query("playback_repo::upsert_playback", || async {
+            sqlx::query(
+                "INSERT INTO playback_history (username, video_id, position_ms, duration_ms, updated_at) \
+                 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP) \
+                 ON CONFLICT (username, video_id) DO UPDATE SET \
+                 position_ms = $3, duration_ms = $4, updated_at = CURRENT_TIMESTAMP"
+            )
+            .bind(username)
+            .bind(video_id)
+            .bind(position_ms)
+            .bind(duration_ms)
+            .execute(&self.pool)
+            .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 统计指定用户观看过的视频数量。
@@ -205,14 +218,17 @@ impl PlaybackRepository {
     /// # 返回
     /// 已点赞返回 `true`，否则返回 `false`。
     pub async fn is_liked(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM user_likes WHERE username = $1 AND video_id = $2)",
-        )
-        .bind(username)
-        .bind(video_id)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(exists)
+        log_slow_query("playback_repo::is_liked", || async {
+            let (exists,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM user_likes WHERE username = $1 AND video_id = $2)",
+            )
+            .bind(username)
+            .bind(video_id)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok(exists)
+        })
+        .await
     }
 
     /// 切换用户对指定视频的点赞状态。
@@ -276,14 +292,17 @@ impl PlaybackRepository {
     /// # 返回
     /// 已收藏返回 `true`，否则返回 `false`。
     pub async fn is_favorited(&self, username: &str, video_id: i64) -> Result<bool, sqlx::Error> {
-        let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM user_favorites WHERE username = $1 AND video_id = $2)",
-        )
-        .bind(username)
-        .bind(video_id)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(exists)
+        log_slow_query("playback_repo::is_favorited", || async {
+            let (exists,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM user_favorites WHERE username = $1 AND video_id = $2)",
+            )
+            .bind(username)
+            .bind(video_id)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok(exists)
+        })
+        .await
     }
 
     /// 切换用户对指定视频的收藏状态。
@@ -369,28 +388,31 @@ impl PlaybackRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::playback::RecentWatchItem>, i64), sqlx::Error> {
-        let (total,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM user_favorites WHERE username = $1")
-                .bind(username)
-                .fetch_one(&self.pool)
-                .await?;
+        log_slow_query("playback_repo::find_favorites_by_username", || async {
+            let (total,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM user_favorites WHERE username = $1")
+                    .bind(username)
+                    .fetch_one(&self.pool)
+                    .await?;
 
-        let rows = sqlx::query_as::<_, HistoryRow>(
-            r#"SELECT f.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
-                      COALESCE(h.position_ms, 0) AS position_ms, COALESCE(h.duration_ms, 0) AS duration_ms,
-                      f.created_at::timestamptz AS updated_at
-               FROM user_favorites f
-               JOIN videos v ON f.video_id = v.id
-               LEFT JOIN playback_history h ON f.video_id = h.video_id AND h.username = f.username
-               WHERE f.username = $1
-               ORDER BY f.created_at DESC
-               LIMIT $2 OFFSET $3"#,
-        )
-        .bind(username)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
+            let rows = sqlx::query_as::<_, HistoryRow>(
+                r#"SELECT f.video_id, v.title, v.cover_url, v.stream_url, v.source_type, v.category,
+                          COALESCE(h.position_ms, 0) AS position_ms, COALESCE(h.duration_ms, 0) AS duration_ms,
+                          f.created_at::timestamptz AS updated_at
+                   FROM user_favorites f
+                   JOIN videos v ON f.video_id = v.id
+                   LEFT JOIN playback_history h ON f.video_id = h.video_id AND h.username = f.username
+                   WHERE f.username = $1
+                   ORDER BY f.created_at DESC
+                   LIMIT $2 OFFSET $3"#,
+            )
+            .bind(username)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
+            Ok((rows.into_iter().map(RecentWatchItem::from).collect(), total))
+        })
+        .await
     }
 }

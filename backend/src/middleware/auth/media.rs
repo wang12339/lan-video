@@ -63,11 +63,11 @@ fn chat_media_ref_cache() -> &'static Cache<String, bool> {
 /// 让多实例部署下其他进程的缓存也失效。Redis 不可用时静默降级。
 pub async fn invalidate_media_auth_token(state: &AppState, token: &str) {
     media_auth_cache().invalidate(token);
-    let Some(conn) = state.redis.as_ref() else {
+    let Some(conn) = state.redis.resolve() else {
         return;
     };
     let key = format!("media:auth:{}", token);
-    let mut conn = conn.clone();
+    let mut conn = conn.as_ref().clone();
     let _ = redis::cmd("DEL")
         .arg(&key)
         .query_async::<()>(&mut conn)
@@ -82,11 +82,11 @@ pub async fn invalidate_media_auth_token(state: &AppState, token: &str) {
 /// moka 无法按 user 反向枚举，无 Redis 时仅靠 10 秒 TTL 兜底（与
 /// `TOKEN_CACHE` 的 TTL 有界吊销策略一致）。
 pub async fn invalidate_media_auth_user(state: &AppState, user_id: i64) {
-    let Some(conn) = state.redis.as_ref() else {
+    let Some(conn) = state.redis.resolve() else {
         return;
     };
     let set_key = format!("media:auth:user:{}", user_id);
-    let mut conn = conn.clone();
+    let mut conn = conn.as_ref().clone();
     let members: Vec<String> = redis::cmd("SMEMBERS")
         .arg(&set_key)
         .query_async(&mut conn)
@@ -105,9 +105,9 @@ pub async fn invalidate_media_auth_user(state: &AppState, user_id: i64) {
 /// 从共享 Redis 读取 media 鉴权缓存（未配置 Redis 或读取失败则视为 miss）。
 /// 缓存值格式：`{user_id}|{is_admin}|{username}`（username 不含 `|`）。
 async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Option<CachedAuthUser> {
-    let conn = state.redis.as_ref()?;
+    let conn = state.redis.resolve()?;
     let key = format!("media:auth:{}", token);
-    let mut conn = conn.clone();
+    let mut conn = conn.as_ref().clone();
     let val: Option<String> = redis::cmd("GET")
         .arg(&key)
         .query_async(&mut conn)
@@ -126,7 +126,7 @@ async fn media_auth_cache_get_redis(state: &Arc<AppState>, token: &str) -> Optio
 }
 
 async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &CachedAuthUser) {
-    let Some(conn) = state.redis.as_ref() else {
+    let Some(conn) = state.redis.resolve() else {
         return;
     };
     let key = format!("media:auth:{}", token);
@@ -139,7 +139,7 @@ async fn media_auth_cache_put_redis(state: &Arc<AppState>, token: &str, user: &C
     // 同时登记 user → tokens 集合，供按用户批量吊销（invalidate_media_auth_user）
     // 使用；EXPIRE 随每次写入续期，用户持续活跃期间集合不会提前过期。
     let set_key = format!("media:auth:user:{}", user.user_id);
-    let mut conn = conn.clone();
+    let mut conn = conn.as_ref().clone();
     let mut pipe = redis::pipe();
     pipe.cmd("SETEX")
         .arg(&key)
@@ -251,8 +251,10 @@ pub async fn media_auth(req: Request, next: Next) -> Response {
                     // 复用 60s 的视频详情缓存吸收 <video> Range 请求风暴，
                     // 避免每个分片请求都打一次归属查询。
                     if let Some(cached) = state.video_detail_cache.get(&id) {
+                        state.metrics.record_cache_lookup("video_detail", true);
                         Some(cached)
                     } else {
+                        state.metrics.record_cache_lookup("video_detail", false);
                         match state.repos.video.find_by_id(id).await {
                             Ok(Some(video)) => {
                                 let item = crate::models::video::VideoItem::from(video);

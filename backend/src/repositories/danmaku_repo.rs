@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sqlx::PgPool;
 
 use crate::models::danmaku::{DanmakuItemResponse, SendDanmakuRequest};
@@ -32,24 +33,27 @@ impl DanmakuRepository {
         &self,
         video_id: i64,
     ) -> Result<Vec<DanmakuItemResponse>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, DanmakuRow>(
-            "SELECT id, video_id, user_id, text, \"time\", color, font_size, created_at \
-             FROM danmaku WHERE video_id = $1 ORDER BY \"time\" ASC, id ASC",
-        )
-        .bind(video_id)
-        .fetch_all(&self.pool)
-        .await?;
+        log_slow_query("danmaku_repo::list_by_video", || async {
+            let rows = sqlx::query_as::<_, DanmakuRow>(
+                "SELECT id, video_id, user_id, text, \"time\", color, font_size, created_at \
+                 FROM danmaku WHERE video_id = $1 ORDER BY \"time\" ASC, id ASC",
+            )
+            .bind(video_id)
+            .fetch_all(&self.pool)
+            .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| DanmakuItemResponse {
-                id: hashid::encode_id(r.id),
-                text: r.text,
-                time: r.time,
-                color: r.color,
-                font_size: r.font_size,
-            })
-            .collect())
+            Ok(rows
+                .into_iter()
+                .map(|r| DanmakuItemResponse {
+                    id: hashid::encode_id(r.id),
+                    text: r.text,
+                    time: r.time,
+                    color: r.color,
+                    font_size: r.font_size,
+                })
+                .collect())
+        })
+        .await
     }
 
     /// 创建一条弹幕，返回新记录的自增 ID

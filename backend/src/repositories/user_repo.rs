@@ -362,7 +362,13 @@ impl UserRepository {
             return Ok(None);
         }
         if let Some(user) = token_cache().get(token) {
+            if let Some(m) = crate::metrics::global() {
+                m.record_cache_lookup("auth_token", true);
+            }
             return Ok(Some(user));
+        }
+        if let Some(m) = crate::metrics::global() {
+            m.record_cache_lookup("auth_token", false);
         }
         use sha2::{Digest, Sha256};
         let token_hash = hex::encode(Sha256::digest(token.as_bytes()));

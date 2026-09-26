@@ -136,6 +136,19 @@ impl VideoService {
         Ok(row.map(VideoItem::from))
     }
 
+    /// Fetch a video row, for callers that need the raw `uploader_id` rather
+    /// than the API-shaped [`VideoItem`].
+    ///
+    /// Exists so ownership checks (playback session start, danmaku insertion) go
+    /// through the service layer instead of holding a `VideoRepository` handle
+    /// in the handler.
+    pub async fn find_row(
+        &self,
+        id: i64,
+    ) -> Result<Option<crate::repositories::video_repo::VideoRow>, ServiceError> {
+        Ok(self.repo.find_by_id(id).await?)
+    }
+
     /// 阅后即焚（平台全局行为）：任何用户完整观看后，永久删除该视频。
     ///
     /// # 触发条件

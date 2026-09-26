@@ -118,8 +118,12 @@ pub fn test_state(public_url: &str) -> Arc<AppState> {
         ),
         email: EmailService::new(config.clone()),
         tag: TagService::new(repos.tag.clone(), repos.video.clone()),
-        search: SearchService::new(repos.video.clone()),
-        recommendation: RecommendationService::new(repos.video.clone()),
+        search: SearchService::new(crate::repositories::search_repo::SearchRepository::new(
+            pool.clone(),
+        )),
+        recommendation: RecommendationService::new(
+            crate::repositories::recommendation_repo::RecommendationRepository::new(pool.clone()),
+        ),
         comment: CommentService::new(repos.comment.clone(), repos.video.clone()),
         share: ShareService::new(repos.share.clone()),
         admin: AdminService::new(repos.user.clone()),
@@ -137,7 +141,7 @@ pub fn test_state(public_url: &str) -> Arc<AppState> {
         playback_sessions: Arc::new(PlaybackSessionTracker::new()),
         chat_hub: Arc::new(crate::state::ChatHub::new()),
         metrics: Metrics::new(),
-        redis: None,
+        redis: crate::services::redis::SharedRedis::disabled(),
         transcoder: transcoder.clone(),
         task_queue: TaskQueue::new(transcoder, pool, config.media_root.clone()),
     })

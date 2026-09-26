@@ -748,6 +748,7 @@ pub async fn delete_video(
     state.invalidate_caches();
     match state.services.video.delete_video(id).await {
         Ok(true) => {
+            state.metrics.record_video_delete();
             tracing::info!(video_id = id, "admin deleted video");
             Ok(Json(OkResponse {
                 ok: true,

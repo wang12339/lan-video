@@ -254,7 +254,7 @@ pub async fn start_playback_session(
     // 访客模式/私有化：只能播放自己上传的视频（管理员豁免）。
     // 未注册/已删除/他人视频一律不建会话 —— 跨用户访问的
     // 合法通道只有分享链接(cookie)。
-    match state.repos.video.find_by_id(payload.video_id).await {
+    match state.services.video.find_row(payload.video_id).await {
         Ok(Some(v)) => {
             if !auth_user.is_admin && v.uploader_id != Some(auth_user.id) {
                 return Err(error_response(StatusCode::NOT_FOUND, "视频不存在"));

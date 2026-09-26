@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sqlx::PgPool;
 
 /// 数据库中单条评论的行映射，包含发布者用户名和头像。
@@ -93,19 +94,22 @@ impl CommentRepository {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<CommentRow>, sqlx::Error> {
-        sqlx::query_as::<_, CommentRow>(
-            r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
-                      c.content, c.parent_id, c.created_at
-               FROM comments c
-               JOIN users u ON c.user_id = u.id
-               WHERE c.video_id = $1 AND c.parent_id IS NULL
-               ORDER BY c.id DESC
-               LIMIT $2 OFFSET $3"#,
-        )
-        .bind(video_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
+        log_slow_query("comment_repo::get_comments", || async {
+            sqlx::query_as::<_, CommentRow>(
+                r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
+                          c.content, c.parent_id, c.created_at
+                   FROM comments c
+                   JOIN users u ON c.user_id = u.id
+                   WHERE c.video_id = $1 AND c.parent_id IS NULL
+                   ORDER BY c.id DESC
+                   LIMIT $2 OFFSET $3"#,
+            )
+            .bind(video_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
@@ -124,18 +128,21 @@ impl CommentRepository {
         parent_id: i64,
         limit: i64,
     ) -> Result<Vec<CommentRow>, sqlx::Error> {
-        sqlx::query_as::<_, CommentRow>(
-            r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
-                      c.content, c.parent_id, c.created_at
-               FROM comments c
-               JOIN users u ON c.user_id = u.id
-               WHERE c.parent_id = $1
-               ORDER BY c.created_at ASC, c.id ASC
-               LIMIT $2"#,
-        )
-        .bind(parent_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
+        log_slow_query("comment_repo::get_replies", || async {
+            sqlx::query_as::<_, CommentRow>(
+                r#"SELECT c.id, c.video_id, c.user_id, u.username, u.avatar_url,
+                          c.content, c.parent_id, c.created_at
+                   FROM comments c
+                   JOIN users u ON c.user_id = u.id
+                   WHERE c.parent_id = $1
+                   ORDER BY c.created_at ASC, c.id ASC
+                   LIMIT $2"#,
+            )
+            .bind(parent_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
@@ -149,13 +156,16 @@ impl CommentRepository {
     /// # 返回
     /// 顶层评论数量。
     pub async fn count_comments(&self, video_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM comments WHERE video_id = $1 AND parent_id IS NULL",
-        )
-        .bind(video_id)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(count)
+        log_slow_query("comment_repo::count_comments", || async {
+            let (count,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM comments WHERE video_id = $1 AND parent_id IS NULL",
+            )
+            .bind(video_id)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok(count)
+        })
+        .await
     }
 
     /// 删除自己的评论（普通用户权限）。

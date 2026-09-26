@@ -1,7 +1,7 @@
 use crate::config::AppConfig;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::models::auth::{AuthRequest, AuthResponse, UserInfoResponse, UserProfileResponse};
-use crate::repositories::user_repo::UserRepository;
+use crate::repositories::user_repo::{UserRepository, UserRow};
 use crate::services::email_service::EmailService;
 use crate::services::playback_service::PlaybackService;
 use crate::util::db_error;
@@ -774,6 +774,61 @@ impl AuthService {
             .await?;
         self.check_username_rate_limit(username, client_ip, action)
             .await
+    }
+
+    // ── 用户查询 / 账户维护 ────────────────────────────────────────
+    //
+    // Thin repository pass-throughs. They exist so handlers can go through the
+    // service layer instead of reaching into `state.repos.user` directly: the
+    // handlers used to hold a `UserRepository` handle, which let a query bypass
+    // whatever policy this service grows later (caching, audit logging,
+    // redaction) without anyone noticing the gap.
+
+    /// Resolve a bearer/cookie token to its user.
+    ///
+    /// Returns `None` for malformed, unknown, expired or revoked tokens, and
+    /// also for database errors — callers treat an unresolvable token as
+    /// "anonymous", which is the safe direction.
+    pub async fn user_for_token(&self, token: &str) -> Option<UserRow> {
+        self.user_repo
+            .find_user_by_token(token)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Look up a user by email address (used by the verification-resend flow).
+    pub async fn user_by_email(&self, email: &str) -> Option<UserRow> {
+        self.user_repo.find_by_email(email).await.ok().flatten()
+    }
+
+    /// Flip a user's `email_verified` flag. `false` means there was no such user.
+    pub async fn mark_email_verified(&self, user_id: i64) -> Result<bool, ServiceError> {
+        self.user_repo
+            .verify_email(user_id)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("邮箱验证失败: {}", e)))
+    }
+
+    /// Email addresses of every admin, for pending-registration notices.
+    pub async fn admin_emails(&self) -> Result<Vec<String>, ServiceError> {
+        self.user_repo
+            .list_admin_emails()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("读取管理员邮箱失败: {}", e)))
+    }
+
+    /// Fold a guest shadow account's content into the real account, then drop
+    /// the shadow row. Returns the number of merged items.
+    pub async fn merge_guest_into(
+        &self,
+        guest_id: i64,
+        real_user_id: i64,
+    ) -> Result<u64, ServiceError> {
+        self.user_repo
+            .merge_guest_into_user(guest_id, real_user_id)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("访客内容合并失败: {}", e)))
     }
 }
 

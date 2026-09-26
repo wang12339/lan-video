@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sqlx::PgPool;
 
 use crate::models::chat::{ChatMessageRow, NewChatMessage};
@@ -47,15 +48,18 @@ impl ChatRepository {
         before_id: Option<i64>,
         limit: i64,
     ) -> Result<Vec<ChatMessageRow>, sqlx::Error> {
-        let limit = limit.clamp(1, 100);
-        sqlx::query_as::<_, ChatMessageRow>(
-            "SELECT id, user_id, username, content, msg_type, image_url, video_url, created_at FROM chat_messages \
-             WHERE ($1::bigint IS NULL OR id < $1) \
-             ORDER BY id DESC LIMIT $2",
-        )
-        .bind(before_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
+        log_slow_query("chat_repo::list_paged", || async {
+            let limit = limit.clamp(1, 100);
+            sqlx::query_as::<_, ChatMessageRow>(
+                "SELECT id, user_id, username, content, msg_type, image_url, video_url, created_at FROM chat_messages \
+                 WHERE ($1::bigint IS NULL OR id < $1) \
+                 ORDER BY id DESC LIMIT $2",
+            )
+            .bind(before_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
@@ -76,13 +80,16 @@ impl ChatRepository {
     /// media_auth 收紧 `/media/chat/*` 时使用：仅当文件被消息引用才放行，
     /// 防止登录用户遍历/读取上传目录中未被引用的孤儿文件。
     pub async fn media_is_referenced(&self, path: &str) -> Result<bool, sqlx::Error> {
-        let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE image_url = $1 OR video_url = $1)",
-        )
-        .bind(path)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(exists)
+        log_slow_query("chat_repo::media_is_referenced", || async {
+            let (exists,): (bool,) = sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE image_url = $1 OR video_url = $1)",
+            )
+            .bind(path)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok(exists)
+        })
+        .await
     }
 
     /// 消息总数（管理后台统计用）。
