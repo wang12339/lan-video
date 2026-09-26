@@ -394,20 +394,34 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # The server pulls the image on the runner first, then the action streams
+      # it over SSH (`docker save | ssh docker load`).
+      #
+      # Why not let the server `docker pull` from GHCR? Because the server is in
+      # mainland China and ghcr.io is not: a 550 MB pull reliably dies partway
+      # through and then *hangs* — measured 164 MB downloaded, 0 bytes over the
+      # following 60 s, no retry. `command_timeout` cannot fix a stalled
+      # connection, and a partially pulled layer is not resumable, so every retry
+      # restarts from zero. SSH to the server is reliable (same path used for
+      # the script itself), so shipping the image over it is the robust option.
+      - name: Pull image on runner
+        run: docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main"
+
       - name: Deploy to server
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Ship the image to the server over the same SSH channel. The tag is
+          # preserved remotely, so `docker compose` resolves it unchanged.
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
           # Without this the remote script's output is discarded, so a failed
-          # deploy reports only "exit code 1" with no way to tell a failed pull
-          # from a failed health check.
+          # deploy reports only "exit code 1" with no way to tell a failed
+          # transfer from a failed health check.
           capture_stdout: true
-          # Default is 10m, which is not enough: pulling a ~550 MB image (ffmpeg
-          # + the release binary) from GHCR to the server plus decompressing it
-          # already consumed most of that, and the action then killed the script
-          # mid-deploy. 30m leaves room for a cold pull on a slow link.
+          # Streaming ~550 MB plus the health wait. The 10m default is not
+          # enough; 30m leaves room for a slow link.
           command_timeout: 30m
           script: |
             set -eu
@@ -427,10 +441,11 @@ jobs:
               docker tag "$PREVIOUS_IMAGE" "$IMAGE_REF:previous" || true
             fi
 
-            # 拉取 CI 刚推送的镜像；不再 `compose down`，缩短停机窗口
-            step "拉取 $IMAGE_REF:main"
-            docker pull "$IMAGE_REF:main"
-            step "拉取完成: $(docker image inspect "$IMAGE_REF:main" --format '{{.Id}}')"
+            # 镜像已由 action 的 `image:` 输入经 SSH 传入（服务器直连 ghcr.io
+            # 会卡死，见上方注释），这里只确认它确实落地且 tag 正确。
+            step "校验已传入的镜像 $IMAGE_REF:main"
+            docker image inspect "$IMAGE_REF:main" >/dev/null
+            step "镜像 ID: $(docker image inspect "$IMAGE_REF:main" --format '{{.Id}}')"
 
             # Dockerfile / compose 已配置 HEALTHCHECK，--wait 会等待容器健康；
             # 若服务器 Compose 版本过旧不支持 --wait，则退回 `up -d`，
