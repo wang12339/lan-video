@@ -115,6 +115,10 @@ jobs:
         working-directory: ./backend
         env:
           DATABASE_URL: postgres://atmos_video:atmos_video@localhost:5432/atmos_video
+          # `cargo llvm-cov` re-runs the whole suite, so it needs the same
+          # services as the test step above — otherwise the Redis tests panic
+          # under CI=true instead of silently skipping.
+          REDIS_URL: redis://127.0.0.1:6379
         run: cargo llvm-cov --locked --lcov --output-path lcov.info -- --test-threads=1
 
       - name: Upload coverage to Codecov
