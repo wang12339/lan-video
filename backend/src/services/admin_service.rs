@@ -34,6 +34,17 @@ impl AdminService {
         Self { user_repo }
     }
 
+    /// Total number of user accounts.
+    ///
+    /// Used by the health check as a cheap "is the database actually answering
+    /// queries?" probe, and by the admin dashboard.
+    pub async fn count_users(&self) -> Result<i64, ServiceError> {
+        self.user_repo
+            .count_users()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("统计用户数失败: {}", e)))
+    }
+
     /// Lists all users.
     ///
     /// Returns each user together with their online/offline status.

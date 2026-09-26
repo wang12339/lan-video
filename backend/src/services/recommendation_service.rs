@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::repositories::video_repo::VideoRepository;
+use crate::repositories::recommendation_repo::{RecommendationRepository, RecommendationRow};
 use crate::util::error::ServiceError;
 
 const MAX_RECOMMENDATION_LIMIT: i64 = 50;
@@ -15,33 +15,18 @@ pub struct VideoRecommendation {
     pub reason: &'static str,
 }
 
-#[derive(sqlx::FromRow)]
-struct RecommendationRow {
-    id: i64,
-    title: String,
-    category: Option<String>,
-    thumb_url: Option<String>,
-}
-
-#[derive(sqlx::FromRow)]
-struct TrendingRow {
-    id: i64,
-    title: String,
-    category: Option<String>,
-    thumb_url: Option<String>,
-    trending_score: f64,
-}
-
 #[derive(Debug, Clone)]
 pub struct RecommendationService {
-    video_repo: VideoRepository,
+    repo: RecommendationRepository,
 }
 
 impl RecommendationService {
-    pub fn new(video_repo: VideoRepository) -> Self {
-        Self { video_repo }
+    pub fn new(repo: RecommendationRepository) -> Self {
+        Self { repo }
     }
 
+    /// Personalised recommendations: prefer what the user has watched, then top
+    /// up with popular content, and never return an empty feed.
     pub async fn get_recommendations(
         &self,
         username: &str,
@@ -50,153 +35,92 @@ impl RecommendationService {
         limit: i64,
     ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let limit = limit.clamp(1, MAX_RECOMMENDATION_LIMIT);
-        let pool = self.video_repo.pool();
 
-        // Get user's watched categories (non-NULL only — NULL categories would
-        // match nothing in `v.category = ANY($2)` and desync the SQL ORDER BY
-        // from the Rust-side score computation).
-        let watched_categories = sqlx::query_scalar::<_, Option<String>>(
-            r#"
-            SELECT DISTINCT v.category
-            FROM videos v
-            INNER JOIN playback_history ph ON v.id = ph.video_id
-            WHERE ph.username = $1 AND ph.video_id != $2 AND v.category IS NOT NULL
-              AND ($3::bigint IS NULL OR v.uploader_id = $3)
-            LIMIT 10
-            "#,
-        )
-        .bind(username)
-        .bind(exclude_video_id)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取观看历史失败: {}", e)))?;
+        // NULL categories are dropped: `category = ANY($2)` never matches NULL,
+        // so keeping them would desync the SQL ordering from the scoring below.
+        let watched_categories: Vec<String> = self
+            .repo
+            .watched_categories(username, exclude_video_id, owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取观看历史失败: {}", e)))?
+            .into_iter()
+            .flatten()
+            .collect();
 
-        let watched_categories: Vec<String> = watched_categories.into_iter().flatten().collect();
-
+        // Cold start (nothing watched): there is no signal to personalise on.
         if watched_categories.is_empty() {
             let (items, _) = self.get_trending_videos(owner_id, 0, limit).await?;
             return Ok(items);
         }
 
-        // Get recommendations based on watched categories.
-        // Videos the user has already watched are excluded to avoid
-        // re-recommending consumed content.
-        //
-        // Two-phase fetch so the planner never has to sort the whole table
-        // (the old single query's ORDER BY was a non-sargable CASE expression,
-        // forcing a Seq Scan + top-N heapsort of every video):
-        //   1. Preferred-category videos first, most-viewed first — the
-        //      `category = ANY($2)` filter is selective and hits
-        //      idx_videos_category_views_id (BitmapOr per category branch).
-        //   2. Top up with the hottest remaining videos (views DESC) using
-        //      idx_videos_views_id when the preferred batch is too small.
-        //
-        // Ordering semantics are preserved: preferred videos always outrank
-        // the rest (their score is at least 2.0, everything else at most 1.5),
-        // and popularity within each group tracks views.
-        let preferred_rows = sqlx::query_as::<_, RecommendationRow>(
-            r#"
-            SELECT
-                v.id,
-                v.title,
-                v.category,
-                v.thumb_url
-            FROM videos v
-            WHERE v.id != $1
-              AND ($5::bigint IS NULL OR v.uploader_id = $5)
-              AND v.category = ANY($2)
-              AND v.source_type = 'local_video'
-              AND NOT EXISTS (
-                  SELECT 1 FROM playback_history ph
-                  WHERE ph.username = $3 AND ph.video_id = v.id
-              )
-            ORDER BY v.views DESC, v.id DESC
-            LIMIT $4
-            "#,
-        )
-        .bind(exclude_video_id)
-        .bind(&watched_categories)
-        .bind(username)
-        .bind(limit)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
+        let preferred_rows = self
+            .repo
+            .preferred_videos(
+                exclude_video_id,
+                &watched_categories,
+                username,
+                limit,
+                owner_id,
+            )
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
 
-        // Cold/edge case: user has watched everything in their categories.
-        // Fall back to trending so the feed is never empty.
+        // The user has watched everything in their categories: fall back to
+        // trending so the feed is never empty.
         if preferred_rows.is_empty() {
             let (items, _) = self.get_trending_videos(owner_id, 0, limit).await?;
             return Ok(items);
         }
 
         let preferred_ids: Vec<i64> = preferred_rows.iter().map(|r| r.id).collect();
-
         let mut rows: Vec<RecommendationRow> = preferred_rows;
         let remaining = limit - rows.len() as i64;
         if remaining > 0 {
-            let fill_rows = sqlx::query_as::<_, RecommendationRow>(
-                r#"
-                SELECT
-                    v.id,
-                    v.title,
-                    v.category,
-                    v.thumb_url
-                FROM videos v
-                WHERE v.id != $1
-                  AND ($6::bigint IS NULL OR v.uploader_id = $6)
-                  AND NOT (v.category = ANY($2))
-                  AND NOT (v.id = ANY($3))
-                  AND v.source_type = 'local_video'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM playback_history ph
-                      WHERE ph.username = $4 AND ph.video_id = v.id
-                  )
-                ORDER BY v.views DESC, v.id DESC
-                LIMIT $5
-                "#,
-            )
-            .bind(exclude_video_id)
-            .bind(&watched_categories)
-            .bind(&preferred_ids)
-            .bind(username)
-            .bind(remaining)
-            .bind(owner_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
+            let fill_rows = self
+                .repo
+                .fill_videos(
+                    exclude_video_id,
+                    &watched_categories,
+                    &preferred_ids,
+                    username,
+                    remaining,
+                    owner_id,
+                )
+                .await
+                .map_err(|e| ServiceError::internal(format!("获取推荐视频失败: {}", e)))?;
             rows.extend(fill_rows);
         }
 
-        let recommendations = rows
+        // Ordering semantics: preferred videos always outrank the rest (2.0 vs
+        // 1.0), and popularity within each group already tracks views because
+        // both queries sort by `views DESC, id DESC`.
+        Ok(rows
             .into_iter()
             .map(|r| {
                 let is_preferred = r
                     .category
                     .as_ref()
                     .is_some_and(|c| watched_categories.contains(c));
-                let category_score = if is_preferred { 2.0 } else { 1.0 };
-                let reason = if is_preferred {
-                    "基于你的观看偏好"
-                } else {
-                    "热门推荐"
-                };
-
                 VideoRecommendation {
                     id: r.id,
                     title: r.title,
                     category: r.category,
                     thumb_url: r.thumb_url,
-                    score: category_score * 1.0,
-                    reason,
+                    score: if is_preferred { 2.0 } else { 1.0 },
+                    reason: if is_preferred {
+                        "基于你的观看偏好"
+                    } else {
+                        "热门推荐"
+                    },
                 }
             })
-            .collect();
-
-        Ok(recommendations)
+            .collect())
     }
 
+    /// Other videos in the same category as `video_id`.
+    ///
+    /// A video without a category degrades to "most popular other videos"
+    /// rather than returning nothing.
     pub async fn get_similar_videos(
         &self,
         owner_id: Option<i64>,
@@ -204,37 +128,21 @@ impl RecommendationService {
         limit: i64,
     ) -> Result<Vec<VideoRecommendation>, ServiceError> {
         let limit = limit.clamp(1, MAX_RECOMMENDATION_LIMIT);
-        let pool = self.video_repo.pool();
 
-        let video =
-            sqlx::query_scalar::<_, Option<String>>("SELECT category FROM videos WHERE id = $1")
-                .bind(video_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| ServiceError::internal(format!("获取视频信息失败: {}", e)))?
-                .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
+        let category = self
+            .repo
+            .video_category(video_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取视频信息失败: {}", e)))?
+            .ok_or_else(|| ServiceError::NotFound("视频不存在".into()))?;
 
-        let category = video;
+        let rows = self
+            .repo
+            .similar_videos(video_id, category.as_deref(), limit, owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取相似视频失败: {}", e)))?;
 
-        let rows = sqlx::query_as::<_, RecommendationRow>(
-            r#"
-            SELECT id, title, category, thumb_url
-            FROM videos
-            WHERE id != $1 AND ($4::bigint IS NULL OR uploader_id = $4)
-              AND ($2::varchar IS NULL OR category = $2)
-            ORDER BY views DESC
-            LIMIT $3
-            "#,
-        )
-        .bind(video_id)
-        .bind(&category)
-        .bind(limit)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取相似视频失败: {}", e)))?;
-
-        let recommendations = rows
+        Ok(rows
             .into_iter()
             .map(|r| VideoRecommendation {
                 id: r.id,
@@ -244,9 +152,7 @@ impl RecommendationService {
                 score: if category.is_some() { 1.5 } else { 1.0 },
                 reason: "相似视频",
             })
-            .collect();
-
-        Ok(recommendations)
+            .collect())
     }
 
     pub async fn get_trending_videos(
@@ -256,33 +162,18 @@ impl RecommendationService {
         limit: i64,
     ) -> Result<(Vec<VideoRecommendation>, i64), ServiceError> {
         let limit = limit.clamp(1, MAX_RECOMMENDATION_LIMIT);
-        let pool = self.video_repo.pool();
 
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM videos WHERE ($1::bigint IS NULL OR uploader_id = $1) AND trending_score > 0 AND source_type = 'local_video'",
-        )
-        .bind(owner_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取热门视频总数失败: {}", e)))?;
+        let total = self
+            .repo
+            .trending_count(owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取热门视频总数失败: {}", e)))?;
 
-        let rows = sqlx::query_as::<_, TrendingRow>(
-            r#"
-            SELECT id, title, category, thumb_url, trending_score
-            FROM videos
-            WHERE ($3::bigint IS NULL OR uploader_id = $3)
-              AND trending_score > 0
-              AND source_type = 'local_video'
-            ORDER BY trending_score DESC
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取热门视频失败: {}", e)))?;
+        let rows = self
+            .repo
+            .trending_videos(limit, offset, owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取热门视频失败: {}", e)))?;
 
         let recommendations = rows
             .into_iter()
@@ -306,31 +197,18 @@ impl RecommendationService {
         limit: i64,
     ) -> Result<(Vec<VideoRecommendation>, i64), ServiceError> {
         let limit = limit.clamp(1, MAX_RECOMMENDATION_LIMIT);
-        let pool = self.video_repo.pool();
 
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM videos WHERE ($1::bigint IS NULL OR uploader_id = $1) AND source_type = 'local_video'",
-        )
-        .bind(owner_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取最新视频总数失败: {}", e)))?;
+        let total = self
+            .repo
+            .recent_count(owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取最新视频总数失败: {}", e)))?;
 
-        let rows = sqlx::query_as::<_, RecommendationRow>(
-            r#"
-            SELECT id, title, category, thumb_url
-            FROM videos
-            WHERE ($3::bigint IS NULL OR uploader_id = $3) AND source_type = 'local_video'
-            ORDER BY created_at DESC
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::internal(format!("获取最新视频失败: {}", e)))?;
+        let rows = self
+            .repo
+            .recent_videos(limit, offset, owner_id)
+            .await
+            .map_err(|e| ServiceError::internal(format!("获取最新视频失败: {}", e)))?;
 
         let recommendations = rows
             .into_iter()

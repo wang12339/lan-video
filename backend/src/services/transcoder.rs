@@ -108,29 +108,93 @@ pub struct Transcoder {
 
 /// 进程级「HLS 转码中」集合（video_id）。同一视频的 HLS 输出目录是固定的
 /// `hls/{video_id}/`，重复请求若各起一个 ffmpeg，会并发覆盖同一目录下的
-/// 播放列表与分片；这里在入队前抢占，保证同进程内同一视频只有一个任务。
+/// 播放列表与分片。
 ///
-/// 注意：这是**进程内**去重，多实例部署时跨实例仍可能撞车；跨实例的强一致
-/// 需要分布式锁，本任务范围内以前述集合 + ffmpeg 输出覆盖语义兜底。
+/// 这一层是**进程内**的快路径：它不需要网络往返，因此单实例部署（也是默认
+/// 部署方式）零额外开销，且在 Redis 不可用时仍能保证同进程内只有一个任务。
+/// 多实例部署下由 `try_begin_hls` 额外通过 Redis 分布式锁收口，见该函数。
 static HLS_IN_FLIGHT: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
 
 fn hls_in_flight() -> &'static Mutex<HashSet<i64>> {
     HLS_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Redis 分布式锁的存活时间上限。
+///
+/// 只在实例崩溃（guard 的 `Drop` 不会执行）时才会走到 TTL 过期，因此取值
+/// 对齐 `/admin/videos/hls` 路由的 7200s 超时：正常情况下锁总是由 guard 精确
+/// 释放，TTL 只是崩溃后的兜底，不该先于正常转码结束而抢走锁。
+pub const HLS_LOCK_TTL_SECS: u64 = 7200;
+
+/// Compare-and-delete：只删除自己持有的锁。
+///
+/// 不能用裸 `DEL`：如果本实例的锁已因 TTL 过期被回收、而另一实例重新抢到了
+/// 同一把锁，无条件 `DEL` 会把别人的锁删掉。脚本保证「值仍是我的 token 才删」。
+const HLS_UNLOCK_SCRIPT: &str = r#"
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"#;
+
 /// HLS 转码占用的 RAII 标记：drop（含 panic 展开）时自动释放 video_id。
+///
+/// 持有期间：进程内集合挡住同实例的并发请求，Redis 锁挡住跨实例的并发请求。
 pub struct HlsInFlightGuard {
     video_id: i64,
+    /// Some 时表示同时持有 Redis 锁，drop 时需要按 token 精确释放。
+    redis: Option<(Arc<redis::aio::ConnectionManager>, String)>,
 }
 
 impl Drop for HlsInFlightGuard {
     fn drop(&mut self) {
-        // 锁中毒（持锁线程 panic）不应阻止释放：取回内部集合继续清理。
+        // 本地集合：锁中毒（持锁线程 panic）不应阻止释放，取回内部集合继续清理。
         let mut set = hls_in_flight()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         set.remove(&self.video_id);
+        drop(set);
+
+        // 分布式锁释放需要 await，而 `Drop` 不能 await，因此交给一个 detached
+        // 任务。锁有 7200s TTL 兜底，最坏情况只是残留一个过期键。
+        if let Some((conn, token)) = self.redis.take() {
+            let key = hls_lock_key(self.video_id);
+            let video_id = self.video_id;
+            tokio::spawn(async move {
+                let mut conn = conn.as_ref().clone();
+                let released: Result<i64, _> = redis::Script::new(HLS_UNLOCK_SCRIPT)
+                    .key(&key)
+                    .arg(&token)
+                    .invoke_async(&mut conn)
+                    .await;
+                if let Err(e) = released {
+                    tracing::warn!(
+                        video_id,
+                        error = %e,
+                        "failed to release HLS redis lock (will expire via TTL)"
+                    );
+                }
+            });
+        }
     }
+}
+
+fn hls_lock_key(video_id: i64) -> String {
+    format!("hls:transcode:{video_id}")
+}
+
+/// Unique value stored in the Redis lock, so the release script can tell "my
+/// lock" from "a lock another instance took after mine expired".
+fn new_lock_token(video_id: i64) -> String {
+    use rand::Rng;
+    let mut buf = [0u8; 8];
+    rand::thread_rng().fill(&mut buf);
+    format!(
+        "{}:{}-{}",
+        std::process::id(),
+        video_id,
+        buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 impl Transcoder {
@@ -171,14 +235,74 @@ impl Transcoder {
     /// 尝试声明开始 `video_id` 的 HLS 转码。该视频已有任务在途时返回
     /// `None`（调用方应返回 409），否则返回的 guard 持有期间其它请求都
     /// 会被拒绝，直到 guard 被 drop（任务结束或 panic）。
-    pub fn try_begin_hls(&self, video_id: i64) -> Option<HlsInFlightGuard> {
-        let mut set = hls_in_flight()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if set.insert(video_id) {
-            Some(HlsInFlightGuard { video_id })
-        } else {
-            None
+    ///
+    /// 两级去重：
+    /// 1. 进程内 `HashSet` —— 无网络开销，覆盖单实例（默认）部署与 Redis 不可用场景；
+    /// 2. Redis `SET NX EX` —— 仅在第 1 步通过后执行，覆盖多实例部署，避免
+    ///    两个实例同时向同一个 `hls/{video_id}/` 目录写 ffmpeg 输出。
+    ///
+    /// Redis 不可达时降级为仅进程内去重（多实例下可能重复转码，但不会阻塞
+    /// 请求），并记警告——宁可浪费一次 CPU，也不要因为 Redis 抖动让 HLS 不可用。
+    pub async fn try_begin_hls(
+        &self,
+        video_id: i64,
+        redis: &crate::services::redis::SharedRedis,
+    ) -> Option<HlsInFlightGuard> {
+        // Level 1: local. Cheap and authoritative for this process.
+        {
+            let mut set = hls_in_flight()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !set.insert(video_id) {
+                return None;
+            }
+        }
+
+        // Level 2: distributed. Only now do we pay for a network round trip.
+        let Some(conn) = redis.resolve() else {
+            return Some(HlsInFlightGuard {
+                video_id,
+                redis: None,
+            });
+        };
+        let token = new_lock_token(video_id);
+        let key = hls_lock_key(video_id);
+        let mut handle = conn.as_ref().clone();
+        let acquired: Result<Option<String>, _> = redis::cmd("SET")
+            .arg(&key)
+            .arg(&token)
+            .arg("NX")
+            .arg("EX")
+            .arg(HLS_LOCK_TTL_SECS)
+            .query_async(&mut handle)
+            .await;
+
+        match acquired {
+            // `SET NX` returns nil when the key already existed.
+            Ok(Some(_)) => Some(HlsInFlightGuard {
+                video_id,
+                redis: Some((conn, token)),
+            }),
+            Ok(None) => {
+                // Another instance is transcoding this video: undo the local
+                // reservation so a later retry can succeed once it finishes.
+                let mut set = hls_in_flight()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                set.remove(&video_id);
+                None
+            }
+            Err(e) => {
+                tracing::warn!(
+                    video_id,
+                    error = %e,
+                    "HLS dedup: Redis unavailable, falling back to process-local only"
+                );
+                Some(HlsInFlightGuard {
+                    video_id,
+                    redis: None,
+                })
+            }
         }
     }
 
@@ -510,40 +634,145 @@ pub struct StreamInfo {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_get_output_path() {
-        // Mock test - in real implementation, you'd need to create mock objects
-        // For now, just test the path generation logic
-        let output_dir = PathBuf::from("/tmp/media/variants");
-        let video_id = 1;
-        let resolution = "720p";
+    /// A throwaway transcoder rooted at a temp dir, for exercising the pure
+    /// path/参数 helpers that would otherwise need a real ffmpeg run.
+    fn test_transcoder() -> Transcoder {
+        let dir = std::env::temp_dir().join(format!(
+            "atmos-tx-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        Transcoder::new(&dir, TranscodeSettings::default())
+    }
 
-        let path = output_dir.join(format!("{}_{}.mp4", video_id, resolution));
-        assert!(path.to_string_lossy().contains("1_720p.mp4"));
+    /// Calls the real `get_output_path`. The previous version of this test
+    /// rebuilt the path with `format!` inside the test body and never touched
+    /// the function under test, so it could not fail.
+    #[test]
+    fn get_output_path_uses_the_variants_dir() {
+        let tx = test_transcoder();
+        let path = tx.get_output_path(42, "720p");
+        assert_eq!(
+            path,
+            tx.output_dir.join("42_720p.mp4"),
+            "variant path must be <output_dir>/<video_id>_<resolution>.mp4"
+        );
+        assert!(path.starts_with(&tx.output_dir));
+        assert!(path.to_string_lossy().ends_with(".mp4"));
     }
 
     #[test]
-    fn test_get_bitrate() {
-        // Test bitrate mapping
-        let test_cases = vec![
-            ("2160p", Some(8000)),
-            ("1080p", Some(5000)),
-            ("720p", Some(2500)),
-            ("480p", Some(1000)),
-            ("360p", Some(600)),
-            ("unknown", None),
-        ];
+    fn get_output_path_separates_videos_and_resolutions() {
+        let tx = test_transcoder();
+        let a = tx.get_output_path(1, "720p");
+        let b = tx.get_output_path(1, "1080p");
+        let c = tx.get_output_path(2, "720p");
+        assert_ne!(a, b, "different resolutions must not collide");
+        assert_ne!(a, c, "different videos must not collide");
+    }
 
-        for (resolution, expected) in test_cases {
-            let result = match resolution {
-                "2160p" => Some(8000),
-                "1080p" => Some(5000),
-                "720p" => Some(2500),
-                "480p" => Some(1000),
-                "360p" => Some(600),
-                _ => None,
-            };
-            assert_eq!(result, expected, "Failed for resolution: {}", resolution);
+    /// Calls the real `get_bitrate`. The previous version recomputed the same
+    /// `match` expression inside the test, which made it tautological.
+    #[test]
+    fn get_bitrate_matches_the_resolution_ladder() {
+        let tx = test_transcoder();
+        // (resolution, width, height, kbps) — the ladder is ordered
+        // high-to-low, and bitrate must fall monotonically with it.
+        let ladder = [
+            ("2160p", 3840, 2160, 8000i32),
+            ("1080p", 1920, 1080, 5000),
+            ("720p", 1280, 720, 2500),
+            ("480p", 854, 480, 1000),
+            ("360p", 640, 360, 600),
+        ];
+        let mut previous: Option<i32> = None;
+        for (resolution, w, h, expected_kbps) in ladder {
+            let params = resolution_params(resolution)
+                .unwrap_or_else(|| panic!("{resolution} must be a known resolution"));
+            assert_eq!(params.0, w, "{resolution} width");
+            assert_eq!(params.1, h, "{resolution} height");
+            assert_eq!(params.2 as i32, expected_kbps, "{resolution} bitrate");
+            assert_eq!(
+                tx.get_bitrate(resolution),
+                Some(expected_kbps),
+                "get_bitrate({resolution})"
+            );
+            if let Some(prev) = previous {
+                assert!(
+                    expected_kbps < prev,
+                    "bitrate must decrease down the ladder ({resolution})"
+                );
+            }
+            previous = Some(expected_kbps);
         }
+    }
+
+    #[test]
+    fn get_bitrate_rejects_unknown_resolutions() {
+        let tx = test_transcoder();
+        for bogus in [
+            "",
+            "unknown",
+            "1080",
+            "1080P", // case matters: the ladder is matched exactly
+            "720p/../",
+            "../../etc/passwd",
+            "2160p.mp4",
+        ] {
+            assert_eq!(
+                tx.get_bitrate(bogus),
+                None,
+                "{bogus:?} must not resolve to a bitrate"
+            );
+        }
+    }
+
+    /// `delete_variant` embeds `resolution` into a filesystem path, so an
+    /// unrecognised value must be a no-op rather than a traversal primitive.
+    #[tokio::test]
+    async fn delete_variant_ignores_unknown_resolutions() {
+        let tx = test_transcoder();
+        for bogus in ["../../etc/passwd", "720p/../../../../tmp/x", "", "720P"] {
+            tx.delete_variant(1, bogus)
+                .await
+                .expect("unknown resolutions must be a silent no-op");
+        }
+    }
+
+    /// The disk-quota guard: bitrate × max duration bounds the output size, and
+    /// an unknown resolution has no bound at all (so it must be rejected rather
+    /// than defaulting to "unlimited").
+    #[test]
+    fn max_variant_size_scales_with_bitrate_and_duration() {
+        let ten_minutes = 600u64;
+        let eight_mbps =
+            max_variant_size_bytes("2160p", ten_minutes).expect("2160p must have a size cap");
+        let one_mbps = max_variant_size_bytes("360p", ten_minutes).expect("360p must have a cap");
+        assert!(
+            eight_mbps > one_mbps,
+            "a higher bitrate must allow a larger file"
+        );
+        // 8000 kbps = 1_000_000 bytes/s, so 600s = 600_000_000 bytes.
+        assert_eq!(eight_mbps, 8000 * 1000 / 8 * ten_minutes);
+        // Doubling the duration doubles the cap.
+        assert_eq!(
+            max_variant_size_bytes("720p", ten_minutes * 2).unwrap(),
+            max_variant_size_bytes("720p", ten_minutes).unwrap() * 2
+        );
+        assert_eq!(max_variant_size_bytes("nope", ten_minutes), None);
+    }
+
+    #[test]
+    fn truncate_stderr_bounds_hostile_ffmpeg_output() {
+        assert_eq!(truncate_stderr("short"), "short");
+        // Multi-byte characters must not be split mid-codepoint.
+        let long_cjk = "错".repeat(1000);
+        let out = truncate_stderr(&long_cjk);
+        assert!(
+            out.chars().count() <= 512 + 40,
+            "got {}",
+            out.chars().count()
+        );
+        assert!(out.contains("more bytes not shown"));
     }
 }

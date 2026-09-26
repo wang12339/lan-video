@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -60,17 +61,20 @@ impl TagRepository {
     }
 
     pub async fn list_tags(&self, limit: i64, offset: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        sqlx::query_as::<_, Tag>(
-            r#"
-            SELECT id, name, color, usage_count
-            FROM tags
-            ORDER BY usage_count DESC, name ASC
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
+        log_slow_query("tag_repo::list_tags", || async {
+            sqlx::query_as::<_, Tag>(
+                r#"
+                SELECT id, name, color, usage_count
+                FROM tags
+                ORDER BY usage_count DESC, name ASC
+                LIMIT $1 OFFSET $2
+                "#,
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
@@ -188,48 +192,57 @@ impl TagRepository {
     }
 
     pub async fn get_video_tags(&self, video_id: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        sqlx::query_as::<_, Tag>(
-            r#"
-            SELECT t.id, t.name, t.color, t.usage_count
-            FROM tags t
-            INNER JOIN video_tags vt ON t.id = vt.tag_id
-            WHERE vt.video_id = $1
-            ORDER BY t.name ASC
-            "#,
-        )
-        .bind(video_id)
-        .fetch_all(&self.pool)
+        log_slow_query("tag_repo::get_video_tags", || async {
+            sqlx::query_as::<_, Tag>(
+                r#"
+                SELECT t.id, t.name, t.color, t.usage_count
+                FROM tags t
+                INNER JOIN video_tags vt ON t.id = vt.tag_id
+                WHERE vt.video_id = $1
+                ORDER BY t.name ASC
+                "#,
+            )
+            .bind(video_id)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
     pub async fn get_popular_tags(&self, limit: i64) -> Result<Vec<Tag>, sqlx::Error> {
-        sqlx::query_as::<_, Tag>(
-            r#"
-            SELECT id, name, color, usage_count
-            FROM tags
-            WHERE usage_count > 0
-            ORDER BY usage_count DESC
-            LIMIT $1
-            "#,
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
+        log_slow_query("tag_repo::get_popular_tags", || async {
+            sqlx::query_as::<_, Tag>(
+                r#"
+                SELECT id, name, color, usage_count
+                FROM tags
+                WHERE usage_count > 0
+                ORDER BY usage_count DESC
+                LIMIT $1
+                "#,
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 
     pub async fn find_tags_by_ids(&self, ids: &[i32]) -> Result<Vec<Tag>, sqlx::Error> {
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-        sqlx::query_as::<_, Tag>(
-            r#"
-            SELECT id, name, color, usage_count
-            FROM tags
-            WHERE id = ANY($1)
-            "#,
-        )
-        .bind(ids)
-        .fetch_all(&self.pool)
+        log_slow_query("tag_repo::find_tags_by_ids", || async {
+            if ids.is_empty() {
+                return Ok(vec![]);
+            }
+            sqlx::query_as::<_, Tag>(
+                r#"
+                SELECT id, name, color, usage_count
+                FROM tags
+                WHERE id = ANY($1)
+                "#,
+            )
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 

@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sqlx::PgPool;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -52,11 +53,14 @@ impl PlaylistRepository {
     }
 
     pub async fn get_playlist(&self, playlist_id: i64) -> Result<Option<PlaylistRow>, sqlx::Error> {
-        sqlx::query_as::<_, PlaylistRow>(
-            "SELECT id, user_id, name, description, is_public, cover_url, created_at, updated_at FROM playlists WHERE id = $1",
-        )
-        .bind(playlist_id)
-        .fetch_optional(&self.pool)
+        log_slow_query("playlist_repo::get_playlist", || async {
+            sqlx::query_as::<_, PlaylistRow>(
+                "SELECT id, user_id, name, description, is_public, cover_url, created_at, updated_at FROM playlists WHERE id = $1",
+            )
+            .bind(playlist_id)
+            .fetch_optional(&self.pool)
+            .await
+        })
         .await
     }
 
@@ -161,72 +165,81 @@ impl PlaylistRepository {
         &self,
         user_id: i64,
     ) -> Result<Vec<(PlaylistRow, i64)>, sqlx::Error> {
-        #[derive(sqlx::FromRow)]
-        struct PlaylistWithCount {
-            id: i64,
-            user_id: i64,
-            name: String,
-            description: Option<String>,
-            is_public: bool,
-            cover_url: Option<String>,
-            created_at: chrono::NaiveDateTime,
-            updated_at: chrono::NaiveDateTime,
-            item_count: i64,
-        }
+        log_slow_query("playlist_repo::list_user_playlists_with_counts", || async {
+            #[derive(sqlx::FromRow)]
+            struct PlaylistWithCount {
+                id: i64,
+                user_id: i64,
+                name: String,
+                description: Option<String>,
+                is_public: bool,
+                cover_url: Option<String>,
+                created_at: chrono::NaiveDateTime,
+                updated_at: chrono::NaiveDateTime,
+                item_count: i64,
+            }
 
-        let rows = sqlx::query_as::<_, PlaylistWithCount>(
-            r#"SELECT p.id, p.user_id, p.name, p.description, p.is_public, p.cover_url,
-                      p.created_at, p.updated_at, COALESCE(i.item_count, 0) as item_count
-               FROM playlists p
-               LEFT JOIN (SELECT playlist_id, COUNT(*) as item_count FROM playlist_items GROUP BY playlist_id) i ON i.playlist_id = p.id
-               WHERE p.user_id = $1
-               ORDER BY p.updated_at DESC"#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
+            let rows = sqlx::query_as::<_, PlaylistWithCount>(
+                r#"SELECT p.id, p.user_id, p.name, p.description, p.is_public, p.cover_url,
+                          p.created_at, p.updated_at, COALESCE(i.item_count, 0) as item_count
+                   FROM playlists p
+                   LEFT JOIN (SELECT playlist_id, COUNT(*) as item_count FROM playlist_items GROUP BY playlist_id) i ON i.playlist_id = p.id
+                   WHERE p.user_id = $1
+                   ORDER BY p.updated_at DESC"#,
+            )
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                let playlist = PlaylistRow {
-                    id: r.id,
-                    user_id: r.user_id,
-                    name: r.name,
-                    description: r.description,
-                    is_public: r.is_public,
-                    cover_url: r.cover_url,
-                    created_at: r.created_at,
-                    updated_at: r.updated_at,
-                };
-                (playlist, r.item_count)
-            })
-            .collect())
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    let playlist = PlaylistRow {
+                        id: r.id,
+                        user_id: r.user_id,
+                        name: r.name,
+                        description: r.description,
+                        is_public: r.is_public,
+                        cover_url: r.cover_url,
+                        created_at: r.created_at,
+                        updated_at: r.updated_at,
+                    };
+                    (playlist, r.item_count)
+                })
+                .collect())
+        })
+        .await
     }
 
     pub async fn count_playlist_items(&self, playlist_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM playlist_items WHERE playlist_id = $1")
-                .bind(playlist_id)
-                .fetch_one(&self.pool)
-                .await?;
-        Ok(count)
+        log_slow_query("playlist_repo::count_playlist_items", || async {
+            let (count,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM playlist_items WHERE playlist_id = $1")
+                    .bind(playlist_id)
+                    .fetch_one(&self.pool)
+                    .await?;
+            Ok(count)
+        })
+        .await
     }
 
     pub async fn list_playlist_videos(
         &self,
         playlist_id: i64,
     ) -> Result<Vec<PlaylistVideoRow>, sqlx::Error> {
-        sqlx::query_as::<_, PlaylistVideoRow>(
-            r#"SELECT v.id, v.title, v.description, v.source_type, v.cover_url, v.stream_url,
-                      v.category, v.views, v.duration
-               FROM playlist_items i
-               JOIN videos v ON i.video_id = v.id
-               WHERE i.playlist_id = $1
-               ORDER BY i.position ASC, i.added_at ASC"#,
-        )
-        .bind(playlist_id)
-        .fetch_all(&self.pool)
+        log_slow_query("playlist_repo::list_playlist_videos", || async {
+            sqlx::query_as::<_, PlaylistVideoRow>(
+                r#"SELECT v.id, v.title, v.description, v.source_type, v.cover_url, v.stream_url,
+                          v.category, v.views, v.duration
+                   FROM playlist_items i
+                   JOIN videos v ON i.video_id = v.id
+                   WHERE i.playlist_id = $1
+                   ORDER BY i.position ASC, i.added_at ASC"#,
+            )
+            .bind(playlist_id)
+            .fetch_all(&self.pool)
+            .await
+        })
         .await
     }
 

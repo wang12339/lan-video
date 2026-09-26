@@ -1,15 +1,15 @@
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use axum::{
-    extract::ConnectInfo,
     extract::Request,
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
+
+use crate::util::net::client_ip;
 
 const MAX_BYTES_PER_SEC_PER_IP: u64 = 500 * 1024 * 1024;
 const WINDOW_SECS: u64 = 1;
@@ -19,6 +19,10 @@ const NO_RANGE_CHARGE_BYTES: u64 = 512 * 1024;
 const OPEN_ENDED_RANGE_CHARGE_BYTES: u64 = 8 * 1024 * 1024;
 const MIN_RANGE_CHARGE_BYTES: u64 = 256 * 1024;
 const MAX_RANGE_CHARGE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Sentinel returned by `util::net::client_ip` when the peer address is
+/// unavailable. Requests carrying it are not charged against any bucket.
+const UNKNOWN_IP: &str = "unknown";
 
 #[derive(Clone)]
 struct Bucket {
@@ -99,13 +103,17 @@ pub async fn bandwidth_throttle(req: Request, next: Next) -> Response {
         .and_then(approx_range_bytes)
         .unwrap_or(NO_RANGE_CHARGE_BYTES);
 
-    let client_ip = req
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip().to_string())
-        .unwrap_or_default();
+    // Must go through client_ip() rather than reading ConnectInfo directly:
+    // behind a reverse proxy the peer address is the proxy's, so every client
+    // would share one bucket and the "per-IP" limit would silently degrade into
+    // a global one. client_ip() honours TRUSTED_PROXY + the peer allowlist.
+    let client_ip = client_ip(&req);
+    // client_ip() falls back to the literal "unknown" when there is no peer
+    // address at all; those requests cannot be attributed, so they are not
+    // charged (same as the previous empty-string behaviour).
+    let attributable = client_ip != UNKNOWN_IP;
 
-    if !client_ip.is_empty() && !bandwidth().check(&client_ip, approx_bytes) {
+    if attributable && !bandwidth().check(&client_ip, approx_bytes) {
         return (StatusCode::TOO_MANY_REQUESTS, "bandwidth limit exceeded").into_response();
     }
 
@@ -220,6 +228,7 @@ mod tests {
     // every test below uses a distinct TEST-NET-3 IP to keep buckets isolated.
 
     use axum::{body::Body, extract::ConnectInfo, middleware, routing::get, Router};
+    use std::net::SocketAddr;
     use tower::ServiceExt;
 
     fn bw_app() -> Router {

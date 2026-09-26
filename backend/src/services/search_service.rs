@@ -1,11 +1,10 @@
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use crate::repositories::video_repo::VideoRepository;
+use crate::repositories::search_repo::SearchRepository;
 use crate::util::error::ServiceError;
 
 /// Hard limits applied defensively inside the service; the handlers already
@@ -50,7 +49,10 @@ fn chinese_fts_cache() -> &'static RwLock<Option<bool>> {
 /// `CREATE TEXT SEARCH CONFIGURATION chinese (COPY = simple)` 建同名占位
 /// 配置，它不是原生中文分词，必须继续走 pg_trgm 回退，否则中文子串命中率
 /// 会下降。探测结果进程内缓存一次。
-async fn chinese_fulltext_enabled(pool: &PgPool) -> bool {
+///
+/// 探测失败**不写缓存**，下一次调用会重试，避免一次临时的数据库抖动把整个
+/// 进程永久固定在回退路径上。
+async fn chinese_fulltext_enabled(repo: &SearchRepository) -> bool {
     if let Some(enabled) = *chinese_fts_cache().read().await {
         return enabled;
     }
@@ -58,7 +60,7 @@ async fn chinese_fulltext_enabled(pool: &PgPool) -> bool {
     if let Some(enabled) = *guard {
         return enabled;
     }
-    match probe_chinese_fts(pool).await {
+    match repo.chinese_fts_available().await {
         Ok(enabled) => {
             *guard = Some(enabled);
             enabled
@@ -68,30 +70,6 @@ async fn chinese_fulltext_enabled(pool: &PgPool) -> bool {
             false
         }
     }
-}
-
-/// 按 `search_path` 解析 `chinese`（PostgreSQL 没有 `to_regconfig()`，只能走
-/// 目录 + `current_schemas(true)`），与运行时 `'chinese'` 的名字解析规则一致，
-/// 取第一个命中的配置；没有配置时返回 false。
-async fn probe_chinese_fts(pool: &PgPool) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT COALESCE(
-            (
-                SELECT p.prsname = 'zhparser'
-                FROM unnest(current_schemas(true)) WITH ORDINALITY AS s(nspname, ord)
-                JOIN pg_namespace n ON n.nspname = s.nspname
-                JOIN pg_ts_config c ON c.cfgnamespace = n.oid AND c.cfgname = 'chinese'
-                JOIN pg_ts_parser p ON p.oid = c.cfgparser
-                ORDER BY s.ord
-                LIMIT 1
-            ),
-            false
-        ) AS enabled
-        "#,
-    )
-    .fetch_one(pool)
-    .await
 }
 
 /// 清空 zhparser 探测缓存。仅供 lib 单元测试使用；集成测试里 `COPY = simple`
@@ -134,25 +112,14 @@ pub struct SearchResult {
     pub headline: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-struct SearchRow {
-    video_id: i64,
-    title: String,
-    description: Option<String>,
-    category: Option<String>,
-    rank: f32,
-    headline: Option<String>,
-    total: i64,
-}
-
 #[derive(Debug, Clone)]
 pub struct SearchService {
-    video_repo: VideoRepository,
+    repo: SearchRepository,
 }
 
 impl SearchService {
-    pub fn new(video_repo: VideoRepository) -> Self {
-        Self { video_repo }
+    pub fn new(repo: SearchRepository) -> Self {
+        Self { repo }
     }
 
     pub async fn full_text_search(
@@ -177,8 +144,6 @@ impl SearchService {
         let size = size.clamp(1, MAX_SIZE);
         let offset = page.saturating_mul(size);
 
-        let pool = self.video_repo.pool();
-
         // 中文（CJK）查询：
         // - 装了 zhparser（060 迁移创建 chinese 配置 + 表达式索引）：原生
         //   分词的 tsquery 与 pg_trgm 子串匹配取并集，命中率只增不减；
@@ -186,15 +151,22 @@ impl SearchService {
         // 纯 ASCII 查询始终走 search_vector + 'simple' tsquery（search_vector
         // 由触发器用 simple 维护，见 039 迁移），英文 rank/排序语义不变。
         let non_ascii = contains_non_ascii(&query);
-        let use_chinese_native = non_ascii && chinese_fulltext_enabled(pool).await;
+        let use_chinese_native = non_ascii && chinese_fulltext_enabled(&self.repo).await;
 
         let rows = if use_chinese_native {
-            search_videos_chinese(pool, owner_id, &query, size, offset).await?
+            self.repo
+                .search_chinese(owner_id, &query, &trigram_pattern(&query), size, offset)
+                .await
         } else if non_ascii {
-            search_videos_trigram(pool, owner_id, &query, size, offset).await?
+            self.repo
+                .search_trigram(owner_id, &query, &trigram_pattern(&query), size, offset)
+                .await
         } else {
-            search_videos_simple(pool, owner_id, &query, size, offset).await?
-        };
+            self.repo
+                .search_simple(owner_id, &query, size, offset)
+                .await
+        }
+        .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))?;
 
         let total: i64 = rows.first().map(|r| r.total).unwrap_or(0);
         let results = rows
@@ -232,8 +204,6 @@ impl SearchService {
             return Ok(cached);
         }
 
-        let pool = self.video_repo.pool();
-
         // SECURITY: we use 'simple' (not 'chinese') because the zhparser /
         // pg_jieba extension is not installed on standard PostgreSQL.
         //
@@ -242,186 +212,18 @@ impl SearchService {
         // suggestions useful mid-keystroke ("hello wo" → "hello world"),
         // which a full-token tsquery match alone cannot provide.
         //
-        // The prefix branch uses `title ILIKE $2 || '%'` instead of the old
-        // `lower(left(title, length($1))) = lower($1)`: the latter is a
-        // non-sargable expression that always triggers a Seq Scan, while
-        // ILIKE on a prefix can use the GIN trigram index
-        // (idx_videos_title_trgm, migration 040). The pattern is bound as a
-        // parameter — no SQL injection — and `%`/`_`/`\` are escaped in
-        // `pattern` so user input stays literal-safe (a bare ILIKE would
-        // otherwise treat them as wildcards). Group by title to dedupe; use
-        // MAX(rank) to pick the best match; `title` is a sort tiebreaker so
-        // equal-rank results have a stable order across pages/callers.
+        // Query design (index usage, dedup, ordering) is documented on
+        // `SearchRepository::suggest_titles`.
         let pattern = escape_like_pattern(&query);
-        let rows = sqlx::query_scalar(
-            r#"
-            SELECT title
-            FROM (
-                SELECT title,
-                       ts_rank(search_vector, plainto_tsquery('simple', $1)) AS rk
-                FROM videos
-                WHERE ($4::bigint IS NULL OR uploader_id = $4)
-                  AND search_vector @@ plainto_tsquery('simple', $1)
-                UNION ALL
-                SELECT title, 0::real AS rk
-                FROM videos
-                WHERE ($4::bigint IS NULL OR uploader_id = $4)
-                  AND title ILIKE $2 || '%'
-            ) AS t
-            GROUP BY title
-            ORDER BY max(rk) DESC, title ASC
-            LIMIT $3
-            "#,
-        )
-        .bind(&query)
-        .bind(&pattern)
-        .bind(limit)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| ServiceError::Internal(format!("搜索建议失败: {}", e)))?;
+        let rows = self
+            .repo
+            .suggest_titles(owner_id, &query, &pattern, limit)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("搜索建议失败: {}", e)))?;
 
         suggest_cache().insert(cache_key, rows.clone());
         Ok(rows)
     }
-}
-
-/// 中文（CJK）查询 + zhparser：原生分词 tsquery OR pg_trgm 子串匹配。
-///
-/// 与 pg_trgm 分支取并集而非二选一，保证启用 zhparser 后中文命中率只增不减
-/// （原来 ILIKE 能命中的子串仍然命中，另加按词命中的结果）。
-///
-/// 表达式与迁移 060 的 `idx_videos_search_zhparser` 逐字一致，且配置名以
-/// SQL 字面量出现（两个固定分支之一，非用户输入）：若把配置作为
-/// `$N::regconfig` 绑定参数传入，规划器无法把参数折叠为常量，表达式索引
-/// 匹配不上，中文查询会退化为顺序扫描。
-async fn search_videos_chinese(
-    pool: &PgPool,
-    owner_id: Option<i64>,
-    query: &str,
-    size: i64,
-    offset: i64,
-) -> Result<Vec<SearchRow>, ServiceError> {
-    let pattern = format!("%{}%", escape_like_pattern(query));
-    sqlx::query_as::<_, SearchRow>(
-        r#"
-        SELECT
-            id as video_id,
-            title,
-            description,
-            category,
-            GREATEST(
-                ts_rank(
-                    to_tsvector('chinese', title || ' ' || COALESCE(description, '')),
-                    plainto_tsquery('chinese', $1)
-                ),
-                similarity(title, $1)
-            ) as rank,
-            ts_headline(
-                'chinese',
-                title,
-                plainto_tsquery('chinese', $1),
-                'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20'
-            ) as headline,
-            COUNT(*) OVER() AS total
-        FROM videos
-        WHERE ($4::bigint IS NULL OR uploader_id = $4)
-          AND (
-              to_tsvector('chinese', title || ' ' || COALESCE(description, ''))
-                  @@ plainto_tsquery('chinese', $1)
-              OR title ILIKE $5
-              OR COALESCE(description, '') ILIKE $5
-          )
-        ORDER BY rank DESC, id DESC
-        LIMIT $2 OFFSET $3
-        "#,
-    )
-    .bind(query)
-    .bind(size)
-    .bind(offset)
-    .bind(owner_id)
-    .bind(&pattern)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))
-}
-
-/// 中文（CJK）查询且无 zhparser：pg_trgm ILIKE 子串匹配（既有回退路径）。
-///
-/// 通配符转义：查询里的 % / _ / \ 按字面匹配（如 "100%" 不能变成通配），
-/// pattern 作为绑定参数传入，无注入面。
-async fn search_videos_trigram(
-    pool: &PgPool,
-    owner_id: Option<i64>,
-    query: &str,
-    size: i64,
-    offset: i64,
-) -> Result<Vec<SearchRow>, ServiceError> {
-    let pattern = format!("%{}%", escape_like_pattern(query));
-    sqlx::query_as::<_, SearchRow>(
-        r#"
-        SELECT
-            id as video_id,
-            title,
-            description,
-            category,
-            similarity(title, $1) as rank,
-            title as headline,
-            COUNT(*) OVER() AS total
-        FROM videos
-        WHERE ($4::bigint IS NULL OR uploader_id = $4)
-          AND (title ILIKE $5 OR COALESCE(description, '') ILIKE $5)
-        ORDER BY similarity(title, $1) DESC, id DESC
-        LIMIT $2 OFFSET $3
-        "#,
-    )
-    .bind(query)
-    .bind(size)
-    .bind(offset)
-    .bind(owner_id)
-    .bind(&pattern)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))
-}
-
-/// 纯 ASCII 查询：search_vector + 内置 'simple' tsquery（行为保持不变）。
-///
-/// SECURITY: 使用内置 'simple' 配置而非 'chinese'：search_vector 由触发器
-/// 用 'simple' 维护（039 迁移），video_repo.rs 的列表过滤同样硬编码
-/// 'simple'；标准 PostgreSQL 未装 zhparser 时也不会硬 500。
-async fn search_videos_simple(
-    pool: &PgPool,
-    owner_id: Option<i64>,
-    query: &str,
-    size: i64,
-    offset: i64,
-) -> Result<Vec<SearchRow>, ServiceError> {
-    sqlx::query_as::<_, SearchRow>(
-        r#"
-        SELECT
-            id as video_id,
-            title,
-            description,
-            category,
-            ts_rank(search_vector, plainto_tsquery('simple', $1)) as rank,
-            ts_headline('simple', title, plainto_tsquery('simple', $1),
-                'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20') as headline,
-            COUNT(*) OVER() AS total
-        FROM videos
-        WHERE ($4::bigint IS NULL OR uploader_id = $4)
-          AND search_vector @@ plainto_tsquery('simple', $1)
-        ORDER BY rank DESC, id DESC
-        LIMIT $2 OFFSET $3
-        "#,
-    )
-    .bind(query)
-    .bind(size)
-    .bind(offset)
-    .bind(owner_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| ServiceError::Internal(format!("搜索失败: {}", e)))
 }
 
 /// Strip the `<mark>...</mark>` start/stop selectors from a ts_headline result.
@@ -443,6 +245,15 @@ fn escape_like_pattern(s: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+/// Build the `%…%` pattern used by the trigram branches.
+///
+/// Escaping happens *inside* the wildcards, so a query of `100%` becomes
+/// `%100\%%` — a literal percent rather than a wildcard that would match every
+/// title.
+fn trigram_pattern(query: &str) -> String {
+    format!("%{}%", escape_like_pattern(query))
 }
 
 #[cfg(test)]
@@ -531,9 +342,9 @@ mod tests {
     async fn test_chinese_probe_failure_falls_back_without_caching() {
         reset_chinese_fulltext_cache_for_tests().await;
         let state = crate::test_support::test_state("http://localhost:3000");
-        let pool = state.repos.video.pool();
+        let repo = SearchRepository::new(state.repos.video.pool().clone());
 
-        assert!(!chinese_fulltext_enabled(pool).await);
+        assert!(!chinese_fulltext_enabled(&repo).await);
         assert!(
             chinese_fts_cache().read().await.is_none(),
             "探测失败不得写入缓存"

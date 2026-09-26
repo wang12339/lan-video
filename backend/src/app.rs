@@ -173,25 +173,27 @@ pub async fn build_router(config: AppConfig) -> Router {
     let playback_service = PlaybackService::new(playback_repo.clone());
     let playlist_service = PlaylistService::new(playlist_repo.clone());
     let tag_service = TagService::new(tag_repo.clone(), video_repo.clone());
-    let search_service = SearchService::new(video_repo.clone());
-    let recommendation_service = RecommendationService::new(video_repo.clone());
+    let search_service = SearchService::new(
+        crate::repositories::search_repo::SearchRepository::new(pool.clone()),
+    );
+    let recommendation_service = RecommendationService::new(
+        crate::repositories::recommendation_repo::RecommendationRepository::new(pool.clone()),
+    );
     let comment_service = CommentService::new(comment_repo.clone(), video_repo.clone());
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
     let email_service = EmailService::new(config.clone());
     // Initialize Redis early so the rate limiter can use it for persistence.
-    let redis_cm = crate::services::redis::init_redis(&config.redis_url).await;
-
-    let (rate_limiter, ip_rate_limiter) = if let Some(ref cm) = redis_cm {
+    // The handle is a shared slot, not a snapshot: if the server is down at
+    // startup the limiters fall back to memory and silently upgrade to Redis
+    // once the background reconnect lands.
+    let redis = crate::services::redis::SharedRedis::init(&config.redis_url).await;
+    if redis.is_configured() {
         tracing::info!("rate limiter using Redis backend for persistence");
-        let cm = (**cm).clone();
-        (
-            RateLimiter::with_redis(cm.clone()),
-            RateLimiter::with_redis(cm),
-        )
-    } else {
-        (RateLimiter::new(), RateLimiter::new())
-    };
+    }
+
+    let rate_limiter = RateLimiter::with_redis(redis.clone());
+    let ip_rate_limiter = RateLimiter::with_redis(redis.clone());
 
     // Start cleanup tasks to prevent memory leak
     crate::middleware::rate_limit::start_cleanup_task(
@@ -222,6 +224,9 @@ pub async fn build_router(config: AppConfig) -> Router {
         .build();
 
     let metrics = Metrics::new();
+    // Publish the process-wide handle for the layers that have no AppState
+    // (slow-query wrapper, DB error classifier, repo-level token cache).
+    crate::metrics::init_global(&metrics);
     let transcoder = Transcoder::new(&config.media_root, config.transcode_settings());
     let task_queue = TaskQueue::new(transcoder.clone(), pool.clone(), config.media_root.clone());
 
@@ -265,7 +270,7 @@ pub async fn build_router(config: AppConfig) -> Router {
             admin: admin_service,
         },
         config: config.clone(),
-        redis: redis_cm.map(|cm| (*cm).clone()),
+        redis,
         rate_limiter,
         ip_rate_limiter,
         video_cache,
@@ -327,10 +332,13 @@ pub async fn build_router(config: AppConfig) -> Router {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(15)).await;
-                metrics.set_database_pool_stats(
-                    pool.size() as f64,
-                    pool.size() as f64 - pool.num_idle() as f64,
-                );
+                // sqlx 0.8 exposes only `size()` and `num_idle()`, so the
+                // active count is derived. There is deliberately no
+                // "waiting" gauge: the pool does not surface its waiter count,
+                // and a permanently-zero series is worse than none — pool
+                // pressure shows up as `active / size` approaching 1.
+                let size = pool.size() as f64;
+                metrics.set_database_pool_stats(size, size - pool.num_idle() as f64);
             }
         });
     }

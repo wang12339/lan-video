@@ -130,9 +130,8 @@ fn handle_auth_result(
 /// 把该访客名下的全部内容（视频/播放历史/点赞/收藏/播放列表/评论/弹幕）
 /// 合并到刚认证的真实账号，然后删除影子账号。
 async fn merge_guest_session_if_any(state: &AppState, headers: &HeaderMap, new_token: &str) {
-    let real_user = match state.repos.user.find_user_by_token(new_token).await {
-        Ok(Some(u)) => u,
-        _ => return,
+    let Some(real_user) = state.services.auth.user_for_token(new_token).await else {
+        return;
     };
     // 访客内容合并对管理员同样生效（管理员也可能是曾经的访客）
     let Some(guest_token) = auth_mw::extract_token_from_cookie(headers) else {
@@ -141,17 +140,16 @@ async fn merge_guest_session_if_any(state: &AppState, headers: &HeaderMap, new_t
     if guest_token == new_token {
         return;
     }
-    let guest = match state.repos.user.find_user_by_token(&guest_token).await {
-        Ok(Some(u)) => u,
-        _ => return,
+    let Some(guest) = state.services.auth.user_for_token(&guest_token).await else {
+        return;
     };
     if !guest.is_guest || guest.id == real_user.id {
         return;
     }
     match state
-        .repos
-        .user
-        .merge_guest_into_user(guest.id, real_user.id)
+        .services
+        .auth
+        .merge_guest_into(guest.id, real_user.id)
         .await
     {
         Ok(n) => tracing::info!(
@@ -176,7 +174,7 @@ async fn merge_guest_session_if_any(state: &AppState, headers: &HeaderMap, new_t
 /// SMTP 未配置时 `EmailService::send` 只记日志，不会报错。
 fn notify_admins_new_registration(state: Arc<AppState>, username: String) {
     tokio::spawn(async move {
-        let mut recipients = match state.repos.user.list_admin_emails().await {
+        let mut recipients = match state.services.auth.admin_emails().await {
             Ok(list) => list,
             Err(e) => {
                 tracing::warn!(
@@ -251,6 +249,9 @@ pub async fn register(
     let result = state.services.auth.register(&auth_req, &ip).await;
     if let Ok(ref resp) = result {
         if resp.ok {
+            // Only successful registrations count; rejected ones (duplicate
+            // username, weak password, registration closed) are not signups.
+            state.metrics.record_register();
             if let Some(token) = &resp.token {
                 merge_guest_session_if_any(&state, &headers, token).await;
             } else {
@@ -284,8 +285,24 @@ pub async fn login(
     let auth_req = parse_auth_request(req).await?;
 
     let result = state.services.auth.login(&auth_req, &ip).await;
-    if let Ok(ref resp) = result {
-        if !resp.ok {
+    match &result {
+        Ok(resp) if resp.ok => {
+            state.metrics.record_login_success();
+            if let Some(token) = &resp.token {
+                merge_guest_session_if_any(&state, &headers, token).await;
+                // 单会话“后登录优先”：普通用户本次登录已吊销全部旧 token，
+                // 同步失效该用户的媒体鉴权缓存（管理员可多设备，不涉及踢旧）。
+                if let Some(user) = state.services.auth.user_for_token(token).await {
+                    if user.role < 3 {
+                        auth_mw::invalidate_media_auth_user(&state, user.id).await;
+                    }
+                }
+            }
+        }
+        // Wrong password, unknown user, unapproved or locked account: all count
+        // as failed attempts, which is what the brute-force alert watches.
+        Ok(_) => {
+            state.metrics.record_login_failure();
             let fail_key = format!("login_fail:{}", ip);
             if state
                 .ip_rate_limiter
@@ -298,15 +315,9 @@ pub async fn login(
                     "suspicious login activity: repeated failures from same IP"
                 );
             }
-        } else if let Some(token) = &resp.token {
-            merge_guest_session_if_any(&state, &headers, token).await;
-            // 单会话“后登录优先”：普通用户本次登录已吊销全部旧 token，
-            // 同步失效该用户的媒体鉴权缓存（管理员可多设备，不涉及踢旧）。
-            if let Ok(Some(user)) = state.repos.user.find_user_by_token(token).await {
-                if user.role < 3 {
-                    auth_mw::invalidate_media_auth_user(&state, user.id).await;
-                }
-            }
+        }
+        Err(_) => {
+            state.metrics.record_login_failure();
         }
     }
     Ok(handle_auth_result(result, &state))
@@ -623,7 +634,7 @@ pub async fn forgot_password(
 
     let state = state.clone();
     tokio::spawn(async move {
-        let Some(user) = state.repos.user.find_by_email(&email).await.ok().flatten() else {
+        let Some(user) = state.services.auth.user_by_email(&email).await else {
             return;
         };
         let Some(token) = state
@@ -975,10 +986,15 @@ pub async fn verify_email_get(
             })?
             .ok_or("验证链接无效或已过期")?;
 
-        state.repos.user.verify_email(user_id).await.map_err(|e| {
-            tracing::error!("verify_email: {}", e);
-            "服务器内部错误"
-        })?;
+        state
+            .services
+            .auth
+            .mark_email_verified(user_id)
+            .await
+            .map_err(|e| {
+                tracing::error!("verify_email: {}", e);
+                "服务器内部错误"
+            })?;
 
         Ok::<_, &str>(())
     }

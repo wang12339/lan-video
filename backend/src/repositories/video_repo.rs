@@ -339,7 +339,7 @@ impl VideoRepository {
     /// # SQL
     /// ```sql
     /// SELECT COUNT(*) as count FROM videos v WHERE 1=1
-    ///   [AND v.search_vector @@ plainto_tsquery('chinese', $query)]
+    ///   [AND v.search_vector @@ plainto_tsquery('simple', $query)]
     ///   [AND v.source_type = $source_type]   -- 前缀 `!` 表示排除
     ///   [AND v.category = $category]
     ///   [AND v.uploader_id = $uploader_id]
@@ -1231,6 +1231,28 @@ impl VideoRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// 仅标记"已尝试解析 EXIF"（无 EXIF / 文件缺失），不写任何 exif 列。
+    ///
+    /// # SQL
+    /// ```sql
+    /// UPDATE videos SET exif_extracted = TRUE WHERE id = $1
+    /// ```
+    ///
+    /// # 用途
+    /// 与 [`Self::update_video_exif`] 的 `exif_extracted = TRUE` 收尾语义一致，
+    /// 但不写 exif 列：图片没有 EXIF、或文件在补扫前已被删除时调用，避免后台
+    /// 补扫任务对同一个文件反复重试。
+    pub async fn mark_exif_extracted(&self, id: i64) -> Result<(), sqlx::Error> {
+        log_slow_query("video_repo::mark_exif_extracted", || async {
+            sqlx::query("UPDATE videos SET exif_extracted = TRUE WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map(|_| ())
+        })
+        .await
     }
 
     /// 写入 EXIF 解析结果（10 个 exif 列 + `exif_extracted = TRUE`）。

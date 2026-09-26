@@ -2,7 +2,32 @@ use prometheus::{
     Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Registry,
     TextEncoder,
 };
+use std::sync::OnceLock;
 use std::time::Instant;
+
+static GLOBAL: OnceLock<Metrics> = OnceLock::new();
+
+/// Install the process-wide metrics handle.
+///
+/// Request-scoped code should prefer `AppState::metrics`; this exists for the
+/// layers that legitimately have no `AppState` — the slow-query wrapper in
+/// `db.rs`, the DB error classifier, and cache read sites inside middleware.
+/// Cloning `Metrics` is cheap and shares the underlying collectors, so the
+/// global and `AppState` always report into the same registry.
+pub fn init_global(metrics: &Metrics) {
+    if GLOBAL.set(metrics.clone()).is_err() {
+        tracing::debug!("metrics: global handle already installed");
+    }
+}
+
+/// The process-wide metrics handle, if [`init_global`] has run.
+///
+/// Returns `None` before startup completes and in unit tests, so every caller
+/// must treat metrics as best-effort and never fail a request over them.
+#[inline]
+pub fn global() -> Option<&'static Metrics> {
+    GLOBAL.get()
+}
 
 #[derive(Clone)]
 pub struct Metrics {
@@ -33,17 +58,12 @@ pub struct Metrics {
     // 缓存指标
     pub cache_hits_total: IntCounter,
     pub cache_misses_total: IntCounter,
-
-    // 活跃连接数指标
-    pub active_connections: Gauge,
-    pub active_connections_total: IntCounter, // 累计连接数
-    pub idle_connections: Gauge,              // 空闲连接数
+    pub cache_operations_total: IntCounterVec,
 
     // 数据库连接池指标
     pub database_pool_size: Gauge,
     pub database_pool_active: Gauge,
     pub database_pool_idle: Gauge,
-    pub database_pool_waiting: Gauge,
     pub database_query_duration_seconds: HistogramVec, // 查询延迟（按操作分类）
     pub database_errors_total: IntCounterVec,          // 数据库错误计数
 
@@ -154,25 +174,14 @@ impl Metrics {
             IntCounter::new("cache_misses_total", "Total number of cache misses")
                 .expect("metrics: cache_misses_total name collision");
 
-        // ── 连接指标 ────────────────────────────────────────────────
-
-        let active_connections = Gauge::new(
-            "active_connections",
-            "Number of currently active connections",
+        let cache_operations_total = IntCounterVec::new(
+            prometheus::Opts::new(
+                "cache_operations_total",
+                "Total number of cache lookups, labeled by cache name and result (hit/miss)",
+            ),
+            &["cache", "result"],
         )
-        .expect("metrics: active_connections name collision");
-
-        let active_connections_total = IntCounter::new(
-            "active_connections_total",
-            "Total number of connections ever established",
-        )
-        .expect("metrics: active_connections_total name collision");
-
-        let idle_connections = Gauge::new(
-            "idle_connections",
-            "Number of idle connections (no active request)",
-        )
-        .expect("metrics: idle_connections name collision");
+        .expect("metrics: cache_operations_total name collision");
 
         // ── 数据库连接池指标 ────────────────────────────────────────
 
@@ -191,12 +200,6 @@ impl Metrics {
             "Number of idle database connections in the pool",
         )
         .expect("metrics: database_pool_idle name collision");
-
-        let database_pool_waiting = Gauge::new(
-            "database_pool_waiting",
-            "Number of requests waiting for a database connection",
-        )
-        .expect("metrics: database_pool_waiting name collision");
 
         let database_query_duration_seconds = HistogramVec::new(
             HistogramOpts::new(
@@ -274,15 +277,21 @@ impl Metrics {
             auth_register_total.clone(),
             "auth_register_total",
         );
-        register_metric(&registry, cache_hits_total.clone(), "cache_hits_total");
-        register_metric(&registry, cache_misses_total.clone(), "cache_misses_total");
-        register_metric(&registry, active_connections.clone(), "active_connections");
+        // Was missing: the counter was created and returned in the struct, so
+        // record_password_reset() incremented a series that was never
+        // registered and therefore never appeared in /metrics.
         register_metric(
             &registry,
-            active_connections_total.clone(),
-            "active_connections_total",
+            auth_password_reset_total.clone(),
+            "auth_password_reset_total",
         );
-        register_metric(&registry, idle_connections.clone(), "idle_connections");
+        register_metric(&registry, cache_hits_total.clone(), "cache_hits_total");
+        register_metric(&registry, cache_misses_total.clone(), "cache_misses_total");
+        register_metric(
+            &registry,
+            cache_operations_total.clone(),
+            "cache_operations_total",
+        );
         register_metric(&registry, database_pool_size.clone(), "database_pool_size");
         register_metric(
             &registry,
@@ -290,11 +299,6 @@ impl Metrics {
             "database_pool_active",
         );
         register_metric(&registry, database_pool_idle.clone(), "database_pool_idle");
-        register_metric(
-            &registry,
-            database_pool_waiting.clone(),
-            "database_pool_waiting",
-        );
         register_metric(
             &registry,
             database_query_duration_seconds.clone(),
@@ -322,13 +326,10 @@ impl Metrics {
             auth_password_reset_total,
             cache_hits_total,
             cache_misses_total,
-            active_connections,
-            active_connections_total,
-            idle_connections,
+            cache_operations_total,
             database_pool_size,
             database_pool_active,
             database_pool_idle,
-            database_pool_waiting,
             database_query_duration_seconds,
             database_errors_total,
             start_time: Instant::now(),
@@ -430,18 +431,29 @@ impl Metrics {
         self.cache_misses_total.inc();
     }
 
-    /// 记录一次新连接建立
-    pub fn record_connection_established(&self) {
-        self.active_connections_total.inc();
+    /// 记录一次 HTTP 请求开始（配合 `record_request_finished` 维护在途请求数）。
+    pub fn record_request_started(&self) {
+        self.http_requests_in_flight.inc();
     }
 
-    pub fn set_active_connections(&self, count: f64) {
-        self.active_connections.set(count);
+    pub fn record_request_finished(&self) {
+        self.http_requests_in_flight.dec();
     }
 
-    /// 更新空闲连接数
-    pub fn set_idle_connections(&self, count: f64) {
-        self.idle_connections.set(count);
+    /// 按缓存名记录一次命中/未命中。
+    ///
+    /// 带 `cache` 标签，便于在多实例下区分是哪个缓存（视频详情、token、
+    /// 搜索建议…）在退化，而不是只看到一个聚合的命中率。
+    pub fn record_cache_lookup(&self, cache: &str, hit: bool) {
+        let result = if hit { "hit" } else { "miss" };
+        self.cache_operations_total
+            .with_label_values(&[cache, result])
+            .inc();
+        if hit {
+            self.cache_hits_total.inc();
+        } else {
+            self.cache_misses_total.inc();
+        }
     }
 
     pub fn set_database_pool_stats(&self, size: f64, active: f64) {
@@ -449,14 +461,6 @@ impl Metrics {
         self.database_pool_active.set(active);
         // 自动计算空闲连接数
         self.database_pool_idle.set(size - active);
-    }
-
-    /// 更新数据库连接池完整统计（含等待队列）
-    pub fn set_database_pool_stats_full(&self, size: f64, active: f64, idle: f64, waiting: f64) {
-        self.database_pool_size.set(size);
-        self.database_pool_active.set(active);
-        self.database_pool_idle.set(idle);
-        self.database_pool_waiting.set(waiting);
     }
 
     pub fn get_uptime_seconds(&self) -> u64 {
@@ -506,6 +510,7 @@ fn is_uuid(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_normalize_path() {
@@ -538,7 +543,7 @@ mod tests {
         let metrics = Metrics::new();
         // 基础字段可访问
         assert_eq!(metrics.http_requests_total.get(), 0);
-        assert_eq!(metrics.active_connections.get(), 0.0);
+        assert_eq!(metrics.http_requests_in_flight.get(), 0.0);
         assert_eq!(metrics.database_pool_size.get(), 0.0);
         assert_eq!(metrics.database_pool_idle.get(), 0.0);
     }
@@ -586,5 +591,118 @@ mod tests {
         let encoded = metrics.encode_metrics();
         assert!(encoded.contains("database_query_duration_seconds"));
         assert!(encoded.contains("operation=\"select\""));
+    }
+
+    // Every field on `Metrics` is exported through `encode_metrics`. A field
+    // that is created but never registered (as `auth_password_reset_total`
+    // once was) increments happily and stays invisible forever, so assert on the
+    // rendered output rather than on the collector values.
+    #[test]
+    fn every_collector_is_registered_in_the_registry() {
+        let metrics = Metrics::new();
+
+        // Touch every counter so a lazily-created Vec child would exist too.
+        metrics.record_request(Duration::from_millis(3));
+        metrics.record_request_with_labels("GET", 200, Duration::from_millis(3));
+        metrics.record_error("GET", 404, "/videos/1");
+        metrics.record_video_view();
+        metrics.record_video_upload();
+        metrics.record_video_delete();
+        metrics.record_login_attempt();
+        metrics.record_login_failure();
+        metrics.record_register();
+        metrics.record_password_reset();
+        metrics.record_cache_lookup("video_detail", true);
+        metrics.record_cache_lookup("video_detail", false);
+        metrics.record_request_started();
+        metrics.record_request_finished();
+        metrics.record_db_query("user_repo::find_by_username", Duration::from_millis(4));
+        metrics.record_db_error("user_repo::find_by_username", "unique_violation");
+
+        let encoded = metrics.encode_metrics();
+        for name in [
+            "http_requests_total",
+            "http_request_duration_seconds",
+            "http_requests_in_flight",
+            "http_request_duration_by_route_seconds",
+            "video_views_total",
+            "video_uploads_total",
+            "video_deletes_total",
+            "auth_login_total",
+            "auth_login_failed_total",
+            "auth_register_total",
+            // Regression: this one was missing from the registry.
+            "auth_password_reset_total",
+            "cache_hits_total",
+            "cache_misses_total",
+            "cache_operations_total",
+            "database_pool_size",
+            "database_query_duration_seconds",
+            "database_errors_total",
+        ] {
+            assert!(
+                encoded.contains(name),
+                "metric {name} is not exported by /metrics — it is either \
+                 unregistered or never incremented"
+            );
+        }
+    }
+
+    #[test]
+    fn password_reset_counter_is_exported() {
+        let metrics = Metrics::new();
+        metrics.record_password_reset();
+        let encoded = metrics.encode_metrics();
+        assert!(
+            encoded.contains("auth_password_reset_total 1"),
+            "password resets must be visible in /metrics, got:\n{encoded}"
+        );
+    }
+
+    #[test]
+    fn in_flight_gauge_tracks_request_boundaries() {
+        let metrics = Metrics::new();
+        metrics.record_request_started();
+        metrics.record_request_started();
+        assert_eq!(metrics.http_requests_in_flight.get(), 2.0);
+        metrics.record_request_finished();
+        assert_eq!(metrics.http_requests_in_flight.get(), 1.0);
+    }
+
+    #[test]
+    fn cache_lookups_are_split_by_cache_and_result() {
+        let metrics = Metrics::new();
+        metrics.record_cache_lookup("video_detail", true);
+        metrics.record_cache_lookup("video_detail", true);
+        metrics.record_cache_lookup("video_detail", false);
+        metrics.record_cache_lookup("auth_token", true);
+
+        let encoded = metrics.encode_metrics();
+        assert!(encoded.contains("cache_operations_total{cache=\"video_detail\",result=\"hit\"} 2"));
+        assert!(
+            encoded.contains("cache_operations_total{cache=\"video_detail\",result=\"miss\"} 1")
+        );
+        assert!(encoded.contains("cache_operations_total{cache=\"auth_token\",result=\"hit\"} 1"));
+        assert_eq!(metrics.cache_hits_total.get(), 3);
+        assert_eq!(metrics.cache_misses_total.get(), 1);
+    }
+
+    #[test]
+    fn in_flight_gauge_balances_across_request_boundaries() {
+        // `Gauge::dec()` is deliberately not saturating: a read-modify-write
+        // would lose decrements under concurrency and make the gauge drift
+        // upward, which is worse than a transient dip. The invariant is instead
+        // that the middleware pairs every `record_request_started` with exactly
+        // one `record_request_finished`, which holds because both happen in the
+        // same task with no early return between them.
+        let metrics = Metrics::new();
+        for _ in 0..3 {
+            metrics.record_request_started();
+        }
+        assert_eq!(metrics.http_requests_in_flight.get(), 3.0);
+        for _ in 0..3 {
+            metrics.record_request_finished();
+        }
+        assert_eq!(metrics.http_requests_in_flight.get(), 0.0);
     }
 }

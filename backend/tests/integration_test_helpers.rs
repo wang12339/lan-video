@@ -180,8 +180,14 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
     let media_service = MediaService::new(video_repo.clone(), config.clone());
     let playback_service = PlaybackService::new(playback_repo.clone());
     let tag_service = TagService::new(tag_repo.clone(), video_repo.clone());
-    let search_service = SearchService::new(video_repo.clone());
-    let recommendation_service = RecommendationService::new(video_repo.clone());
+    let search_service = SearchService::new(
+        atmos_video_backend::repositories::search_repo::SearchRepository::new(pool.clone()),
+    );
+    let recommendation_service = RecommendationService::new(
+        atmos_video_backend::repositories::recommendation_repo::RecommendationRepository::new(
+            pool.clone(),
+        ),
+    );
     let comment_service = CommentService::new(comment_repo.clone(), video_repo.clone());
     let share_service = ShareService::new(share_repo.clone());
     let admin_service = AdminService::new(user_repo.clone());
@@ -207,6 +213,10 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
 
     let transcoder = Transcoder::new(&config.media_root, config.transcode_settings());
     let task_queue = TaskQueue::new(transcoder.clone(), pool.clone(), config.media_root.clone());
+
+    // Mirror production wiring so Redis-backed suites only have to set
+    // `config.redis_url` instead of patching AppState afterwards.
+    let redis = atmos_video_backend::services::redis::SharedRedis::init(&config.redis_url).await;
 
     Arc::new(AppState {
         repos: RepoLayer {
@@ -252,7 +262,7 @@ pub async fn test_app_state_with_config(config: AppConfig) -> Arc<AppState> {
         ),
         chat_hub: std::sync::Arc::new(atmos_video_backend::state::ChatHub::new()),
         metrics: Metrics::new(),
-        redis: None,
+        redis,
         transcoder,
         task_queue,
     })

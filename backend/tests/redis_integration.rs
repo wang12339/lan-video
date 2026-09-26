@@ -26,6 +26,7 @@ use atmos_video_backend::middleware::auth::{
     invalidate_media_auth_token, invalidate_media_auth_user, media_auth,
 };
 use atmos_video_backend::middleware::rate_limit::RateLimiter;
+use atmos_video_backend::services::redis::SharedRedis;
 use atmos_video_backend::state::AppState;
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
@@ -42,11 +43,26 @@ use redis::aio::ConnectionManager;
 use tower::ServiceExt;
 
 /// Returns `REDIS_URL` from the environment, or skips the test if not set.
+///
+/// Skipping silently is a trap: `cargo test` captures output from passing
+/// tests, so a note printed here would never be seen and a green build would
+/// say nothing about the Redis suite. GitHub Actions sets `CI=true`, so in CI a
+/// missing `REDIS_URL` is treated as a **misconfigured job** and fails loudly —
+/// the workflow is expected to provide a `redis` service. Locally, running
+/// without Redis is a legitimate choice and the suite just skips.
 fn redis_url() -> Option<String> {
     static WARNED: std::sync::Once = std::sync::Once::new();
     match std::env::var("REDIS_URL") {
         Ok(url) if !url.trim().is_empty() => Some(url),
         _ => {
+            if std::env::var("CI").is_ok_and(|v| v == "true") {
+                panic!(
+                    "REDIS_URL must be set when CI=true. This suite is the only coverage of \
+                     the shared rate limiter, the cross-instance media-auth cache and the \
+                     late-reconnect regression; check the `redis` service in \
+                     .github/workflows/ci.yml."
+                );
+            }
             WARNED.call_once(|| {
                 eprintln!(
                     "NOTE: REDIS_URL is not set — Redis integration tests are SKIPPED. `cargo test` green does NOT mean the Redis suite passed."
@@ -131,8 +147,8 @@ async fn redis_rate_limiter_instances_share_counter_and_block() {
         return;
     };
     let mgr = redis_manager(&url).await;
-    let a = RateLimiter::with_redis(mgr.clone());
-    let b = RateLimiter::with_redis(mgr.clone());
+    let a = RateLimiter::with_redis(SharedRedis::connected(mgr.clone()));
+    let b = RateLimiter::with_redis(SharedRedis::connected(mgr.clone()));
     let key = unique_key("rl_share");
     let counter_key = format!("rl:c:{key}");
     let block_key = format!("rl:b:{key}");
@@ -182,7 +198,7 @@ async fn redis_rate_limiter_block_expiry_and_zero_block() {
         return;
     };
     let mgr = redis_manager(&url).await;
-    let limiter = RateLimiter::with_redis(mgr.clone());
+    let limiter = RateLimiter::with_redis(SharedRedis::connected(mgr.clone()));
     let mut conn = mgr.clone();
 
     let key = unique_key("rl_expire");
@@ -223,8 +239,8 @@ async fn redis_rate_limiter_concurrent_calls_are_atomic() {
         return;
     };
     let mgr = redis_manager(&url).await;
-    let a = RateLimiter::with_redis(mgr.clone());
-    let b = RateLimiter::with_redis(mgr.clone());
+    let a = RateLimiter::with_redis(SharedRedis::connected(mgr.clone()));
+    let b = RateLimiter::with_redis(SharedRedis::connected(mgr.clone()));
     let key = unique_key("rl_conc");
 
     let mut tasks = Vec::new();
@@ -248,51 +264,165 @@ async fn redis_rate_limiter_concurrent_calls_are_atomic() {
     a.reset(&key).await;
 }
 
-// ── services::redis::init_redis ──
+// ── services::redis::SharedRedis ──
 
-/// `init_redis` connects and reuses the shared manager; `get_redis` exposes it.
+/// `SharedRedis::init` connects and exposes the manager through `resolve()`;
+/// clones share one slot.
 #[tokio::test]
-async fn redis_init_connects_and_reuses_manager() {
+async fn shared_redis_init_connects_and_shares_the_slot() {
     let Some(url) = redis_url() else {
         return;
     };
-    let cm = atmos_video_backend::services::redis::init_redis(&url)
-        .await
-        .expect("init_redis must connect to the test Redis");
-    let again = atmos_video_backend::services::redis::init_redis(&url)
-        .await
-        .expect("second init_redis must return the shared manager");
+    let slot = SharedRedis::init(&url).await;
+    assert!(slot.is_configured());
+    assert!(slot.is_connected());
 
-    let mut conn = (*cm).clone();
+    let again = SharedRedis::init(&url).await;
+    let first = slot.resolve().expect("init must connect");
+    let second = again.resolve().expect("second init must connect");
+
+    let mut conn = first.as_ref().clone();
     let pong: String = redis::cmd("PING")
         .query_async(&mut conn)
         .await
-        .expect("PING via init_redis manager");
+        .expect("PING via init manager");
     assert_eq!(pong, "PONG");
 
-    let mut conn2 = (*again).clone();
+    let mut conn2 = second.as_ref().clone();
     let pong2: String = redis::cmd("PING")
         .query_async(&mut conn2)
         .await
-        .expect("PING via reused manager");
+        .expect("PING via second manager");
     assert_eq!(pong2, "PONG");
-    assert!(
-        atmos_video_backend::services::redis::get_redis()
-            .await
-            .is_some(),
-        "get_redis must return the shared manager"
-    );
 }
 
-/// A blank URL disables Redis without touching the shared cell.
+/// A blank URL yields a disabled slot.
 #[tokio::test]
-async fn redis_init_returns_none_for_blank_url() {
+async fn shared_redis_blank_url_is_disabled() {
+    let slot = SharedRedis::init("   ").await;
+    assert!(!slot.is_configured(), "blank REDIS_URL must disable Redis");
+    assert!(!slot.is_connected());
+    assert!(slot.resolve().is_none());
+}
+
+/// Regression test for the silent-fallback bug: a limiter constructed while
+/// Redis was unavailable must start using Redis *without being rebuilt* once the
+/// background reconnect publishes a connection. With the old design
+/// (`Option<ConnectionManager>` snapshotted at construction) this limiter would
+/// have stayed process-local forever.
+#[tokio::test]
+async fn rate_limiter_picks_up_a_connection_published_after_construction() {
+    let Some(url) = redis_url() else {
+        return;
+    };
+
+    // "Redis was down at startup": configured, but nothing published yet.
+    let slot = SharedRedis::pending();
+    assert!(slot.is_configured());
+    assert!(!slot.is_connected());
+    let limiter = RateLimiter::with_redis(slot.clone());
+    let holder = limiter.clone();
+
+    let key = unique_key("rl_late_connect");
+    let counter_key = format!("rl:c:{key}");
+    let block_key = format!("rl:b:{key}");
+
+    // While disconnected the limiter still enforces, but purely in memory.
+    assert!(limiter.check_with(&key, 3, 60, 600).await.is_ok(), "mem #1");
+    assert!(limiter.check_with(&key, 3, 60, 600).await.is_ok(), "mem #2");
     assert!(
-        atmos_video_backend::services::redis::init_redis("   ")
-            .await
-            .is_none(),
-        "blank REDIS_URL must disable Redis"
+        limiter.check_with(&key, 3, 60, 600).await.is_err(),
+        "mem #3"
     );
+
+    let mut conn = redis_manager(&url).await;
+    assert!(
+        !redis_exists(&mut conn, &counter_key).await,
+        "a disconnected slot must not have written any Redis key"
+    );
+
+    // The background reconnect lands.
+    assert!(slot.install(redis_manager(&url).await));
+
+    // The very same limiter instance now uses Redis, and the pre-existing
+    // in-memory state is gone (a fresh Redis budget applies).
+    assert!(
+        limiter.check_with(&key, 3, 60, 600).await.is_ok(),
+        "redis #1"
+    );
+    assert!(
+        holder.check_with(&key, 3, 60, 600).await.is_ok(),
+        "redis #2"
+    );
+    assert!(
+        limiter.check_with(&key, 3, 60, 600).await.is_err(),
+        "redis #3 must block"
+    );
+    assert!(
+        redis_exists(&mut conn, &block_key).await,
+        "after the late connect the limiter must write the block key to Redis"
+    );
+
+    limiter.reset(&key).await;
+}
+
+/// The same late-visibility property for the media-auth cache: an `AppState`
+/// built against a disconnected slot must start writing the shared cache once
+/// the connection appears.
+#[tokio::test]
+async fn media_auth_cache_starts_being_shared_after_a_late_connect() {
+    let Some((url, _db)) = redis_and_db() else {
+        return;
+    };
+
+    let mut config = test_config();
+    config.redis_url = url.clone();
+    // Simulate startup with Redis down, then a successful background reconnect.
+    let base = test_app_state_with_config(config).await;
+    let mut inner = (*base).clone();
+    inner.redis = SharedRedis::pending();
+    let state = Arc::new(inner);
+
+    let (username, _password, user_id, token1) =
+        create_test_user_with_credentials(&state, "redis_late_media").await;
+    let path = "/media/avatars/redis_probe.jpg";
+    let app = media_probe_router(state.clone(), path);
+
+    // Before the connection lands: auth works from the DB, nothing is shared.
+    assert_eq!(get_with_bearer(&app, path, &token1).await, StatusCode::OK);
+    let mut conn = redis_manager(&url).await;
+    let key1 = format!("media:auth:{token1}");
+    assert!(
+        !redis_exists(&mut conn, &key1).await,
+        "no shared cache entry while disconnected"
+    );
+
+    // The background reconnect lands.
+    assert!(state.redis.install(redis_manager(&url).await));
+
+    // A second login issues a token the process has never resolved, so the
+    // request is forced through the cache-write path rather than the local moka
+    // entry created above.
+    let token2 = login_and_get_token(&state, &username, TEST_USER_PASSWORD).await;
+    assert_ne!(token1, token2);
+    assert_eq!(
+        get_with_bearer(&app, path, &token2).await,
+        StatusCode::OK,
+        "auth must still succeed after the late connect"
+    );
+    let key2 = format!("media:auth:{token2}");
+    assert_eq!(
+        redis_get_str(&mut conn, &key2).await.as_deref(),
+        Some(format!("{user_id}|1|{username}").as_str()),
+        "after the late connect the shared media-auth cache must be populated"
+    );
+
+    let _: i64 = redis::cmd("DEL")
+        .arg(&key2)
+        .query_async(&mut conn)
+        .await
+        .expect("cleanup cache key");
+    cleanup_test_user(state.repos.video.pool(), &username).await;
 }
 
 // ── Media auth cache (media.rs) ──
@@ -304,7 +434,7 @@ async fn state_with_redis(url: &str) -> Arc<AppState> {
     config.redis_url = url.to_string();
     let base = test_app_state_with_config(config).await;
     let mut inner = (*base).clone();
-    inner.redis = Some(redis_manager(url).await);
+    inner.redis = SharedRedis::connected(redis_manager(url).await);
     Arc::new(inner)
 }
 
@@ -364,7 +494,7 @@ async fn media_auth_redis_cache_write_and_invalidation() {
         "public avatar path must pass media_auth for a valid token"
     );
 
-    let mut conn = state.redis.as_ref().expect("redis wired").clone();
+    let mut conn = state.redis.resolve().expect("redis wired").as_ref().clone();
     let token_key = format!("media:auth:{token}");
     let set_key = format!("media:auth:user:{user_id}");
 
@@ -417,7 +547,7 @@ async fn media_auth_reads_cached_user_from_redis() {
     let app = media_probe_router(state.clone(), path);
 
     let token = unique_valid_token("r");
-    let mut conn = state.redis.as_ref().expect("redis wired").clone();
+    let mut conn = state.redis.resolve().expect("redis wired").as_ref().clone();
     let token_key = format!("media:auth:{token}");
     redis::cmd("SETEX")
         .arg(&token_key)
@@ -458,7 +588,7 @@ async fn media_auth_user_invalidation_deletes_all_tokens_and_set() {
     assert_eq!(get_with_bearer(&app, path, &token1).await, StatusCode::OK);
     assert_eq!(get_with_bearer(&app, path, &token2).await, StatusCode::OK);
 
-    let mut conn = state.redis.as_ref().expect("redis wired").clone();
+    let mut conn = state.redis.resolve().expect("redis wired").as_ref().clone();
     let key1 = format!("media:auth:{token1}");
     let key2 = format!("media:auth:{token2}");
     let set_key = format!("media:auth:user:{user_id}");

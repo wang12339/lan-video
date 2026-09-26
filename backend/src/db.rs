@@ -8,6 +8,14 @@ use tracing::{info, warn};
 /// Threshold above which a SQL query is considered slow and logged as a warning.
 pub const SLOW_QUERY_THRESHOLD: Duration = Duration::from_millis(100);
 
+/// Time a repository query, recording it as a Prometheus histogram sample and
+/// logging a warning when it crosses [`SLOW_QUERY_THRESHOLD`].
+///
+/// Every instrumented call records a duration, so the histogram is a complete
+/// picture of query latency rather than only the tail — a query creeping from
+/// 5 ms to 90 ms is visible well before it starts tripping the slow-query log.
+/// Failures are additionally counted in `database_errors_total`, labelled by a
+/// coarse error class so the label space stays bounded.
 #[inline]
 pub async fn log_slow_query<T, E, F, Fut>(label: &str, fut: F) -> Result<T, E>
 where
@@ -18,6 +26,14 @@ where
     let start = Instant::now();
     let result = fut().await;
     let elapsed = start.elapsed();
+
+    if let Some(m) = crate::metrics::global() {
+        m.record_db_query(label, elapsed);
+        if let Err(e) = &result {
+            m.record_db_error(label, db_error_class(&e.to_string()));
+        }
+    }
+
     if elapsed > SLOW_QUERY_THRESHOLD {
         match &result {
             Ok(_) => warn!(query = %label, duration_ms = %elapsed.as_millis(), "slow query"),
@@ -27,6 +43,34 @@ where
         }
     }
     result
+}
+
+/// Bucket a database error into a small, bounded label set.
+///
+/// The raw `Display` of a `sqlx::Error` embeds table/constraint names and
+/// values, so using it as a Prometheus label would explode cardinality and leak
+/// row data into the metrics endpoint. Classifying keeps the label space fixed
+/// and leaves the detail in the logs, where it belongs.
+#[must_use]
+pub fn db_error_class(message: &str) -> &'static str {
+    let m = message.to_ascii_lowercase();
+    if m.contains("duplicate key") || m.contains("unique constraint") {
+        "unique_violation"
+    } else if m.contains("foreign key") {
+        "foreign_key_violation"
+    } else if m.contains("connection") || m.contains("closed") || m.contains("timed out") {
+        "connection"
+    } else if m.contains("cancel") {
+        "cancelled"
+    } else if m.contains("timeout") || m.contains("deadline") {
+        "timeout"
+    } else if m.contains("syntax") || m.contains("does not exist") {
+        "schema"
+    } else if m.contains("pool") || m.contains("closed pool") {
+        "pool_exhausted"
+    } else {
+        "other"
+    }
 }
 
 #[allow(clippy::panic)]
@@ -215,6 +259,56 @@ async fn run_migrations(pool: &PgPool, migrations_dir: Option<PathBuf>) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn db_error_class_stays_within_a_bounded_label_set() {
+        // The label must never be the raw error text: that would explode
+        // cardinality and leak row values into the metrics endpoint.
+        assert_eq!(
+            db_error_class("duplicate key value violates unique constraint \"users_username_key\""),
+            "unique_violation"
+        );
+        assert_eq!(
+            db_error_class("insert or update on table violates foreign key constraint \"fk\""),
+            "foreign_key_violation"
+        );
+        assert_eq!(
+            db_error_class("error communicating with the server: Connection refused"),
+            "connection"
+        );
+        // Postgres reports lock waits as "canceling statement due to lock
+        // timeout"; "cancelled" is the more accurate class, and it is checked
+        // first so the timeout wording does not win.
+        assert_eq!(
+            db_error_class("canceling statement due to lock timeout"),
+            "cancelled"
+        );
+        assert_eq!(
+            db_error_class("canceling statement due to user request"),
+            "cancelled"
+        );
+        assert_eq!(db_error_class("query deadline exceeded"), "timeout");
+        assert_eq!(
+            db_error_class("syntax error at or near \"SELCT\""),
+            "schema"
+        );
+        assert_eq!(db_error_class("something nobody has seen before"), "other");
+        // Classification is case-insensitive.
+        assert_eq!(
+            db_error_class("Duplicate Key Value Violates UNIQUE"),
+            "unique_violation"
+        );
+    }
+
+    #[test]
+    fn db_error_class_never_echoes_message_content() {
+        let secret =
+            "duplicate key value violates unique constraint \"users_email_key\" \"a@b.com\"";
+        let class = db_error_class(secret);
+        assert!(!class.contains('@'));
+        assert!(!class.contains("users_email_key"));
+        assert!(class.len() < 32, "label {class} is suspiciously long");
+    }
 
     /// Serializes tests that mutate the shared `MIGRATIONS_DIR` env var so they
     /// cannot race when the test binary runs with `--test-threads` parallel.

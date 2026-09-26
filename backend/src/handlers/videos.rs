@@ -550,6 +550,9 @@ pub async fn increment_views(
         .increment_views(id)
         .await
         .map_err(|e| internal_error_log("increment_views", &e))?;
+    // Counted only after the DB write succeeds, so the metric tracks real views
+    // rather than client-side pings that failed to persist.
+    state.metrics.record_video_view();
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -744,7 +747,7 @@ pub async fn create_danmaku(
     }
 
     // 弹幕归属校验:视频必须存在,否则会向不存在的视频写入"幽灵弹幕"。
-    match state.repos.video.find_by_id(video_id).await {
+    match state.services.video.find_row(video_id).await {
         Ok(Some(_)) => {}
         Ok(None) => return Err(error_response(StatusCode::NOT_FOUND, "视频不存在")),
         Err(e) => return Err(internal_error_log("danmaku: find video", &e)),

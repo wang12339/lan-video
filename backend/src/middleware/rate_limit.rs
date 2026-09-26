@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use redis::aio::ConnectionManager;
 
+use crate::services::redis::SharedRedis;
+
 // Per-username: 5 attempts per 60s, 5-minute block after exceeding.
 // Note: the attempt that reaches the limit is itself rejected and starts the
 // block (count >= max_attempts), so up to max_attempts - 1 attempts succeed.
@@ -71,9 +73,11 @@ pub struct RateLimited;
 pub struct RateLimiter {
     /// Always present — in-memory fallback (and sole backend when Redis is off)
     cache: Arc<DashMap<String, (Instant, RateLimitEntry)>>,
-    /// Optional Redis connection for persistent rate limiting.
-    /// `ConnectionManager` is internally Arc'd and cheap to clone.
-    redis: Option<ConnectionManager>,
+    /// Shared Redis slot, resolved per call rather than snapshotted at
+    /// construction. A snapshot would pin "no Redis" into the limiter forever
+    /// if the server was down during startup, silently keeping rate-limit state
+    /// process-local even after the background reconnect succeeded.
+    redis: SharedRedis,
 }
 
 impl Default for RateLimiter {
@@ -85,18 +89,15 @@ impl Default for RateLimiter {
 impl RateLimiter {
     /// Create a memory-only rate limiter (no Redis persistence).
     pub fn new() -> Self {
-        Self {
-            cache: Arc::new(DashMap::new()),
-            redis: None,
-        }
+        Self::with_redis(SharedRedis::disabled())
     }
 
     /// Create a rate limiter backed by Redis for persistence.
-    /// Falls back to in-memory counting if Redis is unreachable.
-    pub fn with_redis(redis: ConnectionManager) -> Self {
+    /// Falls back to in-memory counting until/unless Redis is reachable.
+    pub fn with_redis(redis: SharedRedis) -> Self {
         Self {
             cache: Arc::new(DashMap::new()),
-            redis: Some(redis),
+            redis,
         }
     }
 
@@ -120,9 +121,9 @@ impl RateLimiter {
         window_secs: u64,
         block_secs: u64,
     ) -> Result<(), RateLimited> {
-        if let Some(redis) = &self.redis {
+        if let Some(redis) = self.redis.resolve() {
             match self
-                .check_redis(redis, key, max_attempts, window_secs, block_secs)
+                .check_redis(redis.as_ref(), key, max_attempts, window_secs, block_secs)
                 .await
             {
                 Ok(result) => return result,
@@ -273,10 +274,10 @@ impl RateLimiter {
 
     pub async fn reset(&self, key: &str) {
         // Clear Redis keys if present
-        if let Some(redis) = &self.redis {
+        if let Some(redis) = self.redis.resolve() {
             let counter_key = format!("rl:c:{}", key);
             let block_key = format!("rl:b:{}", key);
-            let mut conn = redis.clone();
+            let mut conn = redis.as_ref().clone();
             let _: Result<i64, _> = redis::cmd("DEL")
                 .arg(&counter_key)
                 .arg(&block_key)

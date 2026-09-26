@@ -1,3 +1,4 @@
+use crate::db::log_slow_query;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
@@ -78,10 +79,13 @@ impl ShareRepository {
         &self,
         video_id: i64,
     ) -> Result<Option<VideoOwnership>, sqlx::Error> {
-        sqlx::query_as::<_, VideoOwnership>("SELECT uploader_id FROM videos WHERE id = $1")
-            .bind(video_id)
-            .fetch_optional(&self.pool)
-            .await
+        log_slow_query("share_repo::find_video_ownership", || async {
+            sqlx::query_as::<_, VideoOwnership>("SELECT uploader_id FROM videos WHERE id = $1")
+                .bind(video_id)
+                .fetch_optional(&self.pool)
+                .await
+        })
+        .await
     }
 
     pub async fn create_share_link(
@@ -136,17 +140,20 @@ impl ShareRepository {
         &self,
         token_hash: &str,
     ) -> Result<Option<ShareLink>, sqlx::Error> {
-        sqlx::query_as::<_, ShareLink>(
-            // expires_at is a naive-UTC TIMESTAMP written by the app; compare
-            // against UTC explicitly so the check does not depend on the
-            // database session's TimeZone setting.
-            r#"SELECT id, video_id, user_id, expires_at, created_at
-               FROM share_links
-               WHERE token_hash = $1
-               AND (expires_at IS NULL OR expires_at > (NOW() AT TIME ZONE 'UTC'))"#,
-        )
-        .bind(token_hash)
-        .fetch_optional(&self.pool)
+        log_slow_query("share_repo::is_valid_token_hash", || async {
+            sqlx::query_as::<_, ShareLink>(
+                // expires_at is a naive-UTC TIMESTAMP written by the app; compare
+                // against UTC explicitly so the check does not depend on the
+                // database session's TimeZone setting.
+                r#"SELECT id, video_id, user_id, expires_at, created_at
+                   FROM share_links
+                   WHERE token_hash = $1
+                   AND (expires_at IS NULL OR expires_at > (NOW() AT TIME ZONE 'UTC'))"#,
+            )
+            .bind(token_hash)
+            .fetch_optional(&self.pool)
+            .await
+        })
         .await
     }
 

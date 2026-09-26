@@ -29,6 +29,11 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "CC0-1.0",
+    # webpki-roots 1.0.9 起从 MPL-2.0 改为 CDLA-Permissive-2.0（传递依赖：
+    # reqwest[rustls-tls] → hyper-rustls → webpki-roots，承载 Mozilla CA 根证书
+    # 包）。该许可为宽松型：允许使用/修改/再分发，唯一条件是随数据附带许可
+    # 文本，无 copyleft、无源码披露要求，因此与本项目已有的宽松许可同级。
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

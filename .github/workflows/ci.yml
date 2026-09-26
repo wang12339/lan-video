@@ -46,6 +46,20 @@ jobs:
           --health-retries 10
         ports:
           - 5432:5432
+      # Redis is required by the distributed-behaviour tests: the shared rate
+      # limiter, the cross-instance media-auth cache, the HLS transcode lock,
+      # and the "Redis was down at startup" late-reconnect regressions. Without
+      # this service those tests self-skip and a green build would say nothing
+      # about them.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -79,10 +93,13 @@ jobs:
 
       # DB 集成测试: build_router 会先应用 migrations；--test-threads=1
       # 串行执行避免测试间在共享库上互相干扰（见 AGENTS.md）
-      - name: Run tests (incl. DB integration)
+      - name: Run tests (incl. DB + Redis integration)
         working-directory: ./backend
         env:
           DATABASE_URL: postgres://atmos_video:atmos_video@localhost:5432/atmos_video
+          # Test-only instance (no persistence, default config) so CI never
+          # needs a REDIS_PASSWORD or a volume.
+          REDIS_URL: redis://127.0.0.1:6379
         run: cargo test --locked -- --test-threads=1
 
       # 代码覆盖率收集（仅 main 分支）
