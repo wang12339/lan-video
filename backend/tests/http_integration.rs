@@ -2757,6 +2757,9 @@ async fn test_admin_users_permission_isolation() {
     let state = test_app_state().await;
     let (username, _user_id, token) = create_viewer_with_token(&state, "admin_iso").await;
     let (_admin, admin_token) = create_admin_with_token(&state, "admin_iso2").await;
+    // An unapproved account, to pin down the `status=active` default below.
+    let (pending_username, _pending_token) =
+        create_pending_user_with_token(&state, "admin_iso_pending").await;
     let app = build_test_app().await;
 
     // No token → 401
@@ -2769,12 +2772,102 @@ async fn test_admin_users_permission_isolation() {
     assert_eq!(body["error"], json!("需要管理员权限"));
 
     // Admin → 200
+    //
+    // `/admin/users` is paginated: it returns `{items, total, page, size}`, not
+    // a bare array (matching the frontend's `AdminUsersPage`). The test
+    // previously asserted `body.is_array()`, which only ever tested the *old*
+    // pre-pagination contract.
     let (status, body) =
         send_json(&app, Method::GET, "/admin/users", Some(&admin_token), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.is_array());
+    assert_eq!(status, StatusCode::OK, "body: {}", body);
+    assert!(
+        body["items"].is_array(),
+        "items must be an array, got: {}",
+        body
+    );
+    assert_eq!(body["page"], json!(0), "default page must be 0");
+    assert_eq!(body["size"], json!(20), "default size must be 20");
+    assert!(
+        body["total"].is_number(),
+        "total must be a number, got: {}",
+        body
+    );
+    // The admin we just created is approved and has a role, so it must appear.
+    assert!(
+        body["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|u| u["username"] == username)),
+        "the viewer just created must be listed for an admin"
+    );
+    // `status` defaults to "active", so the unapproved account must be filtered
+    // out of this response (pending users live in their own block).
+    assert!(
+        body["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().all(|u| u["username"] != pending_username)),
+        "an unapproved user must not appear when status defaults to active: {body}"
+    );
+    // ...and must appear once the caller explicitly asks for pending users.
+    let (_, pending_body) = send_json(
+        &app,
+        Method::GET,
+        "/admin/users?status=pending&size=200",
+        Some(&admin_token),
+        None,
+    )
+    .await;
+    assert!(
+        pending_body["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|u| u["username"] == pending_username)),
+        "status=pending must surface the unapproved user: {pending_body}"
+    );
+
+    // Paging actually narrows the result set.
+    let (_, page0) = send_json(
+        &app,
+        Method::GET,
+        "/admin/users?size=1",
+        Some(&admin_token),
+        None,
+    )
+    .await;
+    assert_eq!(page0["items"].as_array().map(Vec::len), Some(1));
+    assert_eq!(page0["size"], json!(1));
+
+    // Search filters server-side: the exact username is found...
+    let (_, searched) = send_json(
+        &app,
+        Method::GET,
+        &format!("/admin/users?search={username}"),
+        Some(&admin_token),
+        None,
+    )
+    .await;
+    assert!(
+        searched["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|u| u["username"] == username)),
+        "search by the exact username must find the user: {searched}"
+    );
+    // ...and a string matching nobody returns nothing, proving the filter is
+    // actually applied server-side rather than ignored.
+    let (_, no_match) = send_json(
+        &app,
+        Method::GET,
+        "/admin/users?search=zzz_no_such_user_zzz",
+        Some(&admin_token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        no_match["total"],
+        json!(0),
+        "a non-matching search must return no rows: {no_match}"
+    );
 
     cleanup_test_user(state.repos.video.pool(), &username).await;
+    cleanup_test_user(state.repos.video.pool(), &pending_username).await;
 }
 
 #[tokio::test]
