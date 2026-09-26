@@ -28,7 +28,7 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 sentry = { version = "0.34", features = ["anyhow", "tracing"], default-features = false }
-prometheus = "0.13"
+prometheus = "0.14"
 anyhow = "1.0"
 thiserror = "1"
 ammonia = "4.0"
